@@ -1,0 +1,15 @@
+E:\NexoraBackend\src\Nexora.Integrations\bin\Debug\net10.0\Nexora.Integrations.deps.json
+E:\NexoraBackend\src\Nexora.Integrations\bin\Debug\net10.0\Nexora.Integrations.dll
+E:\NexoraBackend\src\Nexora.Integrations\bin\Debug\net10.0\Nexora.Integrations.pdb
+E:\NexoraBackend\src\Nexora.Integrations\bin\Debug\net10.0\Nexora.Business.dll
+E:\NexoraBackend\src\Nexora.Integrations\bin\Debug\net10.0\Nexora.Business.pdb
+E:\NexoraBackend\src\Nexora.Integrations\obj\Debug\net10.0\Nexora.Integrations.csproj.AssemblyReference.cache
+E:\NexoraBackend\src\Nexora.Integrations\obj\Debug\net10.0\Nexora.Integrations.GeneratedMSBuildEditorConfig.editorconfig
+E:\NexoraBackend\src\Nexora.Integrations\obj\Debug\net10.0\Nexora.Integrations.AssemblyInfoInputs.cache
+E:\NexoraBackend\src\Nexora.Integrations\obj\Debug\net10.0\Nexora.Integrations.AssemblyInfo.cs
+E:\NexoraBackend\src\Nexora.Integrations\obj\Debug\net10.0\Nexora.Integrations.csproj.CoreCompileInputs.cache
+E:\NexoraBackend\src\Nexora.Integrations\obj\Debug\net10.0\Nexora.I.85AED77D.Up2Date
+E:\NexoraBackend\src\Nexora.Integrations\obj\Debug\net10.0\Nexora.Integrations.dll
+E:\NexoraBackend\src\Nexora.Integrations\obj\Debug\net10.0\refint\Nexora.Integrations.dll
+E:\NexoraBackend\src\Nexora.Integrations\obj\Debug\net10.0\Nexora.Integrations.pdb
+E:\NexoraBackend\src\Nexora.Integrations\obj\Debug\net10.0\ref\Nexora.Integrations.dll

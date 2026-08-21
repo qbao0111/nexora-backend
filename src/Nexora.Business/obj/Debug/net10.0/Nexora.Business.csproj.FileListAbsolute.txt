@@ -1,0 +1,11 @@
+E:\NexoraBackend\src\Nexora.Business\bin\Debug\net10.0\Nexora.Business.deps.json
+E:\NexoraBackend\src\Nexora.Business\bin\Debug\net10.0\Nexora.Business.dll
+E:\NexoraBackend\src\Nexora.Business\bin\Debug\net10.0\Nexora.Business.pdb
+E:\NexoraBackend\src\Nexora.Business\obj\Debug\net10.0\Nexora.Business.GeneratedMSBuildEditorConfig.editorconfig
+E:\NexoraBackend\src\Nexora.Business\obj\Debug\net10.0\Nexora.Business.AssemblyInfoInputs.cache
+E:\NexoraBackend\src\Nexora.Business\obj\Debug\net10.0\Nexora.Business.AssemblyInfo.cs
+E:\NexoraBackend\src\Nexora.Business\obj\Debug\net10.0\Nexora.Business.csproj.CoreCompileInputs.cache
+E:\NexoraBackend\src\Nexora.Business\obj\Debug\net10.0\Nexora.Business.dll
+E:\NexoraBackend\src\Nexora.Business\obj\Debug\net10.0\refint\Nexora.Business.dll
+E:\NexoraBackend\src\Nexora.Business\obj\Debug\net10.0\Nexora.Business.pdb
+E:\NexoraBackend\src\Nexora.Business\obj\Debug\net10.0\ref\Nexora.Business.dll
