@@ -12,9 +12,14 @@ namespace Nexora.IntegrationTests;
 
 public sealed class NexoraApiFactory : WebApplicationFactory<Program>
 {
-    private readonly SqliteConnection _connection = new("Data Source=:memory:");
+    private readonly string _connectionString = $"Data Source=nexora-{Guid.NewGuid():N};Mode=Memory;Cache=Shared;Default Timeout=5";
+    private readonly SqliteConnection _connection;
 
-    public NexoraApiFactory() => _connection.Open();
+    public NexoraApiFactory()
+    {
+        _connection = new SqliteConnection(_connectionString);
+        _connection.Open();
+    }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -26,14 +31,15 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
                 ["Authentication:Jwt:SigningKey"] = "integration-test-signing-key-32-characters-minimum",
                 ["Authentication:Jwt:Issuer"] = "Nexora.Tests",
                 ["Authentication:Jwt:Audience"] = "Nexora.Tests.Client",
+                ["Billing:FakePayment:WebhookSecret"] = "phase2-test-webhook-key-material",
+                ["Billing:FakePayment:TimestampToleranceMinutes"] = "5",
                 ["Storage:Local:RootPath"] = Path.Combine(Path.GetTempPath(), "nexora-api-tests")
             }));
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<DbContextOptions<NexoraDbContext>>();
             services.RemoveAll<IDbContextOptionsConfiguration<NexoraDbContext>>();
-            services.AddSingleton(_connection);
-            services.AddDbContext<NexoraDbContext>(options => options.UseSqlite(_connection));
+            services.AddDbContext<NexoraDbContext>(options => options.UseSqlite(_connectionString));
         });
     }
 

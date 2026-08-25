@@ -3,7 +3,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Nexora.Business.Auth;
+using Nexora.Business.Billing;
 using Nexora.Data.Auth;
+using Nexora.Data.Billing;
 using Nexora.Data.Identity;
 using Nexora.Data.Persistence;
 
@@ -40,6 +42,7 @@ public static class DependencyInjection
             .ValidateOnStart();
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IAuthService, IdentityAuthService>();
+        services.AddScoped<IBillingService, BillingService>();
         return services;
     }
 }

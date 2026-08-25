@@ -14,5 +14,5 @@ public sealed class LoginRequest
     [Required, MaxLength(128)] public string Password { get; init; } = string.Empty;
 }
 public sealed class UpdateProfileRequest { [MaxLength(120)] public string? DisplayName { get; init; } }
-public sealed record UserResponse(Guid Id, string Email, string? DisplayName, IReadOnlyCollection<string> Roles);
+public sealed record UserResponse(Guid Id, string Email, string? DisplayName, IReadOnlyCollection<string> Roles, BillingSummaryResponse? Billing = null);
 public sealed record AuthSessionResponse(string AccessToken, DateTimeOffset AccessTokenExpiresAt, UserResponse User);

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Nexora.Data.Persistence;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Nexora.Data.Persistence.Migrations
 {
     [DbContext(typeof(NexoraDbContext))]
-    partial class NexoraDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260825073442_Phase2BillingEntitlement")]
+    partial class Phase2BillingEntitlement
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -174,7 +177,7 @@ namespace Nexora.Data.Persistence.Migrations
                     b.Property<DateTimeOffset>("EndsAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int?>("InterviewLimit")
+                    b.Property<int>("InterviewLimit")
                         .HasColumnType("integer");
 
                     b.Property<string>("PlanCodeSnapshot")
@@ -272,10 +275,10 @@ namespace Nexora.Data.Persistence.Migrations
                         .HasMaxLength(3)
                         .HasColumnType("character varying(3)");
 
-                    b.Property<int?>("DurationDays")
+                    b.Property<int>("DurationDays")
                         .HasColumnType("integer");
 
-                    b.Property<int?>("InterviewQuota")
+                    b.Property<int>("InterviewQuota")
                         .HasColumnType("integer");
 
                     b.Property<string>("PaymentProvider")
@@ -417,53 +420,12 @@ namespace Nexora.Data.Persistence.Migrations
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)");
 
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
                     b.HasKey("Id");
 
                     b.HasIndex("Code")
                         .IsUnique();
 
                     b.ToTable("plans", (string)null);
-
-                    b.HasData(
-                        new
-                        {
-                            Id = new Guid("00000000-0000-0000-0000-000000000001"),
-                            Code = "free",
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            IsActive = true,
-                            Name = "Free",
-                            SortOrder = 0
-                        },
-                        new
-                        {
-                            Id = new Guid("00000000-0000-0000-0000-000000000002"),
-                            Code = "basic",
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            IsActive = true,
-                            Name = "Basic",
-                            SortOrder = 1
-                        },
-                        new
-                        {
-                            Id = new Guid("00000000-0000-0000-0000-000000000003"),
-                            Code = "weekly",
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            IsActive = true,
-                            Name = "Weekly",
-                            SortOrder = 2
-                        },
-                        new
-                        {
-                            Id = new Guid("00000000-0000-0000-0000-000000000004"),
-                            Code = "pro",
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            IsActive = true,
-                            Name = "Pro",
-                            SortOrder = 3
-                        });
                 });
 
             modelBuilder.Entity("Nexora.Data.Billing.PlanPrice", b =>
@@ -483,10 +445,10 @@ namespace Nexora.Data.Persistence.Migrations
                         .HasMaxLength(3)
                         .HasColumnType("character varying(3)");
 
-                    b.Property<int?>("DurationDays")
+                    b.Property<int>("DurationDays")
                         .HasColumnType("integer");
 
-                    b.Property<int?>("InterviewQuota")
+                    b.Property<int>("InterviewQuota")
                         .HasColumnType("integer");
 
                     b.Property<bool>("IsActive")
@@ -501,50 +463,6 @@ namespace Nexora.Data.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("plan_prices", (string)null);
-
-                    b.HasData(
-                        new
-                        {
-                            Id = new Guid("10000000-0000-0000-0000-000000000001"),
-                            AmountMinor = 0L,
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            Currency = "VND",
-                            InterviewQuota = 1,
-                            IsActive = true,
-                            PlanId = new Guid("00000000-0000-0000-0000-000000000001")
-                        },
-                        new
-                        {
-                            Id = new Guid("10000000-0000-0000-0000-000000000002"),
-                            AmountMinor = 49000L,
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            Currency = "VND",
-                            DurationDays = 3,
-                            InterviewQuota = 3,
-                            IsActive = true,
-                            PlanId = new Guid("00000000-0000-0000-0000-000000000002")
-                        },
-                        new
-                        {
-                            Id = new Guid("10000000-0000-0000-0000-000000000003"),
-                            AmountMinor = 189000L,
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            Currency = "VND",
-                            DurationDays = 14,
-                            InterviewQuota = 20,
-                            IsActive = true,
-                            PlanId = new Guid("00000000-0000-0000-0000-000000000003")
-                        },
-                        new
-                        {
-                            Id = new Guid("10000000-0000-0000-0000-000000000004"),
-                            AmountMinor = 599000L,
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            Currency = "VND",
-                            DurationDays = 90,
-                            IsActive = true,
-                            PlanId = new Guid("00000000-0000-0000-0000-000000000004")
-                        });
                 });
 
             modelBuilder.Entity("Nexora.Data.Billing.Subscription", b =>
