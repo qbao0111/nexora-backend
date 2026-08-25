@@ -61,7 +61,8 @@ public sealed class IdentityAuthService(
     public async Task<AuthSession> LoginAsync(LoginUserCommand command, CancellationToken cancellationToken)
     {
         var user = await userManager.FindByEmailAsync(NormalizeEmail(command.Email));
-        if (user is null || !(await signInManager.CheckPasswordSignInAsync(user, command.Password, true)).Succeeded)
+        if (user is null || user.DeletionRequestedAt is not null || user.DeletedAt is not null ||
+            !(await signInManager.CheckPasswordSignInAsync(user, command.Password, true)).Succeeded)
         {
             throw new BusinessException("INVALID_CREDENTIALS", "Email hoặc mật khẩu không đúng.", BusinessErrorKind.Unauthorized);
         }
@@ -74,7 +75,8 @@ public sealed class IdentityAuthService(
         var hash = HashToken(refreshToken);
         var existing = await dbContext.RefreshTokens.Include(token => token.User)
             .SingleOrDefaultAsync(token => token.TokenHash == hash, cancellationToken);
-        if (existing is null || existing.ExpiresAt <= now) throw InvalidRefreshToken();
+        if (existing is null || existing.ExpiresAt <= now || existing.User.DeletionRequestedAt is not null || existing.User.DeletedAt is not null)
+            throw InvalidRefreshToken();
 
         var replacement = CreateRefreshToken(existing.UserId, now);
         await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
@@ -112,14 +114,14 @@ public sealed class IdentityAuthService(
     public async Task<AuthenticatedUser> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken)
     {
         var user = await dbContext.Users.AsNoTracking().Include(item => item.Profile)
-            .SingleOrDefaultAsync(item => item.Id == userId, cancellationToken) ?? throw UserNotFound();
+            .SingleOrDefaultAsync(item => item.Id == userId && item.DeletionRequestedAt == null && item.DeletedAt == null, cancellationToken) ?? throw UserNotFound();
         return await MapUserAsync(user);
     }
 
     public async Task<AuthenticatedUser> UpdateProfileAsync(Guid userId, string? displayName, CancellationToken cancellationToken)
     {
         var user = await dbContext.Users.Include(item => item.Profile)
-            .SingleOrDefaultAsync(item => item.Id == userId, cancellationToken) ?? throw UserNotFound();
+            .SingleOrDefaultAsync(item => item.Id == userId && item.DeletionRequestedAt == null && item.DeletedAt == null, cancellationToken) ?? throw UserNotFound();
         var now = timeProvider.GetUtcNow();
         user.Profile ??= new UserProfile { Id = Guid.NewGuid(), UserId = user.Id, CreatedAt = now };
         user.Profile.DisplayName = NormalizeDisplayName(displayName);

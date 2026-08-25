@@ -4,11 +4,12 @@ using Nexora.Api.Contracts;
 using Nexora.Api.Infrastructure;
 using Nexora.Business.Auth;
 using Nexora.Business.Billing;
+using Nexora.Business.Privacy;
 
 namespace Nexora.Api.Controllers;
 
 [ApiController, Authorize, Route("api/v1/me")]
-public sealed class MeController(IAuthService authService, IBillingService billingService) : ControllerBase
+public sealed class MeController(IAuthService authService, IBillingService billingService, IPrivacyService privacyService) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<ApiResponse<UserResponse>>> Get(CancellationToken cancellationToken)
@@ -22,6 +23,15 @@ public sealed class MeController(IAuthService authService, IBillingService billi
     [HttpPatch("profile")]
     public async Task<ActionResult<ApiResponse<UserResponse>>> UpdateProfile(UpdateProfileRequest request, CancellationToken cancellationToken) =>
         Ok(new ApiResponse<UserResponse>(Map(await authService.UpdateProfileAsync(User.GetRequiredUserId(), request.DisplayName, cancellationToken))));
+
+    [HttpGet("export")]
+    public async Task<ActionResult<ApiResponse<CoreDataExport>>> Export(CancellationToken cancellationToken) =>
+        Ok(new ApiResponse<CoreDataExport>(await privacyService.ExportAsync(User.GetRequiredUserId(), cancellationToken)));
+
+    [HttpPost("deletion-requests")]
+    public async Task<ActionResult<ApiResponse<DeletionRequestView>>> RequestDeletion(CancellationToken cancellationToken) =>
+        Accepted(new ApiResponse<DeletionRequestView>(await privacyService.RequestDeletionAsync(
+            User.GetRequiredUserId(), Request.Headers["Idempotency-Key"].ToString(), cancellationToken)));
 
     private static UserResponse Map(AuthenticatedUser user, BillingSummaryResponse? billing = null) =>
         new(user.Id, user.Email, user.DisplayName, user.Roles, billing);

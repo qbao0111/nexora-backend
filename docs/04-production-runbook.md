@@ -47,6 +47,14 @@ Không commit `.env`, CV mẫu có dữ liệu thật hoặc webhook payload pro
 
 Cho MVP (vài chục–vài trăm user), gate staging ban đầu là **50 virtual users trong 10 phút, tải ổn định 15 RPS CRUD/API**, cộng **burst 100 virtual users trong 60 giây, tối đa 30 RPS**. P95 endpoint synchronous không-AI dưới 500 ms, error rate dưới 1%; job creation chỉ enqueue, không chờ model. Chạy thêm 5 concurrent AI jobs bằng provider fake/sandbox để đo queue lag. Đây là baseline kỹ thuật, không phải cam kết capacity; chỉnh lại khi có số liệu production.
 
+Chạy baseline CRUD bằng `k6 run tests/load/phase4-crud.js` với `NEXORA_BASE_URL` và access token synthetic trong `NEXORA_ACCESS_TOKEN`. Không dùng account hoặc CV thật cho load test.
+
+## Backup/restore rehearsal
+
+T-10 dùng `scripts/verify-postgres-backup.ps1 -ConfirmIsolatedTarget`. Cung cấp connection string qua `NEXORA_BACKUP_SOURCE` và `NEXORA_RESTORE_TARGET`; target phải là database cô lập/disposable có tên thể hiện `isolated`, `restore`, `drill` hoặc `test`. Sau restore, trỏ một API instance vào target rồi đặt `NEXORA_RESTORE_API_READ_URL` tới authenticated read endpoint và `NEXORA_RESTORE_API_TOKEN` của synthetic account. Script chỉ pass khi `pg_dump`, `pg_restore` và API read canonical đều thành công.
+
+Không chạy drill vào production target. Không ghi connection string/token vào command, log hoặc source control.
+
 ## Checklist go-live
 
 - [ ] Domain, DNS, HTTPS và OAuth redirect URLs production hoạt động.

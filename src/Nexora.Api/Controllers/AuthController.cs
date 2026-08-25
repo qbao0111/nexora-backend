@@ -1,5 +1,7 @@
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Nexora.Api.Contracts;
 using Nexora.Api.Infrastructure;
 using Nexora.Business.Auth;
@@ -9,11 +11,11 @@ namespace Nexora.Api.Controllers;
 
 [ApiController]
 [Route("api/v1/auth")]
-public sealed class AuthController(IAuthService authService) : ControllerBase
+public sealed class AuthController(IAuthService authService, LoginEmailRateLimiter loginEmailRateLimiter) : ControllerBase
 {
     private const string RefreshCookieName = "nexora.refresh";
 
-    [AllowAnonymous, HttpPost("register")]
+    [AllowAnonymous, HttpPost("register"), EnableRateLimiting(RateLimitPolicies.Authentication)]
     public async Task<ActionResult<ApiResponse<AuthSessionResponse>>> Register(RegisterRequest request, CancellationToken cancellationToken)
     {
         var session = await authService.RegisterAsync(new RegisterUserCommand(request.Email, request.Password, request.DisplayName), cancellationToken);
@@ -21,15 +23,23 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
         return StatusCode(201, new ApiResponse<AuthSessionResponse>(MapSession(session)));
     }
 
-    [AllowAnonymous, HttpPost("login")]
+    [AllowAnonymous, HttpPost("login"), EnableRateLimiting(RateLimitPolicies.Authentication)]
     public async Task<ActionResult<ApiResponse<AuthSessionResponse>>> Login(LoginRequest request, CancellationToken cancellationToken)
     {
+        using var lease = loginEmailRateLimiter.Acquire(request.Email);
+        if (!lease.IsAcquired)
+        {
+            if (lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+                Response.Headers.RetryAfter = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new ApiErrorEnvelope(new ApiError("RATE_LIMITED", "Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.", HttpContext.TraceIdentifier)));
+        }
         var session = await authService.LoginAsync(new LoginUserCommand(request.Email, request.Password), cancellationToken);
         WriteRefreshCookie(session);
         return Ok(new ApiResponse<AuthSessionResponse>(MapSession(session)));
     }
 
-    [AllowAnonymous, HttpPost("refresh")]
+    [AllowAnonymous, HttpPost("refresh"), EnableRateLimiting(RateLimitPolicies.Refresh)]
     public async Task<ActionResult<ApiResponse<AuthSessionResponse>>> Refresh(CancellationToken cancellationToken)
     {
         var token = Request.Cookies[RefreshCookieName];

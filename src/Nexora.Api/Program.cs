@@ -25,6 +25,7 @@ builder.Services.AddIntegrations(builder.Configuration);
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("postgresql", tags: ["ready"]);
+builder.Services.AddHardening(builder.Configuration);
 builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
     options.InvalidModelStateResponseFactory = context =>
@@ -61,7 +62,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
             var stamp = context.Principal?.FindFirstValue(IdentityAuthService.SecurityStampClaim);
             var manager = context.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
             var user = string.IsNullOrWhiteSpace(subject) ? null : await manager.FindByIdAsync(subject);
-            if (user is null || string.IsNullOrWhiteSpace(stamp) || !string.Equals(user.SecurityStamp, stamp, StringComparison.Ordinal))
+            if (user is null || user.DeletionRequestedAt is not null || user.DeletedAt is not null ||
+                string.IsNullOrWhiteSpace(stamp) || !string.Equals(user.SecurityStamp, stamp, StringComparison.Ordinal))
                 context.Fail("Token has been revoked.");
         },
         OnChallenge = async context =>
@@ -88,7 +90,9 @@ app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 if (origins.Length > 0) app.UseCors("Frontend");
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
+app.UseMiddleware<FeatureGateMiddleware>();
 if (app.Environment.IsDevelopment() || app.Environment.IsEnvironment("Testing")) app.MapOpenApi("/openapi/{documentName}.json");
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/api/v1/health", new HealthCheckOptions { Predicate = registration => registration.Tags.Contains("ready") });

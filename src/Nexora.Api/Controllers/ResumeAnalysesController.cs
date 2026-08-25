@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Nexora.Api.Contracts;
 using Nexora.Api.Infrastructure;
 using Nexora.Business.Practice;
@@ -9,7 +10,7 @@ namespace Nexora.Api.Controllers;
 [ApiController, Authorize, Route("api/v1/resume-analyses")]
 public sealed class ResumeAnalysesController(IPracticeService practiceService) : ControllerBase
 {
-    [HttpPost]
+    [HttpPost, EnableRateLimiting(RateLimitPolicies.AiJob)]
     public async Task<ActionResult<ApiResponse<ResumeAnalysisView>>> Create(CreateResumeAnalysisRequest request, CancellationToken cancellationToken)
     {
         var analysis = await practiceService.StartResumeAnalysisAsync(
