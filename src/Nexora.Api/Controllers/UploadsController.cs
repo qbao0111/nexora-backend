@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Nexora.Api.Contracts;
 using Nexora.Api.Infrastructure;
 using Nexora.Business.Practice;
@@ -9,7 +10,7 @@ namespace Nexora.Api.Controllers;
 [ApiController, Route("api/v1/uploads")]
 public sealed class UploadsController(IUploadProvider uploadProvider) : ControllerBase
 {
-    [Authorize, HttpPost("presign")]
+    [Authorize, HttpPost("presign"), EnableRateLimiting(RateLimitPolicies.Upload)]
     public async Task<ActionResult<ApiResponse<UploadIntent>>> Presign(PresignUploadRequest request, CancellationToken cancellationToken)
     {
         var intent = await uploadProvider.CreateIntentAsync(User.GetRequiredUserId(), request.FileName, request.ContentType, request.Size, cancellationToken);

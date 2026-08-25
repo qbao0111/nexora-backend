@@ -1,4 +1,5 @@
 using Nexora.Business.Practice;
+using Nexora.Business.Privacy;
 
 namespace Nexora.Worker;
 
@@ -11,7 +12,8 @@ public sealed partial class PracticeWorker(IServiceScopeFactory scopeFactory, IL
             try
             {
                 using var scope = scopeFactory.CreateScope();
-                var count = await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(stoppingToken);
+                var count = await scope.ServiceProvider.GetRequiredService<IPrivacyJobProcessor>().ProcessPendingAsync(stoppingToken);
+                count += await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(stoppingToken);
                 if (count == 0) await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }

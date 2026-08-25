@@ -15,6 +15,8 @@
 | Method | Endpoint | Mục đích |
 | --- | --- | --- |
 | GET | `/me` | Profile và entitlement hiện hành. |
+| GET | `/me/export` | Export allowlisted core profile/billing/practice data của owner; không trả storage key, credential hoặc provider secret. |
+| POST | `/me/deletion-requests` | Yêu cầu xoá bất đồng bộ; bắt buộc `Idempotency-Key`, revoke session ngay và trả `202`. |
 | GET | `/plans` | Gói, giá, quyền lợi từ server. |
 | POST | `/checkout-sessions` | Tạo order/URL thanh toán. |
 | POST | `/webhooks/payments/:provider` | Nhận webhook đã verify chữ ký. |
@@ -42,6 +44,10 @@ Tất cả route dưới đây yêu cầu policy `Admin`, reason code đối v�
 | GET | `/admin/operations/jobs` | Xem trạng thái job lỗi để retry có kiểm soát. |
 
 ## Request and response contracts quan trọng
+
+### Export và xoá dữ liệu cá nhân
+
+`GET /api/v1/me/export` chỉ trả core data thuộc owner. `POST /api/v1/me/deletion-requests` tạo audit state `queued → processing → completed|failed`; cùng user và `Idempotency-Key` trả request gốc. Sau khi accepted, access/refresh session hiện tại không còn hợp lệ. Worker xoá private object và personal practice records rồi anonymize Identity account; billing/usage ledger được giữ làm audit theo retention được phê duyệt. Thời hạn retention production vẫn do DEC-03 quyết định.
 
 ### Tạo interview
 

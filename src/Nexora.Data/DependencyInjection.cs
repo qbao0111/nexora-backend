@@ -5,11 +5,13 @@ using Microsoft.Extensions.DependencyInjection;
 using Nexora.Business.Auth;
 using Nexora.Business.Billing;
 using Nexora.Business.Practice;
+using Nexora.Business.Privacy;
 using Nexora.Data.Auth;
 using Nexora.Data.Billing;
 using Nexora.Data.Identity;
 using Nexora.Data.Persistence;
 using Nexora.Data.Practice;
+using Nexora.Data.Privacy;
 
 namespace Nexora.Data;
 
@@ -54,6 +56,9 @@ public static class DependencyInjection
         services.AddScoped<PracticeService>();
         services.AddScoped<IPracticeService>(provider => provider.GetRequiredService<PracticeService>());
         services.AddScoped<IPracticeJobProcessor>(provider => provider.GetRequiredService<PracticeService>());
+        services.AddScoped<PrivacyService>();
+        services.AddScoped<IPrivacyService>(provider => provider.GetRequiredService<PrivacyService>());
+        services.AddScoped<IPrivacyJobProcessor>(provider => provider.GetRequiredService<PrivacyService>());
         return services;
     }
 }

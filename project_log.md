@@ -102,3 +102,30 @@ This log records completed implementation milestones and verification evidence. 
 - NuGet reported no known vulnerable direct or transitive packages across all projects.
 - Secret-pattern scan found only the documented `Password=replace-me` placeholder in `.env.example`; no connection string, API key or live secret was added.
 - Status: **READY FOR PHASE 3 PULL REQUEST**.
+
+## 2026-08-25 — Phase 4 vendor-neutral API hardening completed
+
+- Added configuration-driven fixed-window rate limits for authentication, refresh, upload intent, checkout, AI job creation and official-answer submission using the ASP.NET Core rate-limiting middleware.
+- Added canonical `429 RATE_LIMITED` responses with `Retry-After`; limits partition by IP, authenticated user or interview session as appropriate.
+- Added independent AI, payment-creation and upload-intent feature gates while preserving authentication precedence and keeping payment webhooks available for reconciliation.
+- Added deterministic integration evidence for rate-limit rejection and feature-gate behavior.
+- Production provider, infrastructure and legal choices remain unchanged and deferred under DEC-01 through DEC-04.
+- Next: implement core data export and an audited asynchronous account deletion/anonymization path for FR-AUTH-04/T-09.
+
+## 2026-08-25 — Phase 4 privacy and recovery-test foundation completed
+
+- Added owner-scoped core-data export with an explicit allowlist that excludes private storage keys, checksums, credentials and provider secrets.
+- Added idempotent asynchronous deletion requests that immediately revoke access/refresh tokens, retry with a bounded policy and retain an auditable request state.
+- The deletion worker removes private storage objects and personal CV/JD/analysis/interview/profile/auth data, then anonymizes the Identity account while preserving billing/usage audit records.
+- Added source-controlled `Phase4PrivacyHardening` migration and T-09 integration evidence for export, session revocation, database/storage deletion and account anonymization.
+- Added guarded PostgreSQL backup/isolated-restore/API-read rehearsal and k6 staging CRUD baseline artifacts. T-10 and load evidence remain pending an approved isolated staging target.
+- Production provider, infrastructure, retention periods and legal approvals remain blocked by DEC-01 through DEC-04; no deferred decision was invented.
+
+## 2026-08-25 — Phase 4 vendor-neutral final verification completed
+
+- Final restore and build passed with 0 warnings/errors; 5 unit and 19 integration tests passed, including rate-limit/feature-gate coverage and T-09 privacy deletion.
+- Formatting passed for every Phase 4 source file without rewriting the already-applied initial migration.
+- EF Core reported no pending model changes and generated the full idempotent PostgreSQL migration script successfully through `Phase4PrivacyHardening`.
+- NuGet reported no known vulnerable direct or transitive packages. Secret-pattern review found only documented placeholders and deterministic test passwords; no connection string, API key or live secret was added.
+- T-10 restore rehearsal and k6 load execution are explicitly pending because this workstation has no approved isolated PostgreSQL target and does not have `pg_dump`, `pg_restore` or k6 installed.
+- Status: **READY FOR PHASE 4 VENDOR-NEUTRAL HARDENING PULL REQUEST**; the complete production Phase 4 exit remains blocked by DEC-01 through DEC-04 and staging/go-live evidence.

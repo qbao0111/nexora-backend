@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Nexora.Data.Billing;
 using Nexora.Data.Identity;
 using Nexora.Data.Practice;
+using Nexora.Data.Privacy;
 
 namespace Nexora.Data.Persistence;
 
@@ -29,6 +30,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<InterviewQuestion> InterviewQuestions => Set<InterviewQuestion>();
     public DbSet<InterviewAnswer> InterviewAnswers => Set<InterviewAnswer>();
     public DbSet<InterviewReport> InterviewReports => Set<InterviewReport>();
+    public DbSet<DataPrivacyRequest> DataPrivacyRequests => Set<DataPrivacyRequest>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -69,6 +71,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
         });
         ConfigureBilling(builder);
         ConfigurePractice(builder);
+        ConfigurePrivacy(builder);
     }
 
     private static void ConfigureBilling(ModelBuilder builder)
@@ -294,6 +297,21 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.HasOne(report => report.User).WithMany().HasForeignKey(report => report.UserId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(report => report.InterviewSession).WithOne(session => session.Report)
                 .HasForeignKey<InterviewReport>(report => report.InterviewSessionId).OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigurePrivacy(ModelBuilder builder)
+    {
+        builder.Entity<DataPrivacyRequest>(entity =>
+        {
+            entity.ToTable("data_privacy_requests");
+            entity.HasKey(request => request.Id);
+            entity.HasIndex(request => new { request.UserId, request.IdempotencyKey }).IsUnique();
+            entity.HasIndex(request => new { request.Status, request.NextAttemptAt });
+            entity.Property(request => request.Type).HasMaxLength(40).IsRequired();
+            entity.Property(request => request.Status).HasMaxLength(20).IsRequired();
+            entity.Property(request => request.IdempotencyKey).HasMaxLength(128).IsRequired();
+            entity.Property(request => request.ErrorCode).HasMaxLength(80);
         });
     }
 }
