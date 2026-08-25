@@ -62,5 +62,7 @@ public sealed class FoundationApiTests : IClassFixture<NexoraApiFactory>
             .UseNpgsql("Host=localhost;Database=metadata_only;Username=nexora").Options;
         using var context = new NexoraDbContext(options);
         Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_InitialIdentityFoundation", StringComparison.Ordinal));
+        Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_Phase2BillingEntitlement", StringComparison.Ordinal));
+        Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_Phase2PlanCatalogue", StringComparison.Ordinal));
     }
 }

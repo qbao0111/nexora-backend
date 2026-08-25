@@ -41,3 +41,31 @@ This log records completed implementation milestones and verification evidence. 
 - Removed tracked `bin/` and `obj/` artifacts from the repository index; `.gitignore` now keeps regenerated build outputs out of source control.
 - Confirmed frozen documentation was not changed and no specification conflict was found.
 - Status: **READY FOR PHASE 2**.
+
+## 2026-08-25 — Phase 2 billing domain and fake payment path completed
+
+- Added the server-owned plan catalogue model and public `GET /api/v1/plans`.
+- Seeded the approved current VND catalogue from the supplied pricing screen: Free `0`/no expiry/1 interview, Basic `49,000`/3 days/3 interviews, Weekly `189,000`/14 days/20 interviews and Pro `599,000`/90 days/unlimited interviews.
+- Added authenticated idempotent checkout creation with server-side price snapshots, user-owned order history and current entitlement/usage in `GET /api/v1/me`.
+- Added `IPaymentProvider` and deterministic `FakePaymentProvider` with HMAC signature and timestamp verification; no production provider was selected.
+- Added payment events, subscriptions, entitlements, immutable usage events, idempotency records and outbox records through the source-controlled `Phase2BillingEntitlement` migration.
+- Added transactional quota `reserve`, `consume`, `void` and audited `adjustment` flows; PostgreSQL paths lock entitlement/order projections with `SELECT ... FOR UPDATE` under `ReadCommitted`.
+- Next: finish Phase 2 integration evidence and repository quality gates.
+
+## 2026-08-25 — Phase 2 integration evidence completed
+
+- Added T-03 coverage proving two concurrent reservations with one remaining quota create at most one reservation, followed by idempotent consume, adjustment and void ledger transitions.
+- Added T-04 coverage proving duplicate verified fake payment delivery creates one payment event, one subscription and one entitlement.
+- Added T-05 coverage proving an invalid webhook signature returns `401` and leaves the pending order unchanged.
+- Added forged client-price rejection, checkout idempotency replay/conflict, server catalogue, current entitlement and Phase 2 migration discovery checks.
+- Evidence before final gates: build succeeded with 0 warnings/errors; 5 unit and 10 integration tests passed.
+- Next: run restore/build/test, format, dependency/secret scans, migration script verification, then commit and open the Phase 2 pull request.
+
+## 2026-08-25 — Phase 2 final verification completed
+
+- Final restore and build passed with 0 warnings/errors; 5 unit and 10 integration tests passed.
+- Formatting verification passed for every changed C# and generated migration/model file.
+- EF Core reported no pending model changes; idempotent fresh and `InitialIdentityFoundation` upgrade scripts generated successfully.
+- NuGet reported no known vulnerable direct or transitive packages across all projects.
+- Secret-pattern scan found only documented `.env.example` placeholders and deterministic test passwords; no connection string, API key or live secret was added.
+- Status: **READY FOR PHASE 2 PULL REQUEST**.
