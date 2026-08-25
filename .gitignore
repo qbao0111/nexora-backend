@@ -10,6 +10,7 @@ TestResults/
 appsettings.Local.json
 secrets.json
 .nexora-storage/
+.nexora-local/
 .vs/
 .idea/
 .vscode/

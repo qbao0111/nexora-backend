@@ -322,14 +322,33 @@ public sealed partial class PracticeService(
 
     public async Task<int> ProcessPendingAsync(CancellationToken cancellationToken)
     {
-        var pending = dbContext.OutboxEvents.Where(item => item.Status == BillingValues.Pending &&
-                (item.Type == "ResumeExtractionRequested" || item.Type == "ResumeAnalysisRequested" ||
-                 item.Type == "InterviewStartRequested" || item.Type == "InterviewReportRequested"));
-        var jobs = !dbContext.Database.IsNpgsql()
-            ? (await pending.Take(20).ToArrayAsync(cancellationToken)).OrderBy(item => item.CreatedAt).ToArray()
-            : await pending.OrderBy(item => item.CreatedAt).Take(20).ToArrayAsync(cancellationToken);
-        foreach (var job in jobs)
+        var now = timeProvider.GetUtcNow();
+        var staleBefore = now.AddMinutes(-10);
+        var relevant = dbContext.OutboxEvents.AsNoTracking().Where(item =>
+            item.Type == "ResumeExtractionRequested" || item.Type == "ResumeAnalysisRequested" ||
+            item.Type == "InterviewStartRequested" || item.Type == "InterviewReportRequested");
+        var candidates = !dbContext.Database.IsNpgsql()
+            ? (await relevant.ToArrayAsync(cancellationToken))
+                .Where(item => item.Status == BillingValues.Pending ||
+                    (item.Status == BillingValues.Processing && item.ProcessedAt <= staleBefore))
+                .OrderBy(item => item.CreatedAt).Take(20).ToArray()
+            : await relevant.Where(item => item.Status == BillingValues.Pending ||
+                    (item.Status == BillingValues.Processing && item.ProcessedAt <= staleBefore))
+                .OrderBy(item => item.CreatedAt).Take(20).ToArrayAsync(cancellationToken);
+        var claimedCount = 0;
+        foreach (var candidate in candidates)
         {
+            var claimQuery = dbContext.OutboxEvents.Where(item => item.Id == candidate.Id && item.Status == candidate.Status);
+            claimQuery = candidate.Status == BillingValues.Pending
+                ? claimQuery.Where(item => item.ProcessedAt == null)
+                : claimQuery.Where(item => item.ProcessedAt == candidate.ProcessedAt);
+            var claimed = await claimQuery.ExecuteUpdateAsync(setters => setters
+                .SetProperty(item => item.Status, BillingValues.Processing)
+                .SetProperty(item => item.ProcessedAt, now), cancellationToken);
+            if (claimed == 0) continue;
+
+            claimedCount++;
+            var job = await dbContext.OutboxEvents.SingleAsync(item => item.Id == candidate.Id, cancellationToken);
             var started = Stopwatch.GetTimestamp();
             var queueLagSeconds = Math.Max(0, (timeProvider.GetUtcNow() - job.CreatedAt).TotalSeconds);
             try
@@ -350,7 +369,7 @@ public sealed partial class PracticeService(
                     queueLagSeconds, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
         }
-        return jobs.Length;
+        return claimedCount;
     }
 
     private async Task ExtractResumeAsync(OutboxEvent job, CancellationToken cancellationToken)
@@ -632,7 +651,7 @@ public sealed partial class PracticeService(
         new() { Id = Guid.NewGuid(), ActorId = userId, Operation = operation, Key = key, RequestFingerprint = fingerprint, ResourceId = resourceId, CreatedAt = now };
     private static OutboxEvent Outbox(string type, string aggregateType, Guid aggregateId, DateTimeOffset now) =>
         new() { Id = Guid.NewGuid(), Type = type, AggregateType = aggregateType, AggregateId = aggregateId, Payload = JsonSerializer.Serialize(new { aggregateId }), Status = BillingValues.Pending, CreatedAt = now };
-    private void MarkProcessed(OutboxEvent job) { job.Status = "processed"; job.ProcessedAt = timeProvider.GetUtcNow(); }
+    private void MarkProcessed(OutboxEvent job) { job.Status = BillingValues.Processed; job.ProcessedAt = timeProvider.GetUtcNow(); }
 
     [LoggerMessage(LogLevel.Information,
         "Job {JobId} ({JobType}/{AggregateId}) completed after {QueueLagSeconds} queue seconds in {DurationMs} ms")]

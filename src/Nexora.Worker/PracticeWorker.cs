@@ -3,7 +3,10 @@ using Nexora.Business.Privacy;
 
 namespace Nexora.Worker;
 
-public sealed partial class PracticeWorker(IServiceScopeFactory scopeFactory, ILogger<PracticeWorker> logger) : BackgroundService
+public sealed partial class PracticeWorker(
+    IServiceScopeFactory scopeFactory,
+    AdaptivePollingBackoff pollingBackoff,
+    ILogger<PracticeWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -14,13 +17,22 @@ public sealed partial class PracticeWorker(IServiceScopeFactory scopeFactory, IL
                 using var scope = scopeFactory.CreateScope();
                 var count = await scope.ServiceProvider.GetRequiredService<IPrivacyJobProcessor>().ProcessPendingAsync(stoppingToken);
                 count += await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(stoppingToken);
-                if (count == 0) await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
+                if (count > 0)
+                {
+                    pollingBackoff.Reset();
+                    await AdaptivePollingBackoff.DelayAsync(pollingBackoff.BusyDelay, stoppingToken);
+                }
+                else
+                {
+                    await AdaptivePollingBackoff.DelayAsync(pollingBackoff.NextIdleDelay(), stoppingToken);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
             catch (Exception exception)
             {
                 PollingFailed(logger, exception);
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                pollingBackoff.Reset();
+                await AdaptivePollingBackoff.DelayAsync(pollingBackoff.FailureDelay, stoppingToken);
             }
         }
     }
