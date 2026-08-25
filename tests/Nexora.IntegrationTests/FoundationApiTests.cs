@@ -2,6 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Nexora.Business.Billing;
+using Nexora.Data.Billing;
 using Nexora.Data.Persistence;
 
 namespace Nexora.IntegrationTests;
@@ -56,6 +59,29 @@ public sealed class FoundationApiTests : IClassFixture<NexoraApiFactory>
     }
 
     [Fact]
+    public async Task OperationalHealthDegradesWhenJobQueueExceedsThresholdNfrObs01()
+    {
+        using var client = _factory.CreateHttpsClient();
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        db.OutboxEvents.Add(new OutboxEvent
+        {
+            Id = Guid.NewGuid(),
+            Type = "ResumeExtractionRequested",
+            AggregateType = "test",
+            AggregateId = Guid.NewGuid(),
+            Payload = "{}",
+            Status = BillingValues.Pending,
+            CreatedAt = DateTimeOffset.UtcNow.AddHours(-1)
+        });
+        await db.SaveChangesAsync();
+
+        using var response = await client.GetAsync("/api/v1/health/operations");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Degraded", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
     public void PostgresMigrationsAreDiscoverable()
     {
         var options = new DbContextOptionsBuilder<NexoraDbContext>()
@@ -65,5 +91,6 @@ public sealed class FoundationApiTests : IClassFixture<NexoraApiFactory>
         Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_Phase2BillingEntitlement", StringComparison.Ordinal));
         Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_Phase2PlanCatalogue", StringComparison.Ordinal));
         Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_Phase3CoreAiPractice", StringComparison.Ordinal));
+        Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_Phase4PrivacyHardening", StringComparison.Ordinal));
     }
 }

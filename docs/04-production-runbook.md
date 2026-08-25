@@ -42,6 +42,9 @@ Không commit `.env`, CV mẫu có dữ liệu thật hoặc webhook payload pro
 - Ghi structured logs: actor, resource, event, duration, error code; không ghi CV, token hoặc nội dung nhạy cảm nguyên văn.
 - Alert: API 5xx > 2%, queue lag, AI failure, webhook verify fail, payment pending bất thường, quota transaction fail.
 - Dashboard theo dõi: latency, error rate, AI cost/job, payment conversion, job success rate.
+- Poll `/api/v1/health/operations`; trạng thái `Degraded` nghĩa là ít nhất một ngưỡng `OperationsHealth` bị vượt: queue lag, payment pending hoặc recent job/deletion failure. Route chỉ trả trạng thái tổng quát, không lộ count/ID ra response mặc định.
+- Log hoàn tất request gồm request ID, actor ID, method, path, status và duration; job/payment log chỉ chứa correlation/resource IDs, outcome, duration và exception type, không chứa body, CV/JD/transcript, token hoặc raw provider error.
+- Alert delivery/dashboard backend cụ thể được cấu hình cùng hạ tầng đã duyệt theo DEC-04; source hiện cung cấp vendor-neutral structured signals và health state.
 
 ## Performance baseline để test staging
 

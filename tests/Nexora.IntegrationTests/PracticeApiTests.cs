@@ -60,6 +60,11 @@ public sealed class PracticeApiTests
         Assert.Equal(PracticeValues.Completed, result.GetProperty("status").GetString());
         Assert.NotEmpty(result.GetProperty("result").GetProperty("strengths").EnumerateArray());
 
+        using var otherClient = factory.CreateHttpsClient();
+        var other = await RegisterAsync(otherClient);
+        otherClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", other.AccessToken);
+        Assert.Equal(HttpStatusCode.NotFound, (await otherClient.GetAsync($"/api/v1/resume-analyses/{analysisId}")).StatusCode);
+
         using var scope = factory.Services.CreateScope();
         var analysis = await scope.ServiceProvider.GetRequiredService<NexoraDbContext>().ResumeAnalyses.SingleAsync(item => item.Id == analysisId);
         Assert.Equal(1, analysis.ResumeVersion);

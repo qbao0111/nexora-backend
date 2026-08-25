@@ -47,3 +47,12 @@ Checklist kỹ thuật/sản phẩm cần đưa cho legal review:
 ## 5. Secure SDLC
 
 Process áp dụng theo bốn nhóm thực hành của [NIST SSDF](https://csrc.nist.gov/projects/ssdf): chuẩn bị tổ chức, bảo vệ software, tạo software an toàn và phản hồi vulnerability. Tối thiểu gồm PR review, dependency/secret scan, threat review khi thêm integration, vulnerability triage và post-incident corrective action.
+
+## 6. Phase 4 security review evidence — 2026-08-25
+
+- BOLA/BFLA: user-owned reads/mutations derive owner ID from authenticated claims; cross-owner interview/report/analysis paths and guest mutations have negative integration evidence.
+- Financial boundary: catalogue/price/quota remain server-owned; fake webhook signature, timestamp, replay and idempotent fulfillment have T-03/T-04/T-05 evidence.
+- Sensitive input/output: upload signature/size/MIME checks, private storage keys, bounded untrusted AI input and allowlisted export DTOs are covered by integration tests.
+- Production fail-closed: current Fake AI, Fake Payment and Local Storage/upload capabilities cannot be enabled in Production. They must remain feature-disabled until DEC-01, DEC-02 and DEC-04 approve and replace the adapters.
+- Logging review: structured signals contain IDs, status, duration and exception type only; request bodies, query strings, credentials, CV/JD/transcript and raw provider errors are excluded.
+- Remaining go-live evidence: approved domain/auth-cookie/CSRF browser E2E, production CORS/TLS, DEC-01–04, T-10 isolated restore, staging load/DAST and external alert delivery are still required. This review does not mark those gates complete.
