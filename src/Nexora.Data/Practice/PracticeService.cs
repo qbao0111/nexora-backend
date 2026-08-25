@@ -1,8 +1,10 @@
 using System.Data;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Nexora.Business.Ai;
 using Nexora.Business.Billing;
 using Nexora.Business.Common;
@@ -13,14 +15,15 @@ using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Practice;
 
-public sealed class PracticeService(
+public sealed partial class PracticeService(
     NexoraDbContext dbContext,
     IUploadProvider uploadProvider,
     IStorageProvider storageProvider,
     IDocumentExtractor documentExtractor,
     IAiProvider aiProvider,
     IBillingService billingService,
-    TimeProvider timeProvider) : IPracticeService, IPracticeJobProcessor
+    TimeProvider timeProvider,
+    ILogger<PracticeService> logger) : IPracticeService, IPracticeJobProcessor
 {
     private const string ModelVersion = "fake-ai-v1";
     private const string PromptVersion = "phase3-v1";
@@ -327,6 +330,8 @@ public sealed class PracticeService(
             : await pending.OrderBy(item => item.CreatedAt).Take(20).ToArrayAsync(cancellationToken);
         foreach (var job in jobs)
         {
+            var started = Stopwatch.GetTimestamp();
+            var queueLagSeconds = Math.Max(0, (timeProvider.GetUtcNow() - job.CreatedAt).TotalSeconds);
             try
             {
                 switch (job.Type)
@@ -336,10 +341,13 @@ public sealed class PracticeService(
                     case "InterviewStartRequested": await ActivateInterviewAsync(job, cancellationToken); break;
                     case "InterviewReportRequested": await BuildReportAsync(job, cancellationToken); break;
                 }
+                JobCompleted(logger, job.Id, job.Type, job.AggregateId, queueLagSeconds, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
             {
                 await FailJobAsync(job, cancellationToken);
+                JobFailed(logger, job.Id, job.Type, job.AggregateId, exception.GetType().Name,
+                    queueLagSeconds, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
         }
         return jobs.Length;
@@ -625,6 +633,16 @@ public sealed class PracticeService(
     private static OutboxEvent Outbox(string type, string aggregateType, Guid aggregateId, DateTimeOffset now) =>
         new() { Id = Guid.NewGuid(), Type = type, AggregateType = aggregateType, AggregateId = aggregateId, Payload = JsonSerializer.Serialize(new { aggregateId }), Status = BillingValues.Pending, CreatedAt = now };
     private void MarkProcessed(OutboxEvent job) { job.Status = "processed"; job.ProcessedAt = timeProvider.GetUtcNow(); }
+
+    [LoggerMessage(LogLevel.Information,
+        "Job {JobId} ({JobType}/{AggregateId}) completed after {QueueLagSeconds} queue seconds in {DurationMs} ms")]
+    private static partial void JobCompleted(
+        ILogger logger, Guid jobId, string jobType, Guid aggregateId, double queueLagSeconds, double durationMs);
+
+    [LoggerMessage(LogLevel.Error,
+        "Job {JobId} ({JobType}/{AggregateId}) failed with {ExceptionType} after {QueueLagSeconds} queue seconds in {DurationMs} ms")]
+    private static partial void JobFailed(
+        ILogger logger, Guid jobId, string jobType, Guid aggregateId, string exceptionType, double queueLagSeconds, double durationMs);
 
     private static ResumeView MapResume(ResumeRecord resume) => new(resume.Id, resume.StoredFile.FileName, resume.StoredFile.ContentType, resume.StoredFile.Size, resume.Status, resume.CreatedAt);
     private static JobDescriptionView MapJobDescription(JobDescription jd) => new(jd.Id, jd.Title, jd.Content, jd.CreatedAt);

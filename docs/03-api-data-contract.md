@@ -30,6 +30,7 @@
 | POST | `/interviews/:id/complete` | Kết thúc, tạo report. |
 | GET | `/interviews/:id/report` | Đọc report immutable của owner khi completed. |
 | GET | `/dashboard` | Tiến độ, lịch sử và quota. |
+| GET | `/health/operations` | Vendor-neutral aggregate operational state (`Healthy`/`Degraded`), không trả count hay resource ID mặc định. |
 
 ### Admin API — tối thiểu cho vận hành
 

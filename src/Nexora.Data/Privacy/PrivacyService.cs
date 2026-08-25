@@ -1,7 +1,9 @@
 using System.Data;
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Nexora.Business.Billing;
 using Nexora.Business.Common;
 using Nexora.Business.Practice;
@@ -12,11 +14,12 @@ using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Privacy;
 
-public sealed class PrivacyService(
+public sealed partial class PrivacyService(
     NexoraDbContext dbContext,
     IBillingService billingService,
     IStorageProvider storageProvider,
-    TimeProvider timeProvider) : IPrivacyService, IPrivacyJobProcessor
+    TimeProvider timeProvider,
+    ILogger<PrivacyService> logger) : IPrivacyService, IPrivacyJobProcessor
 {
     private const string DeletionType = "account_deletion";
     private const int MaxAttempts = 3;
@@ -110,11 +113,13 @@ public sealed class PrivacyService(
             if (claimed == 0) continue;
             processed++;
             var request = await dbContext.DataPrivacyRequests.SingleAsync(item => item.Id == candidate.Id, cancellationToken);
+            var started = Stopwatch.GetTimestamp();
             try
             {
                 await ProcessDeletionAsync(request, cancellationToken);
+                DeletionCompleted(logger, request.Id, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
             {
                 dbContext.ChangeTracker.Clear();
                 var failed = await dbContext.DataPrivacyRequests.SingleAsync(item => item.Id == request.Id, cancellationToken);
@@ -126,6 +131,8 @@ public sealed class PrivacyService(
                     ? failed.UpdatedAt.AddMinutes(failed.Attempts)
                     : null;
                 await dbContext.SaveChangesAsync(cancellationToken);
+                DeletionFailed(logger, request.Id, failed.Attempts, failed.Status, exception.GetType().Name,
+                    Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
         }
         return processed;
@@ -258,4 +265,12 @@ public sealed class PrivacyService(
 
     private static BusinessException NotFound() =>
         new("RESOURCE_NOT_FOUND", "Không tìm thấy tài nguyên.", BusinessErrorKind.NotFound);
+
+    [LoggerMessage(LogLevel.Information, "Deletion request {RequestId} completed in {DurationMs} ms")]
+    private static partial void DeletionCompleted(ILogger logger, Guid requestId, double durationMs);
+
+    [LoggerMessage(LogLevel.Error,
+        "Deletion request {RequestId} attempt {Attempt} ended as {Status} with {ExceptionType} in {DurationMs} ms")]
+    private static partial void DeletionFailed(
+        ILogger logger, Guid requestId, int attempt, string status, string exceptionType, double durationMs);
 }

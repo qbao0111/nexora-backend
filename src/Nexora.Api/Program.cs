@@ -21,10 +21,22 @@ using Nexora.Integrations;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddBusiness();
 builder.Services.AddData(builder.Configuration);
+ProductionSafety.ValidateDevelopmentAdapters(
+    builder.Environment.IsProduction(),
+    builder.Configuration.GetValue("Features:Ai", true),
+    builder.Configuration.GetValue("Features:Payment", true),
+    builder.Configuration.GetValue("Features:Upload", true));
 builder.Services.AddIntegrations(builder.Configuration);
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
-builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("postgresql", tags: ["ready"]);
+builder.Services.AddOptions<OperationsHealthOptions>()
+    .Bind(builder.Configuration.GetSection(OperationsHealthOptions.SectionName))
+    .Validate(options => options.MaxQueueLagMinutes > 0 && options.MaxPaymentPendingMinutes > 0 && options.RecentFailureWindowMinutes > 0,
+        "Operations health thresholds must be positive.")
+    .ValidateOnStart();
+builder.Services.AddHealthChecks()
+    .AddCheck<DatabaseHealthCheck>("postgresql", tags: ["ready"])
+    .AddCheck<OperationsHealthCheck>("operations", tags: ["operations"]);
 builder.Services.AddHardening(builder.Configuration);
 builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
@@ -87,6 +99,7 @@ if (origins.Length > 0)
 
 var app = builder.Build();
 app.UseMiddleware<CorrelationIdMiddleware>();
+app.UseMiddleware<RequestTelemetryMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 if (origins.Length > 0) app.UseCors("Frontend");
 app.UseAuthentication();
@@ -96,6 +109,7 @@ app.UseMiddleware<FeatureGateMiddleware>();
 if (app.Environment.IsDevelopment() || app.Environment.IsEnvironment("Testing")) app.MapOpenApi("/openapi/{documentName}.json");
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/api/v1/health", new HealthCheckOptions { Predicate = registration => registration.Tags.Contains("ready") });
+app.MapHealthChecks("/api/v1/health/operations", new HealthCheckOptions { Predicate = registration => registration.Tags.Contains("operations") });
 app.MapControllers();
 app.Run();
 

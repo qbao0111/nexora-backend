@@ -129,3 +129,20 @@ This log records completed implementation milestones and verification evidence. 
 - NuGet reported no known vulnerable direct or transitive packages. Secret-pattern review found only documented placeholders and deterministic test passwords; no connection string, API key or live secret was added.
 - T-10 restore rehearsal and k6 load execution are explicitly pending because this workstation has no approved isolated PostgreSQL target and does not have `pg_dump`, `pg_restore` or k6 installed.
 - Status: **READY FOR PHASE 4 VENDOR-NEUTRAL HARDENING PULL REQUEST**; the complete production Phase 4 exit remains blocked by DEC-01 through DEC-04 and staging/go-live evidence.
+
+## 2026-08-25 — Phase 4 observability and security-review milestone completed
+
+- Added structured request completion/5xx logs with request ID, actor ID, route, status and duration without bodies, query strings, credentials or sensitive candidate content.
+- Added structured job/deletion/payment outcome logs with stable resource/correlation IDs, queue lag/duration and safe exception type only.
+- Added vendor-neutral operational health thresholds for stale queue jobs, long-pending payments and recent terminal job/deletion failures at `/api/v1/health/operations`.
+- Added NFR-OBS-01 integration evidence proving stale queue work degrades the operational health signal while normal database readiness remains separate.
+- Completed the Phase 4 source security review and made current Fake AI, Fake Payment and Local Storage/upload features fail closed in Production until their deferred decisions approve replacements.
+- Remaining production gates are unchanged: DEC-01–04, browser auth/CSRF/CORS/TLS E2E, T-10 restore, staging load/DAST, external alert delivery and deployment.
+
+## 2026-08-25 — Phase 4 observability/security final verification completed
+
+- Final restore/build passed with 0 warnings/errors; 7 unit and 20 integration tests passed.
+- Phase-scoped formatting and whitespace checks passed; EF Core reported no pending model changes and generated the idempotent migration script successfully.
+- NuGet reported no known vulnerable direct or transitive packages. Secret review found only documented placeholders and deterministic test credentials.
+- No production provider, hosting vendor, legal text, retention period or infrastructure account was selected.
+- Status: **READY FOR PHASE 4 OBSERVABILITY/SECURITY PULL REQUEST**; full production exit still requires the unchanged staging, DEC-01–04 and go-live evidence.

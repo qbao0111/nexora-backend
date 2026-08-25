@@ -1,13 +1,19 @@
 using System.Data;
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Nexora.Business.Billing;
 using Nexora.Business.Common;
 using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Billing;
 
-public sealed class BillingService(NexoraDbContext dbContext, IPaymentProvider paymentProvider, TimeProvider timeProvider) : IBillingService
+public sealed partial class BillingService(
+    NexoraDbContext dbContext,
+    IPaymentProvider paymentProvider,
+    TimeProvider timeProvider,
+    ILogger<BillingService> logger) : IBillingService
 {
     public async Task<IReadOnlyCollection<PlanView>> GetPlansAsync(CancellationToken cancellationToken) =>
         await dbContext.Plans.AsNoTracking().Where(plan => plan.IsActive).OrderBy(plan => plan.SortOrder)
@@ -104,6 +110,7 @@ public sealed class BillingService(NexoraDbContext dbContext, IPaymentProvider p
         if (duplicate is not null)
         {
             if (duplicate.OrderId != verified.OrderId) throw IdempotencyConflict();
+            PaymentDuplicate(logger, CorrelationId(), verified.ProviderEventId, duplicate.OrderId);
             return await dbContext.Orders.Where(order => order.Id == duplicate.OrderId).Select(order => order.Status).SingleAsync(cancellationToken);
         }
 
@@ -114,6 +121,7 @@ public sealed class BillingService(NexoraDbContext dbContext, IPaymentProvider p
         if (duplicate is not null)
         {
             if (duplicate.OrderId != verified.OrderId) throw IdempotencyConflict();
+            PaymentDuplicate(logger, CorrelationId(), verified.ProviderEventId, duplicate.OrderId);
             return order.Status;
         }
         if (!string.Equals(order.PaymentProvider, paymentProvider.ProviderName, StringComparison.Ordinal) ||
@@ -164,6 +172,7 @@ public sealed class BillingService(NexoraDbContext dbContext, IPaymentProvider p
         }
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        PaymentProcessed(logger, CorrelationId(), verified.ProviderEventId, order.Id, order.Status);
         return order.Status;
     }
 
@@ -414,6 +423,17 @@ public sealed class BillingService(NexoraDbContext dbContext, IPaymentProvider p
         Status = BillingValues.Pending,
         CreatedAt = now
     };
+
+    private static string CorrelationId() => Activity.Current?.TraceId.ToString() ?? "none";
+
+    [LoggerMessage(LogLevel.Information,
+        "Payment event {ProviderEventId} for order {OrderId} processed with status {OrderStatus}; correlation {CorrelationId}")]
+    private static partial void PaymentProcessed(
+        ILogger logger, string correlationId, string providerEventId, Guid orderId, string orderStatus);
+
+    [LoggerMessage(LogLevel.Information,
+        "Duplicate payment event {ProviderEventId} for order {OrderId} ignored; correlation {CorrelationId}")]
+    private static partial void PaymentDuplicate(ILogger logger, string correlationId, string providerEventId, Guid orderId);
 
     private static string RequireKey(string value) =>
         string.IsNullOrWhiteSpace(value) || value.Trim().Length > 128
