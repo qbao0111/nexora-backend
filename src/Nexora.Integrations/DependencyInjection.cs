@@ -25,7 +25,9 @@ public static class DependencyInjection
         services.AddSingleton<IUploadProvider, LocalUploadProvider>();
         services.AddSingleton<IDocumentExtractor, FakeDocumentExtractor>();
         services.AddOptions<GeminiOptions>().Bind(configuration.GetSection(GeminiOptions.SectionName))
-            .Validate(options => options.TimeoutSeconds is >= 1 and <= 60, "Gemini timeout must be between 1 and 60 seconds.");
+            .Validate(options => options.TimeoutSeconds is >= 1 and <= 60, "Gemini timeout must be between 1 and 60 seconds.")
+            .Validate(options => options.MaxAttempts is >= 1 and <= 3, "Gemini attempts must be between 1 and 3.")
+            .Validate(options => options.RetryBaseDelayMilliseconds is >= 0 and <= 5_000, "Gemini retry delay must be between 0 and 5000 milliseconds.");
         services.AddHttpClient<GeminiAiProvider>();
         var aiProvider = configuration["Ai:Provider"] ?? "Fake";
         services.AddSingleton<IAiProvider>(provider =>

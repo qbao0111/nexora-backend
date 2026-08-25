@@ -168,3 +168,14 @@ This log records completed implementation milestones and verification evidence. 
 - PostgreSQL-specific transactional quota and atomic outbox-claim paths were exercised by the live flow; one order/report was observed through API projections and no duplicate processing surfaced.
 - No staging/production deployment, provider decision, production backup/restore (T-10) or production-readiness claim was made.
 - Status: **INTERNAL DEVELOPMENT ENVIRONMENT READY (NEON)**.
+
+## 2026-08-25 — Gemini development contract verified
+
+- Hardened `GeminiAiProvider` with configuration-driven timeout and bounded retry, provider-neutral failure categories, safe response handling and defensive structured-output parsing; no provider body or API key reaches Business/API errors.
+- Added purpose-specific instructions for the exact Nexora rubric, grounded evidence and concise bounded report content while preserving server-side schema and semantic validation.
+- Added 4 deterministic unit tests for request/schema isolation, bounded rate-limit retry, authentication-error normalization and invalid structured-response retry/failure. Default automated tests remain network-free with Fake AI.
+- Added an explicit opt-in Gemini live smoke that uses local user-secrets, Neon development PostgreSQL and synthetic CV/JD/answers only.
+- Live evidence passed the complete flow: auth, duplicate fake payment webhook, entitlement, private CV/JD, Gemini analysis, interview questions, both official-answer evaluations, report, dashboard and API-restart persistence.
+- Final restore/build passed with 0 warnings/errors; 14 unit and 20 integration tests passed. Formatting, EF model drift, dependency vulnerability and secret-pattern checks passed.
+- Gemini remains a development adapter only. DEC-01 production provider/model and budgets are unchanged and deferred.
+- Status: **GEMINI DEVELOPMENT CONTRACT READY FOR LOCAL FRONTEND INTEGRATION**.

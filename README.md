@@ -86,6 +86,14 @@ dotnet user-secrets set "Ai:Gemini:Model" "YOUR_CONFIGURED_MODEL" --project src/
 
 Restart API and Worker after changing provider settings. Gemini is not selected as the DEC-01 production provider.
 
+Run the opt-in live contract smoke only with synthetic candidate data:
+
+```powershell
+pwsh ./scripts/gemini-live-smoke.ps1
+```
+
+The script reads the Neon development connection and Gemini settings from local .NET user-secrets (or `NEXORA_DEV_POSTGRES` for the connection), then exercises the complete API + Worker journey. It is intentionally separate from `dotnet test`: normal automated tests remain deterministic and network-free. The adapter enforces a configured timeout, at most three attempts, normalized safe failures, Nexora-owned response schemas and server semantic validation. A successful development smoke does not approve Gemini for production. Do not send real CV/JD/transcript data through a free development quota; review the current [Gemini pricing/data-use terms](https://ai.google.dev/gemini-api/docs/pricing) before testing.
+
 ## Optional offline/local PostgreSQL
 
 [compose.dev.yml](compose.dev.yml) remains available for teammates who prefer an isolated local database. PostgreSQL binds only to `127.0.0.1:54329` and uses clearly synthetic local credentials:

@@ -222,11 +222,19 @@ public sealed partial class PracticeService(
         var question = snapshot.Questions.SingleOrDefault(item => item.Id == questionId) ?? throw NotFound();
         if (snapshot.Answers.Any(item => item.QuestionId == questionId)) throw Conflict("ANSWER_ALREADY_EXISTS", "Câu hỏi đã có câu trả lời chính thức.");
 
-        var evaluation = await aiProvider.GenerateStructuredAsync<AnswerEvaluation>(Request("interview.evaluate", content.Trim(), interviewId), cancellationToken);
-        ValidateScores(evaluation.Scores);
+        AnswerEvaluation evaluation;
         GeneratedQuestion? generated = null;
-        if (snapshot.Questions.Count < 2)
-            generated = await aiProvider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.followup", content.Trim(), interviewId), cancellationToken);
+        try
+        {
+            evaluation = await aiProvider.GenerateStructuredAsync<AnswerEvaluation>(Request("interview.evaluate", content.Trim(), interviewId), cancellationToken);
+            if (snapshot.Questions.Count < 2)
+                generated = await aiProvider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.followup", content.Trim(), interviewId), cancellationToken);
+        }
+        catch (AiProviderException exception)
+        {
+            throw AiUnavailable(exception);
+        }
+        ValidateScores(evaluation.Scores);
         if (generated is not null && string.IsNullOrWhiteSpace(generated.Content)) throw InvalidAiOutput();
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
@@ -640,7 +648,8 @@ public sealed partial class PracticeService(
             "interview.first-question" or "interview.followup" => QuestionSchema,
             _ => EmptySchema
         };
-        return new(purpose, PromptVersion, ModelVersion, RubricVersion, SchemaVersion, Bound(input), schema, 2_000, correlationId.ToString("N"));
+        var maxOutputTokens = purpose == "interview.report" ? 4_000 : 2_000;
+        return new(purpose, PromptVersion, ModelVersion, RubricVersion, SchemaVersion, Bound(input), schema, maxOutputTokens, correlationId.ToString("N"));
     }
 
     private static string Bound(string? value) => string.IsNullOrEmpty(value) ? string.Empty : value[..Math.Min(value.Length, 20_000)];
@@ -680,4 +689,8 @@ public sealed partial class PracticeService(
     private static BusinessException Conflict(string code, string message) => new(code, message, BusinessErrorKind.Conflict);
     private static BusinessException InvalidState() => Conflict("INVALID_INTERVIEW_STATE", "Trạng thái interview không hợp lệ cho thao tác này.");
     private static BusinessException InvalidAiOutput() => new("AI_OUTPUT_INVALID", "AI trả về dữ liệu không hợp lệ.", BusinessErrorKind.ExternalFailure);
+    private static BusinessException AiUnavailable(AiProviderException exception) => new(
+        exception.Kind == AiProviderFailureKind.RateLimited ? "AI_RATE_LIMITED" : "AI_PROVIDER_UNAVAILABLE",
+        "Dịch vụ AI tạm thời chưa sẵn sàng. Vui lòng thử lại sau.",
+        BusinessErrorKind.ExternalFailure);
 }
