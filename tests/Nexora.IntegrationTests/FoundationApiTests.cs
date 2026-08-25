@@ -56,7 +56,7 @@ public sealed class FoundationApiTests : IClassFixture<NexoraApiFactory>
     }
 
     [Fact]
-    public void InitialPostgresMigrationIsDiscoverable()
+    public void PostgresMigrationsAreDiscoverable()
     {
         var options = new DbContextOptionsBuilder<NexoraDbContext>()
             .UseNpgsql("Host=localhost;Database=metadata_only;Username=nexora").Options;
@@ -64,5 +64,6 @@ public sealed class FoundationApiTests : IClassFixture<NexoraApiFactory>
         Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_InitialIdentityFoundation", StringComparison.Ordinal));
         Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_Phase2BillingEntitlement", StringComparison.Ordinal));
         Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_Phase2PlanCatalogue", StringComparison.Ordinal));
+        Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_Phase3CoreAiPractice", StringComparison.Ordinal));
     }
 }

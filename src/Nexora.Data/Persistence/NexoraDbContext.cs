@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Nexora.Data.Billing;
 using Nexora.Data.Identity;
+using Nexora.Data.Practice;
 
 namespace Nexora.Data.Persistence;
 
@@ -20,6 +21,14 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<UsageEvent> UsageEvents => Set<UsageEvent>();
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
     public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>();
+    public DbSet<StoredFile> StoredFiles => Set<StoredFile>();
+    public DbSet<ResumeRecord> Resumes => Set<ResumeRecord>();
+    public DbSet<JobDescription> JobDescriptions => Set<JobDescription>();
+    public DbSet<ResumeAnalysis> ResumeAnalyses => Set<ResumeAnalysis>();
+    public DbSet<InterviewSession> InterviewSessions => Set<InterviewSession>();
+    public DbSet<InterviewQuestion> InterviewQuestions => Set<InterviewQuestion>();
+    public DbSet<InterviewAnswer> InterviewAnswers => Set<InterviewAnswer>();
+    public DbSet<InterviewReport> InterviewReports => Set<InterviewReport>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -59,6 +68,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
                 .HasForeignKey(token => token.UserId).OnDelete(DeleteBehavior.Cascade);
         });
         ConfigureBilling(builder);
+        ConfigurePractice(builder);
     }
 
     private static void ConfigureBilling(ModelBuilder builder)
@@ -173,6 +183,117 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.Property(outbox => outbox.AggregateType).HasMaxLength(80).IsRequired();
             entity.Property(outbox => outbox.Payload).HasColumnType("jsonb").IsRequired();
             entity.Property(outbox => outbox.Status).HasMaxLength(20).IsRequired();
+        });
+    }
+
+    private static void ConfigurePractice(ModelBuilder builder)
+    {
+        builder.Entity<StoredFile>(entity =>
+        {
+            entity.ToTable("stored_files");
+            entity.HasKey(file => file.Id);
+            entity.HasIndex(file => new { file.UserId, file.CreatedAt });
+            entity.HasIndex(file => file.StorageKey).IsUnique();
+            entity.Property(file => file.StorageKey).HasMaxLength(500).IsRequired();
+            entity.Property(file => file.FileName).HasMaxLength(255).IsRequired();
+            entity.Property(file => file.ContentType).HasMaxLength(120).IsRequired();
+            entity.Property(file => file.Checksum).HasMaxLength(64).IsRequired();
+            entity.HasOne(file => file.User).WithMany().HasForeignKey(file => file.UserId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<ResumeRecord>(entity =>
+        {
+            entity.ToTable("resumes");
+            entity.HasKey(resume => resume.Id);
+            entity.HasIndex(resume => new { resume.UserId, resume.CreatedAt });
+            entity.HasIndex(resume => resume.StoredFileId).IsUnique();
+            entity.Property(resume => resume.Status).HasMaxLength(20).IsRequired();
+            entity.HasOne(resume => resume.User).WithMany().HasForeignKey(resume => resume.UserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(resume => resume.StoredFile).WithOne().HasForeignKey<ResumeRecord>(resume => resume.StoredFileId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<JobDescription>(entity =>
+        {
+            entity.ToTable("job_descriptions");
+            entity.HasKey(jd => jd.Id);
+            entity.HasIndex(jd => new { jd.UserId, jd.CreatedAt });
+            entity.Property(jd => jd.Title).HasMaxLength(160).IsRequired();
+            entity.Property(jd => jd.Content).HasMaxLength(30_000).IsRequired();
+            entity.HasOne(jd => jd.User).WithMany().HasForeignKey(jd => jd.UserId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<ResumeAnalysis>(entity =>
+        {
+            entity.ToTable("resume_analyses");
+            entity.HasKey(analysis => analysis.Id);
+            entity.HasIndex(analysis => new { analysis.UserId, analysis.CreatedAt });
+            entity.Property(analysis => analysis.Status).HasMaxLength(20).IsRequired();
+            entity.Property(analysis => analysis.ModelVersion).HasMaxLength(80).IsRequired();
+            entity.Property(analysis => analysis.PromptVersion).HasMaxLength(80).IsRequired();
+            entity.Property(analysis => analysis.SchemaVersion).HasMaxLength(80).IsRequired();
+            entity.Property(analysis => analysis.Result).HasColumnType("jsonb");
+            entity.Property(analysis => analysis.ErrorCode).HasMaxLength(80);
+            entity.HasOne(analysis => analysis.User).WithMany().HasForeignKey(analysis => analysis.UserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(analysis => analysis.Resume).WithMany().HasForeignKey(analysis => analysis.ResumeId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(analysis => analysis.JobDescription).WithMany().HasForeignKey(analysis => analysis.JobDescriptionId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<InterviewSession>(entity =>
+        {
+            entity.ToTable("interview_sessions");
+            entity.HasKey(session => session.Id);
+            entity.HasIndex(session => new { session.UserId, session.CreatedAt });
+            entity.HasIndex(session => session.ReservationEventId).IsUnique();
+            entity.Property(session => session.Role).HasMaxLength(160).IsRequired();
+            entity.Property(session => session.Seniority).HasMaxLength(40).IsRequired();
+            entity.Property(session => session.InterviewType).HasMaxLength(40).IsRequired();
+            entity.Property(session => session.Difficulty).HasMaxLength(40).IsRequired();
+            entity.Property(session => session.Status).HasMaxLength(20).IsRequired();
+            entity.Property(session => session.Version).IsConcurrencyToken();
+            entity.HasOne(session => session.User).WithMany().HasForeignKey(session => session.UserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(session => session.Resume).WithMany().HasForeignKey(session => session.ResumeId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(session => session.JobDescription).WithMany().HasForeignKey(session => session.JobDescriptionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(session => session.ReservationEvent).WithOne().HasForeignKey<InterviewSession>(session => session.ReservationEventId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<InterviewQuestion>(entity =>
+        {
+            entity.ToTable("interview_questions");
+            entity.HasKey(question => question.Id);
+            entity.HasIndex(question => new { question.InterviewSessionId, question.Sequence }).IsUnique();
+            entity.Property(question => question.Content).HasMaxLength(2_000).IsRequired();
+            entity.Property(question => question.PromptVersion).HasMaxLength(80).IsRequired();
+            entity.Property(question => question.ModelVersion).HasMaxLength(80).IsRequired();
+            entity.HasOne(question => question.InterviewSession).WithMany(session => session.Questions)
+                .HasForeignKey(question => question.InterviewSessionId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<InterviewAnswer>(entity =>
+        {
+            entity.ToTable("interview_answers");
+            entity.HasKey(answer => answer.Id);
+            entity.HasIndex(answer => new { answer.InterviewSessionId, answer.QuestionId }).IsUnique();
+            entity.HasIndex(answer => new { answer.UserId, answer.CreatedAt });
+            entity.Property(answer => answer.Content).HasMaxLength(12_000).IsRequired();
+            entity.Property(answer => answer.Evaluation).HasColumnType("jsonb").IsRequired();
+            entity.HasOne(answer => answer.User).WithMany().HasForeignKey(answer => answer.UserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(answer => answer.InterviewSession).WithMany(session => session.Answers)
+                .HasForeignKey(answer => answer.InterviewSessionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(answer => answer.Question).WithOne(question => question.Answer)
+                .HasForeignKey<InterviewAnswer>(answer => answer.QuestionId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<InterviewReport>(entity =>
+        {
+            entity.ToTable("interview_reports");
+            entity.HasKey(report => report.Id);
+            entity.HasIndex(report => report.InterviewSessionId).IsUnique();
+            entity.HasIndex(report => new { report.UserId, report.CreatedAt });
+            entity.Property(report => report.Rubric).HasColumnType("jsonb").IsRequired();
+            entity.Property(report => report.Strengths).HasColumnType("jsonb").IsRequired();
+            entity.Property(report => report.Gaps).HasColumnType("jsonb").IsRequired();
+            entity.Property(report => report.ActionPlan).HasColumnType("jsonb").IsRequired();
+            entity.Property(report => report.Disclaimer).HasMaxLength(500).IsRequired();
+            entity.Property(report => report.ModelVersion).HasMaxLength(80).IsRequired();
+            entity.Property(report => report.PromptVersion).HasMaxLength(80).IsRequired();
+            entity.Property(report => report.RubricVersion).HasMaxLength(80).IsRequired();
+            entity.Property(report => report.SchemaVersion).HasMaxLength(80).IsRequired();
+            entity.HasOne(report => report.User).WithMany().HasForeignKey(report => report.UserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(report => report.InterviewSession).WithOne(session => session.Report)
+                .HasForeignKey<InterviewReport>(report => report.InterviewSessionId).OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

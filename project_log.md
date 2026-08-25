@@ -69,3 +69,36 @@ This log records completed implementation milestones and verification evidence. 
 - NuGet reported no known vulnerable direct or transitive packages across all projects.
 - Secret-pattern scan found only documented `.env.example` placeholders and deterministic test passwords; no connection string, API key or live secret was added.
 - Status: **READY FOR PHASE 2 PULL REQUEST**.
+
+## 2026-08-25 — Phase 3 private CV/JD boundary completed
+
+- Added short-lived development upload intents backed by private storage; final database records contain only storage keys, checksum, MIME and size, never public file URLs.
+- Added bounded PDF/DOCX extension, MIME, size and server-side signature validation before a final `stored_file`/`resume` record can exist.
+- Added resumable extraction and CV–JD analysis outbox jobs with owner isolation, input version snapshots and prompt/model/schema audit versions.
+- Added deterministic fake document extraction and structured fake AI analysis; the optional Gemini adapter is configuration-driven, sends its API key only in a request header and is blocked in Production pending DEC-01.
+- Evidence: T-06 rejects an executable renamed to PDF with no final storage/database record; the valid private resume/JD path completes a versioned analysis.
+
+## 2026-08-25 — Phase 3 interview lifecycle and quota boundary completed
+
+- Added the canonical interview session/question/official-answer persistence model and `draft`-compatible `starting → active → completing → completed`, `starting → failed` state transitions with optimistic versioning.
+- Added `IAiProvider.GenerateStructuredAsync<T>`, deterministic `FakeAiProvider`, bounded untrusted input, explicit response schemas and server semantic validation.
+- Made interview start one transaction for quota reserve + `starting` session + outbox; worker success atomically persists the first question + consume + active, while pre-activation failure atomically voids + fails.
+- Evidence: T-07 proves both success and deterministic timeout boundaries; refresh retains the persisted question order and official answers.
+
+## 2026-08-25 — Phase 3 report and dashboard milestone completed
+
+- Added idempotent official-answer evaluation, persisted follow-up questions, weighted server-side rubric scoring and one immutable evidence/strengths/gaps/action-plan report with the required coaching disclaimer.
+- Added free report retry while `completing`; a terminal report failure grants exactly one audited quota adjustment before a later retry can complete.
+- Added owner-scoped interview/report reads and database-backed dashboard history with current billing/quota state.
+- Added source-controlled `Phase3CoreAiPractice` PostgreSQL migration for CV/JD, analysis, interview and report tables.
+- Evidence: T-08 proves answer/question/report durability after refresh, dashboard persistence and cross-owner `404`; report failure/retry coverage proves one credit and one final report.
+- Next: run full repository quality gates, scan dependencies/secrets, verify migration scripts, then open the Phase 3 pull request.
+
+## 2026-08-25 — Phase 3 final verification completed
+
+- Final restore and build passed with 0 warnings/errors; 5 unit and 15 integration tests passed.
+- Formatting and whitespace verification passed for the solution and working tree.
+- EF Core reported no pending model changes; the full idempotent PostgreSQL migration script generated successfully through `Phase3CoreAiPractice`.
+- NuGet reported no known vulnerable direct or transitive packages across all projects.
+- Secret-pattern scan found only the documented `Password=replace-me` placeholder in `.env.example`; no connection string, API key or live secret was added.
+- Status: **READY FOR PHASE 3 PULL REQUEST**.
