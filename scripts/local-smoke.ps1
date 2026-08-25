@@ -2,6 +2,7 @@
 param(
     [string] $ApiUrl = 'http://127.0.0.1:5088',
     [string] $ConnectionString = $env:NEXORA_DEV_POSTGRES,
+    [ValidateSet('Fake', 'Gemini')] [string] $AiProvider = 'Fake',
     [switch] $Neon,
     [switch] $SkipDocker,
     [switch] $KeepServicesRunning
@@ -165,7 +166,7 @@ try {
     $env:ConnectionStrings__Postgres = $ConnectionString
     $env:Authentication__Jwt__SigningKey = $jwtKey
     $env:Storage__Local__RootPath = $storageRoot
-    $env:Ai__Provider = 'Fake'
+    $env:Ai__Provider = $AiProvider
     $env:Billing__FakePayment__WebhookSecret = $webhookSecret
 
     $workerProcess = Start-NexoraProcess Worker
@@ -297,7 +298,8 @@ try {
         }
     }
 
-    Write-Host ($Neon ? 'INTERNAL DEVELOPMENT ENVIRONMENT READY (NEON)' : 'LOCAL INTERNAL ENVIRONMENT READY')
+    $providerLabel = $AiProvider.ToUpperInvariant()
+    Write-Host ($Neon ? "INTERNAL DEVELOPMENT ENVIRONMENT READY (NEON, $providerLabel AI)" : "LOCAL INTERNAL ENVIRONMENT READY ($providerLabel AI)")
     Write-Host "Evidence logs: $logRoot"
 }
 finally {

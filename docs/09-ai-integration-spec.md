@@ -1,7 +1,7 @@
 # AI Integration Specification — Nexora
 
 **Status:** Approved implementation baseline; production provider/budgets deferred  
-**Last updated:** 2026-08-21
+**Last updated:** 2026-08-25
 
 ## 1. Allowed AI capabilities in MVP
 
@@ -33,6 +33,10 @@ Initial implementation được phép:
 
 Gemini không phải production choice mặc định. DEC-01 vẫn quyết định production provider/model và budgets.
 
+Provider failures use Nexora-owned categories (`configuration`, `authentication`, `rate-limited`, `timeout`, `unavailable`, `invalid-response`) and safe messages. The adapter must not copy a provider response body, credential, or SDK exception text into an API response. Retry only transient or invalid structured responses, use a configured overall timeout and cap attempts at three.
+
+Normal unit/integration tests remain deterministic with `FakeAiProvider` and no network. The opt-in `scripts/gemini-live-smoke.ps1` contract smoke may exercise the complete API + Worker flow against the configured development model using synthetic CV/JD/answers only. It is separate from the canonical automated gate, may consume provider quota, and is evidence for development compatibility—not production provider approval.
+
 ## 3. Job contract
 
 | Job | Input | Output/state | Quota point |
@@ -47,7 +51,7 @@ StartInterview retries must not duplicate session, question, usage event or job 
 
 ## 4. Output quality and safety rules
 
-- Structured output must pass JSON schema + server semantic validation (score 0–100, required evidence, no missing criterion).
+- Structured output must pass JSON schema + server semantic validation (exact rubric criteria `correctness`, `structure`, `completeness`, `clarity`; score 0–100; required grounded evidence; no missing criterion).
 - Preserve candidate facts: if a metric/result is absent, suggest how to quantify it; never fabricate achievements.
 - Keep `evidence` references to answer spans where possible. If no evidence exists, classify feedback as suggestion, not fact.
 - Treat CV/JD/answer as untrusted input: delimiter, instruction hierarchy, no tool access, no secrets in prompt, max input size.
