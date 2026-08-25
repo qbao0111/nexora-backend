@@ -15,6 +15,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Nexora.Business\Nexora.Business.csproj" />
     <ProjectReference Include="..\..\src\Nexora.Integrations\Nexora.Integrations.csproj" />
+    <ProjectReference Include="..\..\src\Nexora.Worker\Nexora.Worker.csproj" />
   </ItemGroup>
 
   <ItemGroup>

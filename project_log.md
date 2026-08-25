@@ -146,3 +146,25 @@ This log records completed implementation milestones and verification evidence. 
 - NuGet reported no known vulnerable direct or transitive packages. Secret review found only documented placeholders and deterministic test credentials.
 - No production provider, hosting vendor, legal text, retention period or infrastructure account was selected.
 - Status: **READY FOR PHASE 4 OBSERVABILITY/SECURITY PULL REQUEST**; full production exit still requires the unchanged staging, DEC-01–04 and go-live evidence.
+
+## 2026-08-25 — Internal-development tooling prepared
+
+- Added a dedicated Neon development-database workflow using secret-only connection configuration, TLS validation, source-controlled migration/model checks and no scripted remote reset/drop action.
+- Kept `compose.dev.yml` and guarded local database/reset scripts as an optional offline path; PostgreSQL is loopback-only with a named volume and synthetic development credentials.
+- Added an automated API + Worker smoke covering authentication, plans, duplicate fake payment delivery, entitlement, private CV/JD, worker analysis, the full interview/report journey, dashboard history and API-restart persistence.
+- Replaced fixed one-second worker polling with configurable bounded adaptive backoff, immediate reset after work, cancellation-aware waits and deterministic progression/reset/cap tests.
+- Added atomic outbox claiming with stale-claim recovery so concurrent workers do not normally process the same practice job.
+- Verification so far: restore/build passed with 0 warnings/errors; 10 unit and 20 integration tests passed; formatting, EF model drift, dependency vulnerability and secret-pattern checks passed.
+- Pending evidence: run the end-to-end smoke against the dedicated Neon development branch after `NEXORA_DEV_POSTGRES` is supplied through secret configuration. No production/staging readiness or T-10 claim is made.
+- Status: **INTERNAL DEVELOPMENT ENVIRONMENT NOT YET READY — Neon development connection is required for the final PostgreSQL smoke.**
+
+## 2026-08-25 — Neon internal-development verification completed
+
+- Created the non-expiring Neon `development` branch under the existing `nexora-backend` project, forked from `production`; the production branch was not modified by the readiness workflow.
+- Stored the development connection only in the shared local .NET user-secrets store, cleared the browser clipboard/runtime value and removed the one-time temporary transfer file; no live connection string entered the repository or task output.
+- Applied all source-controlled migrations through `Phase4PrivacyHardening` to the development branch and confirmed EF Core has no pending model changes.
+- Ran API and Worker simultaneously against Neon PostgreSQL with Fake AI, Fake Payment and Local Storage; readiness became healthy.
+- End-to-end smoke passed registration/login, `/me`, plans, duplicate verified fake webhook, entitlement, private CV/JD upload, worker extraction/analysis, interview activation, both official answers, completion/report, dashboard and persistence after API restart.
+- PostgreSQL-specific transactional quota and atomic outbox-claim paths were exercised by the live flow; one order/report was observed through API projections and no duplicate processing surfaced.
+- No staging/production deployment, provider decision, production backup/restore (T-10) or production-readiness claim was made.
+- Status: **INTERNAL DEVELOPMENT ENVIRONMENT READY (NEON)**.

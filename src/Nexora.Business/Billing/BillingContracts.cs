@@ -3,6 +3,8 @@ namespace Nexora.Business.Billing;
 public static class BillingValues
 {
     public const string Pending = "pending";
+    public const string Processing = "processing";
+    public const string Processed = "processed";
     public const string Fulfilled = "fulfilled";
     public const string Active = "active";
     public const string Reserve = "reserve";

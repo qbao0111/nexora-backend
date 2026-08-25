@@ -1,0 +1,23 @@
+name: nexora-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: nexora_dev
+      POSTGRES_USER: nexora_dev
+      POSTGRES_PASSWORD: nexora_dev_only
+    ports:
+      - "127.0.0.1:54329:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexora_dev -d nexora_dev"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    volumes:
+      - nexora_dev_postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  nexora_dev_postgres:
