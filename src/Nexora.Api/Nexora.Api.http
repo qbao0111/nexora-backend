@@ -1,6 +1,19 @@
-@Nexora.Api_HostAddress = http://localhost:5155
+@Nexora.Api_HostAddress = http://localhost:5088
 
-GET {{Nexora.Api_HostAddress}}/weatherforecast/
+GET {{Nexora.Api_HostAddress}}/health/live
 Accept: application/json
 
 ###
+
+GET {{Nexora.Api_HostAddress}}/api/v1/health
+Accept: application/json
+
+###
+
+GET {{Nexora.Api_HostAddress}}/api/v1/plans
+Accept: application/json
+
+###
+
+GET {{Nexora.Api_HostAddress}}/openapi/v1.json
+Accept: application/json

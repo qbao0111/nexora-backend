@@ -93,15 +93,18 @@ builder.Services.AddAuthorization(options =>
 });
 builder.Services.AddSingleton<IAuthorizationHandler, OwnerAuthorizationHandler>();
 
-var origins = builder.Configuration.GetSection("Frontend:AllowedOrigins").Get<string[]>() ?? [];
-if (origins.Length > 0)
-    builder.Services.AddCors(options => options.AddPolicy("Frontend", policy => policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials()));
+builder.Services.AddCors(options => options.AddPolicy("Frontend", policy => policy
+    .SetIsOriginAllowed(origin => (builder.Configuration.GetSection("Frontend:AllowedOrigins").Get<string[]>() ?? [])
+        .Contains(origin, StringComparer.OrdinalIgnoreCase))
+    .AllowAnyHeader()
+    .AllowAnyMethod()
+    .AllowCredentials()));
 
 var app = builder.Build();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<RequestTelemetryMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
-if (origins.Length > 0) app.UseCors("Frontend");
+app.UseCors("Frontend");
 app.UseAuthentication();
 app.UseRateLimiter();
 app.UseAuthorization();
