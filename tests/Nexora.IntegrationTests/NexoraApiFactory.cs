@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Nexora.Business.Ai;
 using Nexora.Data.Persistence;
 
 namespace Nexora.IntegrationTests;
@@ -14,9 +15,15 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
 {
     private readonly string _connectionString = $"Data Source=nexora-{Guid.NewGuid():N};Mode=Memory;Cache=Shared;Default Timeout=5";
     private readonly SqliteConnection _connection;
+    private readonly IAiProvider? _aiProvider;
 
-    public NexoraApiFactory()
+    public NexoraApiFactory() : this(null, true) { }
+
+    internal NexoraApiFactory(IAiProvider aiProvider) : this(aiProvider, true) { }
+
+    private NexoraApiFactory(IAiProvider? aiProvider, bool _)
     {
+        _aiProvider = aiProvider;
         _connection = new SqliteConnection(_connectionString);
         _connection.Open();
     }
@@ -40,6 +47,11 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
             services.RemoveAll<DbContextOptions<NexoraDbContext>>();
             services.RemoveAll<IDbContextOptionsConfiguration<NexoraDbContext>>();
             services.AddDbContext<NexoraDbContext>(options => options.UseSqlite(_connectionString));
+            if (_aiProvider is not null)
+            {
+                services.RemoveAll<IAiProvider>();
+                services.AddSingleton(_aiProvider);
+            }
         });
     }
 

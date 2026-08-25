@@ -4,10 +4,12 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Nexora.Business.Auth;
 using Nexora.Business.Billing;
+using Nexora.Business.Practice;
 using Nexora.Data.Auth;
 using Nexora.Data.Billing;
 using Nexora.Data.Identity;
 using Nexora.Data.Persistence;
+using Nexora.Data.Practice;
 
 namespace Nexora.Data;
 
@@ -15,13 +17,7 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddData(this IServiceCollection services, IConfiguration configuration)
     {
-        var connectionString = configuration.GetConnectionString("Postgres");
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException("ConnectionStrings:Postgres must be supplied through secret configuration.");
-        }
-
-        services.AddDbContext<NexoraDbContext>(options => options.UseNpgsql(connectionString));
+        services.AddDataPersistence(configuration);
         services.AddIdentityCore<ApplicationUser>(options =>
         {
             options.User.RequireUniqueEmail = true;
@@ -40,9 +36,24 @@ public static class DependencyInjection
             .Validate(options => options.AccessTokenMinutes is >= 5 and <= 60, "AccessTokenMinutes must be between 5 and 60.")
             .Validate(options => options.RefreshTokenDays is >= 1 and <= 90, "RefreshTokenDays must be between 1 and 90.")
             .ValidateOnStart();
-        services.AddSingleton(TimeProvider.System);
         services.AddScoped<IAuthService, IdentityAuthService>();
+        return services;
+    }
+
+    public static IServiceCollection AddDataPersistence(this IServiceCollection services, IConfiguration configuration)
+    {
+        var connectionString = configuration.GetConnectionString("Postgres");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException("ConnectionStrings:Postgres must be supplied through secret configuration.");
+        }
+
+        services.AddDbContext<NexoraDbContext>(options => options.UseNpgsql(connectionString));
+        services.AddSingleton(TimeProvider.System);
         services.AddScoped<IBillingService, BillingService>();
+        services.AddScoped<PracticeService>();
+        services.AddScoped<IPracticeService>(provider => provider.GetRequiredService<PracticeService>());
+        services.AddScoped<IPracticeJobProcessor>(provider => provider.GetRequiredService<PracticeService>());
         return services;
     }
 }
