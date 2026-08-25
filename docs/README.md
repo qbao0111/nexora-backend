@@ -1,8 +1,8 @@
 # Nexora Documentation Index
 
-**Status:** Approved implementation baseline  
-**Baseline:** Frozen for Phase 0 backend implementation  
-**Last updated:** 2026-08-21
+**Status:** Approved implementation baseline and internal-development navigation
+**Baseline:** Frozen specification; implementation guides evolve with verified repository capabilities
+**Last updated:** 2026-08-25
 
 Start at the repository [README](../README.md). Coding agents must read [AGENTS.md](../AGENTS.md), then the concise [implementation specification](../SPEC.md). This directory contains detailed sources; each has one primary responsibility.
 
@@ -22,6 +22,8 @@ Start at the repository [README](../README.md). Coding agents must read [AGENTS.
 | [09-ai-integration-spec.md](09-ai-integration-spec.md) | AI provider contract, validation, rubric and jobs. |
 | [10-delivery-plan.md](10-delivery-plan.md) | Implementation phases and readiness. |
 | [11-analysis-design-models.md](11-analysis-design-models.md) | Use cases, diagrams and traceability. |
+| [development-setup.md](development-setup.md) | Fresh-machine teammate setup, secret configuration, local runtime and troubleshooting. |
+| [frontend-integration.md](frontend-integration.md) | Browser/API handoff, auth, polling, idempotency and core FE journey. |
 
 ## Deferred decisions are production gates, not engineering blockers
 

@@ -179,3 +179,14 @@ This log records completed implementation milestones and verification evidence. 
 - Final restore/build passed with 0 warnings/errors; 14 unit and 20 integration tests passed. Formatting, EF model drift, dependency vulnerability and secret-pattern checks passed.
 - Gemini remains a development adapter only. DEC-01 production provider/model and budgets are unchanged and deferred.
 - Status: **GEMINI DEVELOPMENT CONTRACT READY FOR LOCAL FRONTEND INTEGRATION**.
+
+## 2026-08-25 — Local frontend contract and teammate onboarding completed
+
+- Added an exact development CORS allow-list for Vite on `localhost:5173`/`127.0.0.1:5173`; the runtime policy supports credentialed auth headers/cookies while unlisted origins receive no allow-origin response.
+- Added one-command Neon development startup for API + Worker with guarded migrations, readiness wait, safe logs and shared local user-secrets; stopping the command stops both child processes.
+- Added a signed fake-payment fulfillment helper so frontend developers can turn their own pending development order into an entitlement without exposing the webhook secret in browser code.
+- Added the frontend integration handoff for auth refresh, in-memory access tokens, response/error envelopes, idempotency, private upload, polling, canonical interview states and delivery slices.
+- Added fresh-machine teammate onboarding covering prerequisites, clone/build/test, per-machine secret setup, runtime checks, branch/PR workflow and troubleshooting. No local PostgreSQL installation is required for the Neon workflow.
+- Live evidence: API readiness and OpenAPI returned `200`; allowed Vite preflight returned `204` with exact origin/credentials; an untrusted origin was denied; register → pending checkout → signed fake payment → Basic entitlement with 3 available interviews passed against Neon.
+- Final restore/build passed with 0 warnings/errors; 14 unit and 21 integration tests passed. Formatting, PowerShell parsing, Markdown links, EF model drift, dependency vulnerability and secret-pattern checks passed.
+- Status: **BACKEND READY FOR NEW FRONTEND IMPLEMENTATION ON LOCAL DEVELOPMENT CONTRACT**.

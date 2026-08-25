@@ -59,6 +59,35 @@ public sealed class FoundationApiTests : IClassFixture<NexoraApiFactory>
     }
 
     [Fact]
+    public async Task ConfiguredFrontendOriginReceivesCredentialedCorsPreflight()
+    {
+        await using var factory = new NexoraApiFactory(new Dictionary<string, string?>
+        {
+            ["Frontend:AllowedOrigins:0"] = "http://localhost:5173"
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        using var request = new HttpRequestMessage(HttpMethod.Options, "/api/v1/auth/refresh");
+        request.Headers.Add("Origin", "http://localhost:5173");
+        request.Headers.Add("Access-Control-Request-Method", "POST");
+        request.Headers.Add("Access-Control-Request-Headers", "authorization,content-type,idempotency-key");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal("http://localhost:5173", response.Headers.GetValues("Access-Control-Allow-Origin").Single());
+        Assert.Equal("true", response.Headers.GetValues("Access-Control-Allow-Credentials").Single());
+        Assert.Contains("POST", response.Headers.GetValues("Access-Control-Allow-Methods").Single(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("idempotency-key", response.Headers.GetValues("Access-Control-Allow-Headers").Single(), StringComparison.OrdinalIgnoreCase);
+
+        using var rejectedRequest = new HttpRequestMessage(HttpMethod.Options, "/api/v1/auth/refresh");
+        rejectedRequest.Headers.Add("Origin", "https://untrusted.example");
+        rejectedRequest.Headers.Add("Access-Control-Request-Method", "POST");
+        using var rejectedResponse = await client.SendAsync(rejectedRequest);
+        Assert.False(rejectedResponse.Headers.Contains("Access-Control-Allow-Origin"));
+    }
+
+    [Fact]
     public async Task OperationalHealthDegradesWhenJobQueueExceedsThresholdNfrObs01()
     {
         using var client = _factory.CreateHttpsClient();

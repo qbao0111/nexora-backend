@@ -18,6 +18,8 @@ The backend is a .NET 10 modular monolith using ASP.NET Core 10, Entity Framewor
 3. Use the [documentation index](docs/README.md) for the owning detailed specification.
 4. Review [project_log.md](project_log.md) for completed slices and verification evidence.
 
+New teammates should follow [Team Development Setup](docs/development-setup.md). A team member with a fresh machine can use Neon and does not need to install PostgreSQL locally.
+
 ## Internal development with Neon
 
 Nexora uses a **dedicated Neon development branch/database** for shared internal development. It must not be a staging or production database. This is an internal-development dependency only and does not resolve DEC-04 or select production infrastructure.
@@ -52,9 +54,18 @@ The Neon database script accepts only a host ending in `.neon.tech` with `SSL Mo
 
 ### Run API and Worker
 
-Run both from the repository root in separate terminals:
+For frontend development, run both processes from one terminal:
 
 ```powershell
+pwsh ./scripts/run-development.ps1
+```
+
+The API is then available at `http://localhost:5088`, OpenAPI at `http://localhost:5088/openapi/v1.json`, and the development CORS allow-list accepts Vite on `http://localhost:5173`. Keep that terminal open; stopping it stops both child processes. See the [frontend local integration handoff](docs/frontend-integration.md) for auth, upload, polling, idempotency and core-journey contracts.
+
+Alternatively, run both from the repository root in separate terminals and configure the same URL/environment explicitly:
+
+```powershell
+$env:ASPNETCORE_URLS = 'http://localhost:5088'
 dotnet run --project src/Nexora.Api --no-launch-profile
 ```
 
