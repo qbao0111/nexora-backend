@@ -64,6 +64,26 @@ public sealed class HardeningApiTests
     }
 
     [Fact]
+    public async Task WhenRateLimitsDisabledRequestsAreNotRateLimited()
+    {
+        using var factory = new NexoraApiFactory(new Dictionary<string, string?>
+        {
+            ["RateLimits:Disabled"] = "true",
+            ["RateLimits:Authentication:PermitLimit"] = "1",
+            ["RateLimits:Authentication:WindowMinutes"] = "15",
+            ["RateLimits:LoginEmail:PermitLimit"] = "1",
+            ["RateLimits:LoginEmail:WindowMinutes"] = "15"
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            using var rejectedLogin = await client.PostAsJsonAsync("/api/v1/auth/login", new { email = "missing@example.test", password = "Wrong!Pass123" });
+            Assert.Equal(HttpStatusCode.Unauthorized, rejectedLogin.StatusCode);
+        }
+    }
+
+    [Fact]
     public async Task IndependentFeatureGatesPreserveAuthenticationBoundary()
     {
         using var factory = new NexoraApiFactory(new Dictionary<string, string?>

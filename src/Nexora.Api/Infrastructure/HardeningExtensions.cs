@@ -21,13 +21,18 @@ public static class RateLimitPolicies
 public sealed class LoginEmailRateLimiter(IConfiguration configuration) : IDisposable
 {
     private readonly PartitionedRateLimiter<string> _limiter = PartitionedRateLimiter.Create<string, string>(email =>
-        RateLimitPartition.GetFixedWindowLimiter(email.Trim().ToUpperInvariant(), _ => new FixedWindowRateLimiterOptions
+    {
+        if (configuration.GetValue<bool>("RateLimits:Disabled"))
+            return RateLimitPartition.GetNoLimiter(email.Trim().ToUpperInvariant());
+
+        return RateLimitPartition.GetFixedWindowLimiter(email.Trim().ToUpperInvariant(), _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = Positive(configuration, "RateLimits:LoginEmail:PermitLimit", 10),
             Window = TimeSpan.FromMinutes(Positive(configuration, "RateLimits:LoginEmail:WindowMinutes", 15)),
             QueueLimit = 0,
             AutoReplenishment = true
-        }));
+        });
+    });
 
     public RateLimitLease Acquire(string email) => _limiter.AttemptAcquire(email);
     public void Dispose() => _limiter.Dispose();
@@ -83,6 +88,12 @@ public static class HardeningExtensions
         int defaultWindowMinutes,
         Func<HttpContext, string> partitionKey)
     {
+        if (configuration.GetValue<bool>("RateLimits:Disabled"))
+        {
+            options.AddPolicy(policy, context => RateLimitPartition.GetNoLimiter(partitionKey(context)));
+            return;
+        }
+
         var permitLimit = configuration.GetValue($"RateLimits:{section}:PermitLimit", defaultPermitLimit);
         var windowMinutes = configuration.GetValue($"RateLimits:{section}:WindowMinutes", defaultWindowMinutes);
         if (permitLimit <= 0 || windowMinutes <= 0) throw new InvalidOperationException($"RateLimits:{section} must contain positive values.");
