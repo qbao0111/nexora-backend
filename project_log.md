@@ -222,3 +222,9 @@ This log records completed implementation milestones and verification evidence. 
 - Kept the production contract unchanged. The helper requires Bearer auth and `Idempotency-Key`, returns the generated resume/JD/analysis projections and remains hidden outside Development.
 - Added request fingerprinting so retrying the same key and payload returns the existing analysis instead of creating duplicates. No manual file-size, `resumeId` or `jobDescriptionId` input is needed for this shortcut.
 - Verification: restore/build passed with 0 warnings/errors; 14 unit and 31 integration tests passed, including the shortcut, idempotent retry and non-Development 404 guard. NuGet reported no vulnerable direct/transitive packages; no live secret was added.
+
+## 2026-09-01 — PDF text NUL sanitization hotfix
+
+- Sanitized U+0000 characters emitted by some PDF text layers before persisting `ExtractedText`; PostgreSQL rejects NUL in UTF-8 text and previously surfaced as `RESUME_EXTRACTION_FAILED`.
+- Normalized text is now validated after sanitization, so a document containing only unsupported text still fails safely.
+- Added a regression test using a PDF text stream containing a NUL character.

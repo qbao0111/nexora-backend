@@ -36,10 +36,11 @@ public sealed class PdfDocxDocumentExtractor : IDocumentExtractor
             };
 
             cancellationToken.ThrowIfCancellationRequested();
-            if (string.IsNullOrWhiteSpace(text))
+            var normalized = Normalize(text);
+            if (string.IsNullOrWhiteSpace(normalized))
                 throw new InvalidDataException("Document contains no extractable text.");
 
-            return Task.FromResult(Normalize(text));
+            return Task.FromResult(normalized);
         }
         catch (OperationCanceledException)
         {
@@ -72,7 +73,8 @@ public sealed class PdfDocxDocumentExtractor : IDocumentExtractor
 
     private static string Normalize(string text)
     {
-        var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal)
+        var lines = text.Replace("\0", string.Empty, StringComparison.Ordinal)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
             .Replace('\r', '\n')
             .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         return string.Join(Environment.NewLine, lines).Trim();
