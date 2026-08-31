@@ -237,3 +237,8 @@ This log records completed implementation milestones and verification evidence. 
 - Added versioned compact `ResumeProfile` persistence and `IResumeContextBuilder`. Raw normalized CV text is sent only for the one-time profile parse; analysis, interview, answer and report requests use bounded task-specific profile context.
 - Added synthetic PDF/DOCX extraction, quality, layout-fallback, Unicode, table, malformed/empty, cancellation, normalization and token-size diagnostics; extended practice coverage to verify profile caching metadata.
 - Added `DocumentExtractionV2Profile` migration. No production provider, storage, OCR or secret configuration changed.
+
+## 2026-09-01 — Document extraction V2 fixture completion
+
+- Added synthetic Unicode-mapped PDF fixtures for Vietnamese-only and mixed Vietnamese/English text, plus an image-only PDF fixture to exercise the OCR boundary without invoking OCR.
+- Final V2 test evidence: 14 unit tests and 44 integration tests passed; no package or secret changes were introduced.
