@@ -137,7 +137,7 @@ public interface IAiProvider
 
 `AiRequest` is Nexora-owned and carries purpose, prompt/model/rubric/schema versions, bounded untrusted input, output schema, token budget and correlation metadata. Every result receives JSON schema and semantic validation before persistence. Provider failures map to stable internal categories and safe API errors.
 
-Initial adapters may be `FakeAiProvider` and `GeminiAiProvider`. Gemini is development/testing-only unless DEC-01 later selects it for production: its SDK types stay in `Nexora.Integrations`, model ID comes from configuration, keys come from secret configuration, and outputs map to Nexora schemas. Details: [AI integration specification](docs/09-ai-integration-spec.md).
+Development uses `GeminiAiProvider` through the `IAiProvider` boundary; deterministic AI test doubles, when needed, stay inside the test project. Gemini remains internal-development-only unless DEC-01 later selects it for production: its SDK/HTTP types stay in `Nexora.Integrations`, model ID comes from configuration, keys come from secret configuration, and outputs map to Nexora schemas. Details: [AI integration specification](docs/09-ai-integration-spec.md).
 
 ## 12. Billing and quota model
 
@@ -233,7 +233,7 @@ None blocks backend/local development, Phases 0–3, or integration testing with
 1. **Phase 0 — readiness:** documentation freeze, solution/projects, CI, dev configuration/secrets, PostgreSQL and OpenAPI baseline.
 2. **Phase 1 — foundation:** Identity/auth/profile, migrations, error/correlation conventions, authorization and storage abstraction.
 3. **Phase 2 — billing/entitlement:** plan, entitlement, ledger/quota transaction, orders and fake payment/webhook path.
-4. **Phase 3 — core AI practice:** CV/JD, interview state machine, fake AI first, Gemini development adapter, questions/answers/report, then STAR/scenario according to SRS priority.
+4. **Phase 3 — core AI practice:** CV/JD, interview state machine, Gemini internal-development adapter, questions/answers/report, then STAR/scenario according to SRS priority.
 5. **Phase 4 — production integration/hardening:** resolve DEC-01–04, integrate selected providers/infrastructure, legal/retention, monitoring, security, recovery, load tests and deploy.
 
 Full phase exits: [delivery plan](docs/10-delivery-plan.md).

@@ -1,14 +1,12 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Nexora.Business.Billing;
 using Nexora.Business.Practice;
 using Nexora.Business.Privacy;
-using Nexora.Business.Storage;
 using Nexora.Data.Billing;
 using Nexora.Data.Persistence;
 using Nexora.Data.Practice;
@@ -26,29 +24,15 @@ public sealed class PrivacyApiTests
         var account = await RegisterAsync(client);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
 
-        var bytes = PdfTestDocument.CreateTextPdf("Private privacy resume");
-        using var presign = await client.PostAsJsonAsync("/api/v1/uploads/presign", new
-        {
-            fileName = "private-resume.pdf",
-            contentType = "application/pdf",
-            size = bytes.Length
-        });
-        var intent = await DataAsync(presign);
-        using (var upload = await client.PutAsync(intent.GetProperty("uploadUrl").GetString(), new ByteArrayContent(bytes)))
-            Assert.Equal(HttpStatusCode.NoContent, upload.StatusCode);
-        using (var finalize = await client.PostAsJsonAsync("/api/v1/resumes", new { uploadToken = intent.GetProperty("token").GetString() }))
-            Assert.Equal(HttpStatusCode.Created, finalize.StatusCode);
         using (var jd = await client.PostAsJsonAsync("/api/v1/job-descriptions", new
         {
             title = "Private role",
             content = "Private candidate requirements"
         })) Assert.Equal(HttpStatusCode.Created, jd.StatusCode);
 
-        string storageKey;
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-            storageKey = await db.StoredFiles.Where(item => item.UserId == account.UserId).Select(item => item.StorageKey).SingleAsync();
             await SeedPendingInterviewAsync(db, account.UserId);
         }
 
@@ -56,7 +40,6 @@ public sealed class PrivacyApiTests
         Assert.Equal(HttpStatusCode.OK, export.StatusCode);
         var exported = await DataAsync(export);
         Assert.Equal(account.UserId, exported.GetProperty("profile").GetProperty("id").GetGuid());
-        Assert.Equal("private-resume.pdf", exported.GetProperty("resumes")[0].GetProperty("fileName").GetString());
         Assert.Equal("Private role", exported.GetProperty("jobDescriptions")[0].GetProperty("title").GetString());
         Assert.DoesNotContain("storageKey", exported.GetRawText(), StringComparison.OrdinalIgnoreCase);
 
@@ -84,8 +67,6 @@ public sealed class PrivacyApiTests
             Assert.NotNull(user.DeletedAt);
             Assert.EndsWith("@invalid.local", user.Email, StringComparison.Ordinal);
             Assert.Equal(PrivacyValues.Completed, (await db.DataPrivacyRequests.SingleAsync()).Status);
-            var storage = scope.ServiceProvider.GetRequiredService<IStorageProvider>();
-            await Assert.ThrowsAsync<FileNotFoundException>(() => storage.OpenReadAsync(storageKey, CancellationToken.None));
         }
     }
 

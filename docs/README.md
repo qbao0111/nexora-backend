@@ -32,4 +32,4 @@ Start at the repository [README](../README.md). Coding agents must read [AGENTS.
 - **DEC-03:** final retention periods and approved legal/privacy text.
 - **DEC-04:** production hosting vendors, domains, mail provider and infrastructure accounts.
 
-These decisions do not block backend/local development, Phases 0–3 or integration testing using fake/development adapters. They block enabling only the corresponding real production capability. The canonical wording is in [07-architecture-decisions.md](07-architecture-decisions.md#production-enablement-decisions-dec-01-through-dec-04).
+These decisions do not block backend/local development or the internal Gemini, fake-payment and local-storage adapters. They block enabling only the corresponding real production capability. The canonical wording is in [07-architecture-decisions.md](07-architecture-decisions.md#production-enablement-decisions-dec-01-through-dec-04).

@@ -20,6 +20,7 @@ public sealed partial class PracticeService(
     IUploadProvider uploadProvider,
     IStorageProvider storageProvider,
     IDetailedDocumentExtractor detailedDocumentExtractor,
+    IDocumentOcrProvider documentOcrProvider,
     IResumeContextBuilder resumeContextBuilder,
     IAiProvider aiProvider,
     IBillingService billingService,
@@ -27,14 +28,13 @@ public sealed partial class PracticeService(
     ILogger<PracticeService> logger) : IPracticeService, IPracticeJobProcessor
 {
     private const string DevelopmentResumeAnalysisOperation = "development-resume-analysis.create";
-    private const string ModelVersion = "fake-ai-v1";
     private const string PromptVersion = "phase3-v1";
     private const string SchemaVersion = "phase3-v1";
-    private const string ProfileModelVersion = "fake-ai-v1";
     private const string ProfilePromptVersion = "resume-profile-v1";
     private const string ProfileSchemaVersion = "resume-profile-v1";
     private const string RubricVersion = "interview-rubric-v1";
     private const string Disclaimer = "Điểm số chỉ là ước lượng phục vụ coaching, không phải đánh giá tuyển dụng.";
+    private const string ResumeExtractionFailureMessage = "Không thể đọc nội dung CV. Vui lòng thử lại với file PDF hoặc DOCX rõ hơn.";
     private static readonly JsonDocument EmptySchema = JsonDocument.Parse("{}");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly JsonDocument QuestionSchema = JsonDocument.Parse("""{"type":"object","properties":{"content":{"type":"string"}},"required":["content"]}""");
@@ -42,6 +42,10 @@ public sealed partial class PracticeService(
     private static readonly JsonDocument ProfileSchema = JsonDocument.Parse("""{"type":"object","properties":{"summary":{"type":"string"},"skills":{"type":"array","items":{"type":"string"}},"experiences":{"type":"array","items":{"type":"object","properties":{"company":{"type":"string"},"role":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},"highlights":{"type":"array","items":{"type":"string"}}},"required":["company","role","start","end","highlights"]}},"education":{"type":"array","items":{"type":"object","properties":{"institution":{"type":"string"},"degree":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},"details":{"type":"array","items":{"type":"string"}}},"required":["institution","degree","start","end","details"]}},"projects":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"technologies":{"type":"array","items":{"type":"string"}},"highlights":{"type":"array","items":{"type":"string"}}},"required":["name","role","technologies","highlights"]}},"certifications":{"type":"array","items":{"type":"string"}},"languages":{"type":"array","items":{"type":"string"}}},"required":["summary","skills","experiences","education","projects","certifications","languages"]}""");
     private static readonly JsonDocument EvaluationSchema = JsonDocument.Parse("""{"type":"object","properties":{"scores":{"type":"array","items":{"type":"object","properties":{"criterion":{"type":"string"},"score":{"type":"integer"},"evidence":{"type":"string"}},"required":["criterion","score","evidence"]}},"feedback":{"type":"string"}},"required":["scores","feedback"]}""");
     private static readonly JsonDocument ReportSchema = JsonDocument.Parse("""{"type":"object","properties":{"scores":{"type":"array","items":{"type":"object","properties":{"criterion":{"type":"string"},"score":{"type":"integer"},"evidence":{"type":"string"}},"required":["criterion","score","evidence"]}},"strengths":{"type":"array","items":{"type":"string"}},"gaps":{"type":"array","items":{"type":"string"}},"actionPlan":{"type":"array","items":{"type":"string"}}},"required":["scores","strengths","gaps","actionPlan"]}""");
+
+    private string CurrentModelVersion => string.IsNullOrWhiteSpace(aiProvider.ModelVersion)
+        ? throw new InvalidOperationException("The configured AI provider must expose a model version.")
+        : aiProvider.ModelVersion.Trim();
 
     public async Task<DevelopmentResumeAnalysisView> CreateDevelopmentResumeAnalysisAsync(
         Guid userId, Stream content, string fileName, string contentType, long size, string jobDescription, string idempotencyKey,
@@ -112,6 +116,14 @@ public sealed partial class PracticeService(
         return MapResume(resume);
     }
 
+    public async Task<ResumeView> GetResumeAsync(Guid userId, Guid resumeId, CancellationToken cancellationToken)
+    {
+        var resume = await dbContext.Resumes.AsNoTracking().Include(item => item.StoredFile)
+            .SingleOrDefaultAsync(item => item.Id == resumeId && item.UserId == userId, cancellationToken)
+            ?? throw NotFound();
+        return MapResume(resume);
+    }
+
     private async Task WaitForResumeReadyAsync(Guid resumeId, CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < 30; attempt++)
@@ -120,7 +132,7 @@ public sealed partial class PracticeService(
                 .SingleAsync(cancellationToken);
             if (status == PracticeValues.Ready) return;
             if (status == PracticeValues.Failed)
-                throw Conflict("RESUME_EXTRACTION_FAILED", "Không thể đọc nội dung CV PDF/DOCX.");
+                throw Conflict("RESUME_EXTRACTION_FAILED", ResumeExtractionFailureMessage);
 
             await ProcessPendingAsync(cancellationToken);
             await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
@@ -181,7 +193,7 @@ public sealed partial class PracticeService(
             ResumeVersion = resume.Version,
             JobDescriptionVersion = jd.Version,
             Status = PracticeValues.Queued,
-            ModelVersion = ModelVersion,
+            ModelVersion = CurrentModelVersion,
             PromptVersion = PromptVersion,
             SchemaVersion = SchemaVersion,
             CreatedAt = now,
@@ -331,7 +343,7 @@ public sealed partial class PracticeService(
                 Sequence = session.Questions.Count + 1,
                 Content = generated.Content.Trim(),
                 PromptVersion = PromptVersion,
-                ModelVersion = ModelVersion,
+                ModelVersion = CurrentModelVersion,
                 CreatedAt = now
             };
             dbContext.InterviewQuestions.Add(nextQuestion);
@@ -449,15 +461,72 @@ public sealed partial class PracticeService(
     private async Task ExtractResumeAsync(OutboxEvent job, CancellationToken cancellationToken)
     {
         var resume = await dbContext.Resumes.Include(item => item.StoredFile).SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
-        await using var stream = await storageProvider.OpenReadAsync(resume.StoredFile.StorageKey, cancellationToken);
-        var extraction = await detailedDocumentExtractor.ExtractDetailedAsync(stream, resume.StoredFile.ContentType, cancellationToken);
+        resume.Status = PracticeValues.Extracting;
+        resume.UpdatedAt = timeProvider.GetUtcNow();
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        await using var source = await storageProvider.OpenReadAsync(resume.StoredFile.StorageKey, cancellationToken);
+        await using var buffered = new MemoryStream();
+        await source.CopyToAsync(buffered, cancellationToken);
+        buffered.Position = 0;
+
+        DocumentExtractionResult? localExtraction = null;
+        try
+        {
+            localExtraction = await detailedDocumentExtractor.ExtractDetailedAsync(
+                buffered, resume.StoredFile.ContentType, cancellationToken);
+        }
+        catch (InvalidDataException exception)
+        {
+            LocalExtractionFailed(logger, resume.Id, exception.GetType().Name);
+        }
+
+        if (localExtraction?.Quality == DocumentExtractionQuality.Good)
+        {
+            await CompleteResumeExtractionAsync(resume, job, localExtraction, profile: null, ocrFallbackUsed: false, cancellationToken: cancellationToken);
+            return;
+        }
+
+        resume.Status = PracticeValues.OcrFallback;
+        resume.UpdatedAt = timeProvider.GetUtcNow();
+        await dbContext.SaveChangesAsync(cancellationToken);
+        OcrFallbackStarted(logger, resume.Id, localExtraction?.Quality.ToString() ?? DocumentExtractionQuality.Failed.ToString());
+
+        buffered.Position = 0;
+        var fallback = await documentOcrProvider.ExtractAsync(buffered, resume.StoredFile.ContentType, cancellationToken);
+        var fallbackPageCount = fallback.PageCount > 0 ? fallback.PageCount : localExtraction?.PageCount ?? 1;
+        var extraction = detailedDocumentExtractor.EvaluateExtractedText(
+            fallback.ExtractedText,
+            fallbackPageCount,
+            DocumentExtractionMethod.GeminiOcr,
+            fallback.Warnings.Append("OCR_FALLBACK_USED"));
         if (extraction.Quality != DocumentExtractionQuality.Good)
-            throw new InvalidDataException("Document text extraction quality is insufficient; OCR may be required.");
+            throw new InvalidDataException("Gemini document extraction did not produce usable text.");
+
+        ValidateResumeProfile(fallback.Profile);
+        await CompleteResumeExtractionAsync(resume, job, extraction, fallback.Profile, ocrFallbackUsed: true, cancellationToken: cancellationToken);
+    }
+
+    private async Task CompleteResumeExtractionAsync(
+        ResumeRecord resume,
+        OutboxEvent job,
+        DocumentExtractionResult extraction,
+        ResumeProfile? profile,
+        bool ocrFallbackUsed,
+        CancellationToken cancellationToken)
+    {
         resume.ExtractedText = extraction.Text;
+        if (profile is not null)
+        {
+            resume.StructuredProfile = JsonSerializer.Serialize(profile, JsonOptions);
+            resume.ProfileModelVersion = CurrentModelVersion;
+            resume.ProfilePromptVersion = ProfilePromptVersion;
+            resume.ProfileSchemaVersion = ProfileSchemaVersion;
+        }
         resume.Status = PracticeValues.Ready;
         resume.UpdatedAt = timeProvider.GetUtcNow();
         ResumeExtractionMeasured(logger, resume.Id, extraction.PageCount, extraction.CharacterCount, extraction.WordCount,
-            extraction.ExtractionMethod.ToString(), extraction.QualityScore, string.Join(',', extraction.Warnings));
+            extraction.ExtractionMethod.ToString(), extraction.QualityScore, string.Join(',', extraction.Warnings), ocrFallbackUsed);
         MarkProcessed(job);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
@@ -467,7 +536,7 @@ public sealed partial class PracticeService(
     {
         if (resume.ProfilePromptVersion == ProfilePromptVersion &&
             resume.ProfileSchemaVersion == ProfileSchemaVersion &&
-            resume.ProfileModelVersion == ProfileModelVersion)
+            resume.ProfileModelVersion == CurrentModelVersion)
         {
             var existing = TryReadResumeProfile(resume.StructuredProfile);
             if (existing is not null) return existing;
@@ -488,7 +557,7 @@ public sealed partial class PracticeService(
 
         ValidateResumeProfile(profile);
         resume.StructuredProfile = JsonSerializer.Serialize(profile, JsonOptions);
-        resume.ProfileModelVersion = ProfileModelVersion;
+        resume.ProfileModelVersion = CurrentModelVersion;
         resume.ProfilePromptVersion = ProfilePromptVersion;
         resume.ProfileSchemaVersion = ProfileSchemaVersion;
         resume.UpdatedAt = timeProvider.GetUtcNow();
@@ -576,7 +645,7 @@ public sealed partial class PracticeService(
             Sequence = 1,
             Content = generated.Content.Trim(),
             PromptVersion = PromptVersion,
-            ModelVersion = ModelVersion,
+            ModelVersion = CurrentModelVersion,
             CreatedAt = now
         });
         FinalizeReservation(entitlement, reservation, BillingValues.Consume, now);
@@ -619,7 +688,7 @@ public sealed partial class PracticeService(
             Gaps = JsonSerializer.Serialize(output.Gaps, JsonOptions),
             ActionPlan = JsonSerializer.Serialize(output.ActionPlan, JsonOptions),
             Disclaimer = Disclaimer,
-            ModelVersion = ModelVersion,
+            ModelVersion = CurrentModelVersion,
             PromptVersion = PromptVersion,
             RubricVersion = RubricVersion,
             SchemaVersion = SchemaVersion,
@@ -787,7 +856,7 @@ public sealed partial class PracticeService(
         return (int)Math.Round(values["correctness"] * .40 + values["structure"] * .25 + values["completeness"] * .20 + values["clarity"] * .15);
     }
 
-    private static AiRequest Request(string purpose, string input, Guid correlationId)
+    private AiRequest Request(string purpose, string input, Guid correlationId)
     {
         var schema = purpose switch
         {
@@ -802,7 +871,7 @@ public sealed partial class PracticeService(
         var maxOutputTokens = purpose == "interview.report" ? 4_000 : isProfile ? 3_000 : 2_000;
         return new(purpose,
             isProfile ? ProfilePromptVersion : PromptVersion,
-            isProfile ? ProfileModelVersion : ModelVersion,
+            CurrentModelVersion,
             RubricVersion,
             isProfile ? ProfileSchemaVersion : SchemaVersion,
             Bound(input), schema, maxOutputTokens, correlationId.ToString("N"));
@@ -829,14 +898,34 @@ public sealed partial class PracticeService(
         ILogger logger, Guid jobId, string jobType, Guid aggregateId, string exceptionType, double queueLagSeconds, double durationMs);
 
     [LoggerMessage(LogLevel.Information,
-        "Resume {ResumeId} extracted with {PageCount} pages, {CharacterCount} chars, {WordCount} words, method {ExtractionMethod}, quality {QualityScore}, warnings {Warnings}")]
+        "Resume {ResumeId} extracted with {PageCount} pages, {CharacterCount} chars, {WordCount} words, method {ExtractionMethod}, quality {QualityScore}, OCR fallback {OcrFallbackUsed}, warnings {Warnings}")]
     private static partial void ResumeExtractionMeasured(
         ILogger logger, Guid resumeId, int pageCount, int characterCount, int wordCount,
-        string extractionMethod, double qualityScore, string warnings);
+        string extractionMethod, double qualityScore, string warnings, bool ocrFallbackUsed);
 
-    private static ResumeView MapResume(ResumeRecord resume) => new(resume.Id, resume.StoredFile.FileName, resume.StoredFile.ContentType, resume.StoredFile.Size, resume.Status, resume.CreatedAt);
+    [LoggerMessage(LogLevel.Warning, "Resume {ResumeId} local extraction failed with {ExceptionType}; trying document fallback")]
+    private static partial void LocalExtractionFailed(ILogger logger, Guid resumeId, string exceptionType);
+
+    [LoggerMessage(LogLevel.Information, "Resume {ResumeId} entered document OCR fallback after {LocalQuality} local quality")]
+    private static partial void OcrFallbackStarted(ILogger logger, Guid resumeId, string localQuality);
+
+    private static ResumeView MapResume(ResumeRecord resume) => new(
+        resume.Id,
+        resume.StoredFile.FileName,
+        resume.StoredFile.ContentType,
+        resume.StoredFile.Size,
+        resume.Status,
+        resume.CreatedAt,
+        resume.Status == PracticeValues.Failed ? "RESUME_EXTRACTION_FAILED" : null,
+        resume.Status == PracticeValues.Failed ? ResumeExtractionFailureMessage : null);
     private static JobDescriptionView MapJobDescription(JobDescription jd) => new(jd.Id, jd.Title, jd.Content, jd.CreatedAt);
-    private static ResumeAnalysisView MapAnalysis(ResumeAnalysis analysis) => new(analysis.Id, analysis.Status, ParseJson(analysis.Result), analysis.CreatedAt, analysis.CompletedAt);
+    private static ResumeAnalysisView MapAnalysis(ResumeAnalysis analysis) => new(
+        analysis.Id,
+        analysis.Status,
+        ParseJson(analysis.Result),
+        analysis.CreatedAt,
+        analysis.CompletedAt,
+        analysis.ErrorCode);
     private static InterviewView MapInterview(InterviewSession session, IEnumerable<InterviewQuestion> questions, IEnumerable<InterviewAnswer> answers) =>
         new(session.Id, session.Status, session.Role, session.Seniority, session.InterviewType, session.Difficulty, session.Version,
             questions.OrderBy(item => item.Sequence).Select(MapQuestion).ToArray(), answers.OrderBy(item => item.CreatedAt).Select(MapAnswer).ToArray(), session.CreatedAt, session.UpdatedAt);

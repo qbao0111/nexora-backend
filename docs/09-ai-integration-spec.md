@@ -18,6 +18,8 @@ Nexora is a practice product: AI output is coaching guidance, not hiring truth o
 ```csharp
 public interface IAiProvider
 {
+    string ModelVersion { get; }
+
     Task<T> GenerateStructuredAsync<T>(
         AiRequest request,
         CancellationToken cancellationToken);
@@ -26,22 +28,24 @@ public interface IAiProvider
 
 `AiRequest` contains purpose, approved prompt template version, untrusted user text delimiters, expected JSON schema, max tokens and correlation ID. Adapter normalises provider errors; provider-specific SDK types never escape to controller/business API.
 
-Initial implementation được phép:
+Current internal implementation:
 
-- `FakeAiProvider` cho deterministic unit/integration tests.
-- `GeminiAiProvider` cho development/testing bằng development API key/quota. Gemini SDK classes chỉ ở `Nexora.Integrations`; model identifier từ configuration; key từ secret configuration; output map sang Nexora-owned schema.
+- `GeminiAiProvider` là provider AI của application cho Development/internal testing bằng development API key/quota. Gemini SDK/HTTP types chỉ ở `Nexora.Integrations`; model identifier từ configuration; key từ secret configuration; output map sang Nexora-owned schema.
+- Automated tests that need deterministic provider behavior may register a test-project-only provider; no test double is part of the application runtime or normal development configuration.
 
 Gemini không phải production choice mặc định. DEC-01 vẫn quyết định production provider/model và budgets.
 
 Provider failures use Nexora-owned categories (`configuration`, `authentication`, `rate-limited`, `timeout`, `unavailable`, `invalid-response`) and safe messages. The adapter must not copy a provider response body, credential, or SDK exception text into an API response. Retry only transient or invalid structured responses, use a configured overall timeout and cap attempts at three.
 
-Normal unit/integration tests remain deterministic with `FakeAiProvider` and no network. The opt-in `scripts/gemini-live-smoke.ps1` contract smoke may exercise the complete API + Worker flow against the configured development model using synthetic CV/JD/answers only. It is separate from the canonical automated gate, may consume provider quota, and is evidence for development compatibility—not production provider approval.
+Normal internal validation uses the real browser/API/Worker/Gemini path with owner-supplied data. Automated tests remain network-free by replacing the adapter inside the test project where a critical state invariant needs deterministic output. Gemini development traffic is separate from production enablement and does not resolve DEC-01.
+
+Document fallback is a separate `IDocumentOcrProvider` boundary. `GeminiDocumentOcrProvider` receives the original document only after the local extraction quality gate is suspicious/failed, and returns faithful extracted text plus the compact resume profile in one document-understanding response. It is not used for normal text PDF/DOCX extraction and is not a production OCR decision.
 
 ## 3. Job contract
 
 | Job | Input | Output/state | Quota point |
 | --- | --- | --- | --- |
-| ExtractResume | stored file ID | extracted/failed | none |
+| ExtractResume | stored file ID | uploaded → extracting → ready/failed, with `ocr_fallback` when the local quality gate rejects text | none |
 | AnalyzeResume | resume/JD versions | analysis completed/failed | Theo entitlement riêng nếu plan định nghĩa; không dùng nhầm interview reservation |
 | StartInterview | interview context | session starting → active hoặc failed | API transaction reserves + creates `starting` session/job; worker success transaction persists validated first usable question + consumes + activates; terminal pre-activation failure transaction voids + fails |
 | EvaluateAnswer | question/answer snapshot | evaluation + next action | included in session entitlement |
@@ -70,4 +74,4 @@ Server computes weighted overall score from validated sub-scores. Store rubric v
 
 ## 6. Cost and observability
 
-Record model, prompt/rubric/schema version, input/output token count, latency, estimated cost, job outcome and correlation ID. **DEC-01 does not block development, fake/Gemini development testing or Phases 0–3.** It blocks real production AI traffic until Product Owner approves (a) production provider/model, (b) per-user daily/monthly budget, (c) global daily budget, (d) alert thresholds and (e) circuit-break action. Initial engineering defaults for development/staging only: alert at 70% configured daily budget, reject new AI jobs at 90%, circuit-break after 10 provider failures in 5 minutes; production values must replace them. Never run three model evaluations per answer in MVP without an explicit product experiment and budget approval.
+Record model, prompt/rubric/schema version, input/output token count, latency, estimated cost, job outcome and correlation ID. **DEC-01 does not block internal Gemini development testing or Phases 0–3.** It blocks real production AI traffic until Product Owner approves (a) production provider/model, (b) per-user daily/monthly budget, (c) global daily budget, (d) alert thresholds and (e) circuit-break action. Initial engineering defaults for development/staging only: alert at 70% configured daily budget, reject new AI jobs at 90%, circuit-break after 10 provider failures in 5 minutes; production values must replace them. Never run three model evaluations per answer in MVP without an explicit product experiment and budget approval.

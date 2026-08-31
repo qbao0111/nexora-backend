@@ -11,13 +11,18 @@ namespace Nexora.Api.Controllers;
 
 [ApiController]
 [Route("api/v1/auth")]
-public sealed class AuthController(IAuthService authService, LoginEmailRateLimiter loginEmailRateLimiter) : ControllerBase
+public sealed class AuthController(
+    IAuthService authService,
+    LoginEmailRateLimiter loginEmailRateLimiter,
+    IConfiguration configuration,
+    IHostEnvironment environment) : ControllerBase
 {
     private const string RefreshCookieName = "nexora.refresh";
 
     [AllowAnonymous, HttpPost("register"), EnableRateLimiting(RateLimitPolicies.Authentication)]
     public async Task<ActionResult<ApiResponse<AuthSessionResponse>>> Register(RegisterRequest request, CancellationToken cancellationToken)
     {
+        EnsureTrustedCookieOrigin();
         var session = await authService.RegisterAsync(new RegisterUserCommand(request.Email, request.Password, request.DisplayName), cancellationToken);
         WriteRefreshCookie(session);
         return StatusCode(201, new ApiResponse<AuthSessionResponse>(MapSession(session)));
@@ -26,6 +31,7 @@ public sealed class AuthController(IAuthService authService, LoginEmailRateLimit
     [AllowAnonymous, HttpPost("login"), EnableRateLimiting(RateLimitPolicies.Authentication)]
     public async Task<ActionResult<ApiResponse<AuthSessionResponse>>> Login(LoginRequest request, CancellationToken cancellationToken)
     {
+        EnsureTrustedCookieOrigin();
         using var lease = loginEmailRateLimiter.Acquire(request.Email);
         if (!lease.IsAcquired)
         {
@@ -42,6 +48,7 @@ public sealed class AuthController(IAuthService authService, LoginEmailRateLimit
     [AllowAnonymous, HttpPost("refresh"), EnableRateLimiting(RateLimitPolicies.Refresh)]
     public async Task<ActionResult<ApiResponse<AuthSessionResponse>>> Refresh(CancellationToken cancellationToken)
     {
+        EnsureTrustedCookieOrigin();
         var token = Request.Cookies[RefreshCookieName];
         if (string.IsNullOrWhiteSpace(token))
             throw new BusinessException("INVALID_REFRESH_TOKEN", "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.", BusinessErrorKind.Unauthorized);
@@ -53,6 +60,7 @@ public sealed class AuthController(IAuthService authService, LoginEmailRateLimit
     [Authorize, HttpPost("logout")]
     public async Task<IActionResult> Logout(CancellationToken cancellationToken)
     {
+        EnsureTrustedCookieOrigin();
         var token = Request.Cookies[RefreshCookieName];
         if (!string.IsNullOrWhiteSpace(token)) await authService.RevokeRefreshTokenAsync(token, cancellationToken);
         DeleteRefreshCookie();
@@ -62,6 +70,7 @@ public sealed class AuthController(IAuthService authService, LoginEmailRateLimit
     [Authorize, HttpPost("logout-all")]
     public async Task<IActionResult> LogoutAll(CancellationToken cancellationToken)
     {
+        EnsureTrustedCookieOrigin();
         await authService.RevokeAllSessionsAsync(User.GetRequiredUserId(), cancellationToken);
         DeleteRefreshCookie();
         return NoContent();
@@ -69,15 +78,34 @@ public sealed class AuthController(IAuthService authService, LoginEmailRateLimit
 
     private void WriteRefreshCookie(AuthSession session) => Response.Cookies.Append(RefreshCookieName, session.RefreshToken, CookieOptions(session.RefreshTokenExpiresAt));
     private void DeleteRefreshCookie() => Response.Cookies.Delete(RefreshCookieName, CookieOptions(DateTimeOffset.UnixEpoch));
-    private static CookieOptions CookieOptions(DateTimeOffset expiresAt) => new()
+    private CookieOptions CookieOptions(DateTimeOffset expiresAt)
     {
-        HttpOnly = true,
-        Secure = true,
-        SameSite = SameSiteMode.Strict,
-        Path = "/api/v1/auth",
-        Expires = expiresAt,
-        IsEssential = true
-    };
+        var configuredSameSite = configuration["Authentication:RefreshCookie:SameSite"];
+        var sameSite = Enum.TryParse<SameSiteMode>(configuredSameSite, ignoreCase: true, out var parsed)
+            ? parsed
+            : environment.IsDevelopment() ? SameSiteMode.Lax : SameSiteMode.Strict;
+        var secure = configuration.GetValue<bool?>("Authentication:RefreshCookie:Secure") ?? !environment.IsDevelopment();
+        if (sameSite == SameSiteMode.None && !secure)
+            throw new InvalidOperationException("Authentication:RefreshCookie:Secure must be true when SameSite=None.");
+        return new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = secure,
+            SameSite = sameSite,
+            Path = "/api/v1/auth",
+            Expires = expiresAt,
+            IsEssential = true
+        };
+    }
+
+    private void EnsureTrustedCookieOrigin()
+    {
+        var origin = Request.Headers.Origin.ToString();
+        if (string.IsNullOrWhiteSpace(origin)) return;
+        var allowedOrigins = configuration.GetSection("Frontend:AllowedOrigins").Get<string[]>() ?? [];
+        if (!allowedOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase))
+            throw new BusinessException("CSRF_ORIGIN_INVALID", "Nguồn trình duyệt không được phép.", BusinessErrorKind.Forbidden);
+    }
     private static AuthSessionResponse MapSession(AuthSession session) =>
         new(session.AccessToken, session.AccessTokenExpiresAt, new UserResponse(session.User.Id, session.User.Email, session.User.DisplayName, session.User.Roles));
 }

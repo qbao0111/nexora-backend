@@ -15,6 +15,11 @@ public sealed record AiRequest(
 
 public interface IAiProvider
 {
+    /// <summary>
+    /// Identifies the configured model/provider revision used for persisted AI results.
+    /// </summary>
+    string ModelVersion { get; }
+
     Task<T> GenerateStructuredAsync<T>(AiRequest request, CancellationToken cancellationToken);
 }
 

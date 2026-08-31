@@ -46,10 +46,11 @@ Both API and Worker use the shared user-secrets ID `Nexora.LocalDevelopment`, so
 
 ```powershell
 dotnet user-secrets set "ConnectionStrings:Postgres" "NEON_DEVELOPMENT_NPGSQL_CONNECTION" --project src/Nexora.Api
-dotnet user-secrets set "Ai:Provider" "Fake" --project src/Nexora.Api
+dotnet user-secrets set "Ai:Gemini:ApiKey" "GEMINI_DEVELOPMENT_KEY" --project src/Nexora.Api
+dotnet user-secrets set "Ai:Gemini:Model" "GEMINI_MODEL_ID" --project src/Nexora.Api
 ```
 
-Use only the Neon `development` branch. The guarded scripts reject non-Neon hosts for this workflow and never expose a remote reset/drop action. If the Neon branch selector says `production`, replace the secret with the connection from `development` before creating any test users. Fake AI is sufficient for initial FE integration and needs no AI key. For explicitly approved live Gemini testing, configure `Ai:Provider=Gemini`, `Ai:Gemini:ApiKey` and `Ai:Gemini:Model` through user-secrets. Gemini remains unapproved for production under DEC-01.
+Use only the Neon `development` branch. The guarded scripts reject non-Neon hosts for this workflow and never expose a remote reset/drop action. If the Neon branch selector says `production`, replace the secret with the connection from `development` before creating any test users. Gemini is required for the internal runtime; the API and Worker fail clearly at startup when either Gemini secret is missing. Gemini remains unapproved for production under DEC-01.
 
 Verify presence without sharing values:
 
@@ -78,23 +79,17 @@ Keep this terminal open while developing the frontend. Start the Vite frontend i
 
 Swagger uses the existing OpenAPI document, with Bearer authorization, required idempotency headers and raw PDF/DOCX upload inputs. It does not persist authorization across reloads or use an external schema validator. Neither UI nor JSON is exposed in Staging/Production; Testing retains JSON only. See the [Vietnamese FE setup and Swagger walkthrough](frontend-swagger-guide.vi.md) for a copy-ready checklist and resume troubleshooting.
 
-Resume extraction uses the real PDF/DOCX adapter. Text-based PDFs and DOCX files are supported; scanned/image-only PDFs fail extraction until OCR is added in a later phase.
+Resume extraction uses the real PDF/DOCX adapter. Text-based PDFs and DOCX files stay local; suspicious or image-only documents automatically enter the Gemini document fallback and expose `ocr_fallback` while processing.
 
 ## 5. Test payment and AI flows
 
-Normal automated tests use deterministic Fake AI and no live network. For a browser-created fake checkout, copy its `orderId` and fulfill it without exposing the webhook secret:
+Automated tests that protect critical invariants replace the AI adapter inside the test project and never call the network. For a browser-created fake checkout, copy its `orderId` and fulfill it without exposing the webhook secret:
 
 ```powershell
 pwsh ./scripts/complete-fake-payment.ps1 -OrderId "ORDER_ID"
 ```
 
-Refetch `/api/v1/me` after fulfillment. To verify the complete real Gemini development contract with synthetic data:
-
-```powershell
-pwsh ./scripts/gemini-live-smoke.ps1
-```
-
-The live smoke may consume provider quota. Never use a real candidate CV, JD or transcript.
+Refetch `/api/v1/me` after fulfillment. The owner validates the complete Gemini journey manually with the real browser/frontend and real CV/JD files; do not put provider secrets in the browser.
 
 ## 6. Team branch and pull-request workflow
 

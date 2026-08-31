@@ -69,4 +69,16 @@ public sealed class OpenApiTests
         Assert.True(shortcutProperties.TryGetProperty("File", out _));
         Assert.True(shortcutProperties.TryGetProperty("JobDescription", out _));
     }
+
+    [Theory]
+    [InlineData("Staging")]
+    [InlineData("Production")]
+    public async Task DevelopmentShortcutIsNotMappedOutsideDevelopment(string environment)
+    {
+        await using var factory = new NexoraApiFactory(environment);
+        using var client = factory.CreateHttpsClient();
+        using var form = new MultipartFormDataContent();
+        using var response = await client.PostAsync("/api/v1/dev/resume-analysis", form);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
 }

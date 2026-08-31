@@ -16,7 +16,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
 {
     private readonly string _connectionString = $"Data Source=nexora-{Guid.NewGuid():N};Mode=Memory;Cache=Shared;Default Timeout=5";
     private readonly SqliteConnection _connection;
-    private readonly IAiProvider? _aiProvider;
+    private readonly IAiProvider _aiProvider;
     private readonly IReadOnlyDictionary<string, string?>? _configurationOverrides;
     private readonly string _environment = "Testing";
 
@@ -31,15 +31,16 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
         ["Features:Ai"] = "false",
         ["Features:Payment"] = "false",
         ["Features:Upload"] = "false",
-        ["Ai:Provider"] = "Fake",
         ["Authentication:Jwt:Issuer"] = "Nexora.Tests",
         ["Authentication:Jwt:Audience"] = "Nexora.Tests.Client",
-        ["Authentication:Jwt:SigningKey"] = "integration-test-signing-key-32-characters-minimum"
+        ["Authentication:Jwt:SigningKey"] = "integration-test-signing-key-32-characters-minimum",
+        ["Ai:Gemini:ApiKey"] = "test-only-not-used",
+        ["Ai:Gemini:Model"] = "test-gemini-model"
     }) => _environment = environment;
 
     private NexoraApiFactory(IAiProvider? aiProvider, IReadOnlyDictionary<string, string?>? configurationOverrides)
     {
-        _aiProvider = aiProvider;
+        _aiProvider = aiProvider ?? new TestAiProvider();
         _configurationOverrides = configurationOverrides;
         _connection = new SqliteConnection(_connectionString);
         _connection.Open();
@@ -58,6 +59,8 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
                 ["Authentication:Jwt:Audience"] = "Nexora.Tests.Client",
                 ["Billing:FakePayment:WebhookSecret"] = "phase2-test-webhook-key-material",
                 ["Billing:FakePayment:TimestampToleranceMinutes"] = "5",
+                ["Ai:Gemini:ApiKey"] = "test-only-not-used",
+                ["Ai:Gemini:Model"] = "test-gemini-model",
                 ["Storage:Local:RootPath"] = Path.Combine(Path.GetTempPath(), "nexora-api-tests")
             };
             if (_configurationOverrides is not null)
@@ -69,11 +72,8 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
             services.RemoveAll<DbContextOptions<NexoraDbContext>>();
             services.RemoveAll<IDbContextOptionsConfiguration<NexoraDbContext>>();
             services.AddDbContext<NexoraDbContext>(options => options.UseSqlite(_connectionString));
-            if (_aiProvider is not null)
-            {
-                services.RemoveAll<IAiProvider>();
-                services.AddSingleton(_aiProvider);
-            }
+            services.RemoveAll<IAiProvider>();
+            services.AddSingleton(_aiProvider);
         });
     }
 

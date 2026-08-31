@@ -22,6 +22,7 @@
 | POST | `/webhooks/payments/:provider` | Nhận webhook đã verify chữ ký. |
 | POST | `/uploads/presign` | Cấp signed URL upload CV/avatar. |
 | POST | `/resumes` | Ghi metadata file sau upload. |
+| GET | `/resumes/:id` | Đọc trạng thái xử lý CV và lỗi an toàn của owner. |
 | POST | `/resume-analyses` | Tạo job phân tích CV–JD. |
 | GET | `/resume-analyses/:id` | Trạng thái/kết quả phân tích. |
 | POST | `/interviews` | Tạo và bắt đầu phiên phỏng vấn. |
@@ -71,6 +72,23 @@ POST /api/v1/interviews
 ```
 
 `resumeId` và `jobDescriptionId` là optional nhưng, nếu có, phải thuộc user hiện tại. Server tự tính entitlement; client không gửi `plan`, `score`, `userId`, price hay quota. Client poll `GET /interviews/{id}` cho tới `active` + first question hoặc terminal failure. Reservation được consume theo server-observable transaction dưới đây, không theo network receipt.
+
+### Upload và xử lý CV
+
+Sau khi `POST /uploads/presign`, client PUT đúng bytes file vào `uploadUrl`, rồi gọi `POST /resumes` với `uploadToken`. Response resume ban đầu có `status: "uploaded"`; client poll `GET /api/v1/resumes/{id}` cho tới `ready` hoặc `failed`. Worker dùng `extracting` cho local PdfPig/OpenXML, `ocr_fallback` khi quality gate yêu cầu document fallback Gemini, rồi `ready` khi đã lưu canonical extracted text. Khi cả hai đường đọc thất bại, status là `failed` và response có:
+
+```json
+{
+  "data": {
+    "id": "01J...",
+    "status": "failed",
+    "errorCode": "RESUME_EXTRACTION_FAILED",
+    "errorMessage": "Không thể đọc nội dung CV. Vui lòng thử lại với file PDF hoặc DOCX rõ hơn."
+  }
+}
+```
+
+`extractedText` và nội dung tài liệu không được trả qua API. Khi resume đã `ready`, `POST /resume-analyses` chỉ enqueue job; client poll `GET /resume-analyses/{id}` cho tới `completed` hoặc `failed`. `analysis.errorCode` chỉ là mã an toàn để hiển thị/xử lý retry, không chứa provider response.
 
 Canonical StartInterview transactions:
 
@@ -156,7 +174,8 @@ Response có answer đã lưu và question tiếp theo hoặc `isComplete: true`
 Order: pending -> paid -> fulfilled
        pending -> expired | failed
        paid | fulfilled -> refunded (theo DEC-02/BR-07)
-Resume: uploaded -> processing -> ready | failed | deleted
+Resume: uploaded -> extracting -> ready | failed | deleted
+         extracting -> ocr_fallback -> ready | failed
 Analysis: queued -> processing -> completed | failed | cancelled
 Interview: canonical tại 08-data-model.md
   draft -> starting -> active -> completing -> completed

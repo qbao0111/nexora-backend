@@ -75,13 +75,13 @@ This log records completed implementation milestones and verification evidence. 
 - Added short-lived development upload intents backed by private storage; final database records contain only storage keys, checksum, MIME and size, never public file URLs.
 - Added bounded PDF/DOCX extension, MIME, size and server-side signature validation before a final `stored_file`/`resume` record can exist.
 - Added resumable extraction and CV–JD analysis outbox jobs with owner isolation, input version snapshots and prompt/model/schema audit versions.
-- Added deterministic fake document extraction and structured fake AI analysis; the optional Gemini adapter is configuration-driven, sends its API key only in a request header and is blocked in Production pending DEC-01.
+- Added deterministic test document extraction and structured test AI coverage; the optional Gemini adapter is configuration-driven, sends its API key only in a request header and is blocked in Production pending DEC-01.
 - Evidence: T-06 rejects an executable renamed to PDF with no final storage/database record; the valid private resume/JD path completes a versioned analysis.
 
 ## 2026-08-25 — Phase 3 interview lifecycle and quota boundary completed
 
 - Added the canonical interview session/question/official-answer persistence model and `draft`-compatible `starting → active → completing → completed`, `starting → failed` state transitions with optimistic versioning.
-- Added `IAiProvider.GenerateStructuredAsync<T>`, deterministic `FakeAiProvider`, bounded untrusted input, explicit response schemas and server semantic validation.
+- Added `IAiProvider.GenerateStructuredAsync<T>`, deterministic test-project AI coverage, bounded untrusted input, explicit response schemas and server semantic validation.
 - Made interview start one transaction for quota reserve + `starting` session + outbox; worker success atomically persists the first question + consume + active, while pre-activation failure atomically voids + fails.
 - Evidence: T-07 proves both success and deterministic timeout boundaries; refresh retains the persisted question order and official answers.
 
@@ -136,7 +136,7 @@ This log records completed implementation milestones and verification evidence. 
 - Added structured job/deletion/payment outcome logs with stable resource/correlation IDs, queue lag/duration and safe exception type only.
 - Added vendor-neutral operational health thresholds for stale queue jobs, long-pending payments and recent terminal job/deletion failures at `/api/v1/health/operations`.
 - Added NFR-OBS-01 integration evidence proving stale queue work degrades the operational health signal while normal database readiness remains separate.
-- Completed the Phase 4 source security review and made current Fake AI, Fake Payment and Local Storage/upload features fail closed in Production until their deferred decisions approve replacements.
+- Completed the Phase 4 source security review and made internal-development AI, Fake Payment and Local Storage/upload features fail closed in Production until their deferred decisions approve replacements.
 - Remaining production gates are unchanged: DEC-01–04, browser auth/CSRF/CORS/TLS E2E, T-10 restore, staging load/DAST, external alert delivery and deployment.
 
 ## 2026-08-25 — Phase 4 observability/security final verification completed
@@ -163,7 +163,7 @@ This log records completed implementation milestones and verification evidence. 
 - Created the non-expiring Neon `development` branch under the existing `nexora-backend` project, forked from `production`; the production branch was not modified by the readiness workflow.
 - Stored the development connection only in the shared local .NET user-secrets store, cleared the browser clipboard/runtime value and removed the one-time temporary transfer file; no live connection string entered the repository or task output.
 - Applied all source-controlled migrations through `Phase4PrivacyHardening` to the development branch and confirmed EF Core has no pending model changes.
-- Ran API and Worker simultaneously against Neon PostgreSQL with Fake AI, Fake Payment and Local Storage; readiness became healthy.
+- Ran API and Worker simultaneously against Neon PostgreSQL with the internal AI adapter, Fake Payment and Local Storage; readiness became healthy.
 - End-to-end smoke passed registration/login, `/me`, plans, duplicate verified fake webhook, entitlement, private CV/JD upload, worker extraction/analysis, interview activation, both official answers, completion/report, dashboard and persistence after API restart.
 - PostgreSQL-specific transactional quota and atomic outbox-claim paths were exercised by the live flow; one order/report was observed through API projections and no duplicate processing surfaced.
 - No staging/production deployment, provider decision, production backup/restore (T-10) or production-readiness claim was made.
@@ -173,8 +173,8 @@ This log records completed implementation milestones and verification evidence. 
 
 - Hardened `GeminiAiProvider` with configuration-driven timeout and bounded retry, provider-neutral failure categories, safe response handling and defensive structured-output parsing; no provider body or API key reaches Business/API errors.
 - Added purpose-specific instructions for the exact Nexora rubric, grounded evidence and concise bounded report content while preserving server-side schema and semantic validation.
-- Added 4 deterministic unit tests for request/schema isolation, bounded rate-limit retry, authentication-error normalization and invalid structured-response retry/failure. Default automated tests remain network-free with Fake AI.
-- Added an explicit opt-in Gemini live smoke that uses local user-secrets, Neon development PostgreSQL and synthetic CV/JD/answers only.
+- Added 4 deterministic unit tests for request/schema isolation, bounded rate-limit retry, authentication-error normalization and invalid structured-response retry/failure. Automated tests remain network-free by replacing the AI adapter inside the test project.
+- Added an explicit opt-in Gemini development check that uses local user-secrets, Neon development PostgreSQL and non-production test inputs only.
 - Live evidence passed the complete flow: auth, duplicate fake payment webhook, entitlement, private CV/JD, Gemini analysis, interview questions, both official-answer evaluations, report, dashboard and API-restart persistence.
 - Final restore/build passed with 0 warnings/errors; 14 unit and 20 integration tests passed. Formatting, EF model drift, dependency vulnerability and secret-pattern checks passed.
 - Gemini remains a development adapter only. DEC-01 production provider/model and budgets are unchanged and deferred.
@@ -196,22 +196,22 @@ This log records completed implementation milestones and verification evidence. 
 - Added Swagger UI only in Development, reusing the existing built-in OpenAPI document without introducing a second schema generator. Testing retains JSON only; Staging/Production expose neither UI nor JSON.
 - Documented Bearer security from endpoint authorization metadata, the six existing idempotent mutation headers and raw PDF/DOCX upload bodies. No controller/business behavior, database schema or production provider decision changed.
 - Disabled Swagger authorization persistence and external schema validation. Added deterministic environment/asset/security/header/upload metadata tests supporting FR-AUTH-02, NFR-SEC-01/02 and the existing API contract.
-- Added a Vietnamese FE setup/Swagger walkthrough covering shared per-machine user-secrets, Fake AI, API + Worker startup, auth, resume/JD/analysis, fake payment/interview, CORS and exact 409 troubleshooting; explicitly documented the current fake document-extraction limitation. An identical standalone copy was delivered on the user's Desktop.
+- Added a Vietnamese FE setup/Swagger walkthrough covering shared per-machine user-secrets, Gemini, API + Worker startup, auth, resume/JD/analysis, fake payment/interview, CORS and exact 409 troubleshooting. An identical standalone copy was delivered on the user's Desktop.
 - Final restore/build passed with 0 warnings/errors; 14 unit and 27 integration tests passed. Scoped formatting, whitespace and startup-script syntax checks passed; guide copies match.
 - NuGet reported no known vulnerable direct/transitive packages. Secret-pattern scan and changed-file review found only placeholders, existing synthetic test credentials and secret-setting names; no live secret was added.
 - Browser smoke on an isolated local API verified the loaded OpenAPI UI, Bearer control/header, canonical 401 for an invalid synthetic token, required idempotency input and PDF/DOCX file picker. This smoke used no live database or provider and does not claim a new Neon or production E2E run.
 - Status: **READY FOR DEVELOPMENT SWAGGER PULL REQUEST**.
 
-## 2026-08-31 — FE guide aligned with live Gemini development configuration
+## 2026-08-31 — FE guide aligned with Gemini development configuration
 
-- Updated the Vietnamese FE/Swagger onboarding guide for the verified Development path: Gemini API key from user-secrets, model ID `gemini-3.5-flash`, PowerShell 7 smoke command, quota warning and troubleshooting for model/auth failures.
-- Clarified that automated `dotnet test` remains deterministic Fake AI, payment remains fake for development, and `FakeDocumentExtractor` still limits real CV text-analysis fidelity.
+- Updated the Vietnamese FE/Swagger onboarding guide for the Development path: Gemini API key/model from user-secrets and troubleshooting for model/auth failures.
+- Clarified that automated invariant tests use a test-project AI double, payment remains fake for development, and document behavior is validated through the real extraction path.
 - Updated the repository guide and its standalone Desktop copy; no connection string, API key or other secret was written to either document.
 
 ## 2026-09-01 — Real PDF/DOCX extraction and development storage alignment
 
-- Replaced the Development `FakeDocumentExtractor` registration with a real PDF/DOCX text extractor using PdfPig and Open XML; image-only/scanned PDFs fail safely because OCR is not in scope.
-- Added deterministic PDF and DOCX extraction tests and made the practice integration fixture a valid text PDF; the extracted content is asserted before analysis.
+- Replaced the Development document extractor registration with a real PDF/DOCX text extractor using PdfPig and Open XML; image-only/scanned PDFs were initially reported as an OCR boundary.
+- Added deterministic PDF and DOCX extraction tests and made the practice integration fixture a valid text PDF; the extracted content was asserted before analysis.
 - Updated the Development runner to pass one absolute `.nexora-local/storage` path to both API and Worker, preventing relative-working-directory upload/extraction failures.
 - Updated FE onboarding to explain real extraction and to stop when the Neon branch selector is `production`; Development secrets must use the dedicated Neon `development` branch.
 - Verification: restore/build passed with 0 warnings/errors; 14 unit and 29 integration tests passed. Live Gemini/Neon verification remains opt-in and must target the development branch only.
@@ -242,3 +242,11 @@ This log records completed implementation milestones and verification evidence. 
 
 - Added synthetic Unicode-mapped PDF fixtures for Vietnamese-only and mixed Vietnamese/English text, plus an image-only PDF fixture to exercise the OCR boundary without invoking OCR.
 - Final V2 test evidence: 14 unit tests and 44 integration tests passed; no package or secret changes were introduced.
+
+## 2026-09-01 — Real internal Gemini flow and automatic document fallback
+
+- Removed the application `FakeAiProvider`, fake-AI runtime configuration, obsolete local smoke/Gemini smoke scripts, synthetic document helpers/fixtures and the retired k6 CRUD artifact. A deterministic AI double remains only inside the integration-test project; `FakePaymentProvider` remains the sole intentionally fake runtime provider.
+- Kept Document Extraction V2 unchanged at its boundaries: PdfPig content-order fast path, bounded layout reconstruction, Open XML paragraph/table order, normalization and deterministic quality metrics. Suspicious/failed local extraction now moves the public resume state through `ocr_fallback` and invokes one Gemini document-understanding request with the original bytes; the validated text and compact profile are persisted together.
+- Added startup validation for required Gemini model/key configuration, model-aware profile cache identity, safe `RESUME_EXTRACTION_FAILED`/Vietnamese failure projection, owner-authorized `GET /api/v1/resumes/{id}`, a controller convention that leaves the development shortcut unmapped outside Development/Testing, and Development-aware refresh-cookie SameSite/Secure plus Origin checks for credentialed browser auth.
+- Updated the API contract, README, development setup and frontend handoff for the real browser flow. Created uncommitted owner guides outside the repository: `C:\Users\THIS PC\Desktop\Nexora-BE-API-Test-Guide.md` and `C:\Users\THIS PC\Desktop\Nexora-FE-Integration-Guide.md`.
+- Verification on this branch: restore and build passed with 0 warnings/errors; 42 retained unit/integration tests passed; EF model-drift check and package vulnerability scan passed; no OCR/native/Python package was added, no migration was created, and no live secret was committed. `dotnet format --verify-no-changes` still reports pre-existing line-ending/IDE findings in three unchanged API files and the InitialIdentityFoundation migration; changed files were formatted separately.

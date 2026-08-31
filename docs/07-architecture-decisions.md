@@ -61,7 +61,7 @@ Nexora.Worker         bounded background jobs only
 
 ## Production enablement decisions DEC-01 through DEC-04
 
-Các DEC này **không block backend/local development, Phases 0–3 hoặc integration tests dùng fake/development providers**. Chúng chỉ block capability production tương ứng khi cần choice production-specific.
+Các DEC này **không block backend/local development, Phases 0–3 hoặc integration tests dùng internal Gemini/test-project doubles**. Chúng chỉ block capability production tương ứng khi cần choice production-specific.
 
 | Decision | Status | Còn cần chốt | Chỉ block |
 | --- | --- | --- | --- |
@@ -70,4 +70,4 @@ Các DEC này **không block backend/local development, Phases 0–3 hoặc inte
 | DEC-03 | Deferred — required before production enablement | Final CV/JD/transcript/recording/log retention periods; approved Terms/Privacy/AI/recording text | Affected production data processing/go-live |
 | DEC-04 | Deferred — required before production enablement | Production API/worker/database/object-storage hosting, domains, mail provider and infrastructure accounts | Affected production deployment |
 
-Temporary implementations are approved for engineering: `FakeAiProvider` and configuration-driven `GeminiAiProvider`; `FakePaymentProvider`; `LocalStorageProvider` or development storage adapter. Các implementation này không tạo production vendor decision.
+Temporary implementations are approved for engineering: configuration-driven `GeminiAiProvider` for internal development, `FakePaymentProvider`, and `LocalStorageProvider`/development storage. A deterministic AI test double may exist only inside the test project. These implementations do not create a production vendor decision.

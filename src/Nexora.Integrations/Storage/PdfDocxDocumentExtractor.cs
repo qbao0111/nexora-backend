@@ -67,6 +67,17 @@ public sealed class PdfDocxDocumentExtractor(IOptions<DocumentExtractionQualityO
         }
     }
 
+    public DocumentExtractionResult EvaluateExtractedText(
+        string text,
+        int pageCount,
+        DocumentExtractionMethod method,
+        IEnumerable<string>? warnings = null)
+    {
+        var warningList = warnings?.ToList() ?? [];
+        var normalized = NormalizePages([text ?? string.Empty], warningList);
+        return Evaluate(normalized, Math.Max(1, pageCount), method, warningList);
+    }
+
     private DocumentExtractionResult ExtractPdf(Stream content, CancellationToken cancellationToken)
     {
         using var document = PdfDocument.Open(content);

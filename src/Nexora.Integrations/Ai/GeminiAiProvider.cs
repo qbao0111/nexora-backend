@@ -20,6 +20,8 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    public string ModelVersion => $"gemini:{options.Value.Model.Trim()}";
+
     public async Task<T> GenerateStructuredAsync<T>(AiRequest request, CancellationToken cancellationToken)
     {
         var configuration = options.Value;
@@ -74,7 +76,7 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
     private static HttpRequestMessage CreateRequest(AiRequest request, GeminiOptions configuration)
     {
         var message = new HttpRequestMessage(HttpMethod.Post,
-            $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(configuration.Model)}:generateContent");
+            $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(configuration.Model.Trim())}:generateContent");
         message.Headers.Add("x-goog-api-key", configuration.ApiKey);
         message.Content = JsonContent.Create(new
         {
