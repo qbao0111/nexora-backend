@@ -31,7 +31,10 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
         ["Features:Ai"] = "false",
         ["Features:Payment"] = "false",
         ["Features:Upload"] = "false",
-        ["Ai:Provider"] = "Fake"
+        ["Ai:Provider"] = "Fake",
+        ["Authentication:Jwt:Issuer"] = "Nexora.Tests",
+        ["Authentication:Jwt:Audience"] = "Nexora.Tests.Client",
+        ["Authentication:Jwt:SigningKey"] = "integration-test-signing-key-32-characters-minimum"
     }) => _environment = environment;
 
     private NexoraApiFactory(IAiProvider? aiProvider, IReadOnlyDictionary<string, string?>? configurationOverrides)
