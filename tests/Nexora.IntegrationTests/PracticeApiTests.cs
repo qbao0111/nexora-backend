@@ -28,7 +28,7 @@ public sealed class PracticeApiTests
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dev/resume-analysis");
         request.Headers.Add("Idempotency-Key", "hidden-shortcut");
         using var form = new MultipartFormDataContent();
-        using var file = new ByteArrayContent(PdfTestDocument.CreateTextPdf("Synthetic resume"));
+        using var file = new ByteArrayContent(PdfTestDocument.CreateTextPdf("Synthetic resume for backend developer with CSharp PostgreSQL skills"));
         file.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
         form.Add(file, "File", "resume.pdf");
         form.Add(new StringContent("Synthetic JD"), "JobDescription");
@@ -128,6 +128,15 @@ public sealed class PracticeApiTests
         var result = await DataAsync(resultResponse);
         Assert.Equal(PracticeValues.Completed, result.GetProperty("status").GetString());
         Assert.NotEmpty(result.GetProperty("result").GetProperty("strengths").EnumerateArray());
+
+        using (var profileScope = factory.Services.CreateScope())
+        {
+            var resume = await profileScope.ServiceProvider.GetRequiredService<NexoraDbContext>().Resumes
+                .SingleAsync(item => item.Id == resumeId);
+            Assert.False(string.IsNullOrWhiteSpace(resume.StructuredProfile));
+            Assert.Equal("resume-profile-v1", resume.ProfilePromptVersion);
+            Assert.Equal("resume-profile-v1", resume.ProfileSchemaVersion);
+        }
 
         using var otherClient = factory.CreateHttpsClient();
         var other = await RegisterAsync(otherClient);

@@ -23,7 +23,11 @@ public static class DependencyInjection
             .Validate(options => options.MaxResumeBytes is > 0 and <= 25 * 1024 * 1024, "Upload limit must be between 1 byte and 25 MiB.")
             .Validate(options => options.IntentMinutes is > 0 and <= 60, "Upload intent lifetime must be between 1 and 60 minutes.");
         services.AddSingleton<IUploadProvider, LocalUploadProvider>();
-        services.AddSingleton<IDocumentExtractor, PdfDocxDocumentExtractor>();
+        services.AddOptions<DocumentExtractionQualityOptions>()
+            .Bind(configuration.GetSection("Documents:Extraction:Quality"));
+        services.AddSingleton<PdfDocxDocumentExtractor>();
+        services.AddSingleton<IDocumentExtractor>(provider => provider.GetRequiredService<PdfDocxDocumentExtractor>());
+        services.AddSingleton<IDetailedDocumentExtractor>(provider => provider.GetRequiredService<PdfDocxDocumentExtractor>());
         services.AddOptions<GeminiOptions>().Bind(configuration.GetSection(GeminiOptions.SectionName))
             .Validate(options => options.TimeoutSeconds is >= 1 and <= 60, "Gemini timeout must be between 1 and 60 seconds.")
             .Validate(options => options.MaxAttempts is >= 1 and <= 3, "Gemini attempts must be between 1 and 3.")

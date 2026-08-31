@@ -228,3 +228,12 @@ This log records completed implementation milestones and verification evidence. 
 - Sanitized U+0000 characters emitted by some PDF text layers before persisting `ExtractedText`; PostgreSQL rejects NUL in UTF-8 text and previously surfaced as `RESUME_EXTRACTION_FAILED`.
 - Normalized text is now validated after sanitization, so a document containing only unsupported text still fails safely.
 - Added a regression test using a PDF text stream containing a NUL character.
+
+## 2026-09-01 — Document extraction V2 and compact resume context
+
+- Kept `IDocumentExtractor` backward-compatible and added a detailed extraction result with page/character/word metrics, printable/replacement/control ratios, average usable characters per page, repeated-line ratio, bounded quality score/category and warning codes.
+- Preserved PdfPig content-order extraction as the PDF fast path; added a bounded word-position line/column heuristic for suspicious or likely multi-column pages. Open XML extraction now walks body block order and flattens table rows/cells.
+- Added deterministic normalization for line endings, whitespace, adjacent duplicates, repeated page boundaries, isolated page numbers and decorative separators. Suspicious/failed extraction is never silently accepted and reports that OCR may be required; OCR remains intentionally deferred with no new dependency.
+- Added versioned compact `ResumeProfile` persistence and `IResumeContextBuilder`. Raw normalized CV text is sent only for the one-time profile parse; analysis, interview, answer and report requests use bounded task-specific profile context.
+- Added synthetic PDF/DOCX extraction, quality, layout-fallback, Unicode, table, malformed/empty, cancellation, normalization and token-size diagnostics; extended practice coverage to verify profile caching metadata.
+- Added `DocumentExtractionV2Profile` migration. No production provider, storage, OCR or secret configuration changed.
