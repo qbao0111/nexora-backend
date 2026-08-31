@@ -201,3 +201,9 @@ This log records completed implementation milestones and verification evidence. 
 - NuGet reported no known vulnerable direct/transitive packages. Secret-pattern scan and changed-file review found only placeholders, existing synthetic test credentials and secret-setting names; no live secret was added.
 - Browser smoke on an isolated local API verified the loaded OpenAPI UI, Bearer control/header, canonical 401 for an invalid synthetic token, required idempotency input and PDF/DOCX file picker. This smoke used no live database or provider and does not claim a new Neon or production E2E run.
 - Status: **READY FOR DEVELOPMENT SWAGGER PULL REQUEST**.
+
+## 2026-08-31 — FE guide aligned with live Gemini development configuration
+
+- Updated the Vietnamese FE/Swagger onboarding guide for the verified Development path: Gemini API key from user-secrets, model ID `gemini-3.5-flash`, PowerShell 7 smoke command, quota warning and troubleshooting for model/auth failures.
+- Clarified that automated `dotnet test` remains deterministic Fake AI, payment remains fake for development, and `FakeDocumentExtractor` still limits real CV text-analysis fidelity.
+- Updated the repository guide and its standalone Desktop copy; no connection string, API key or other secret was written to either document.

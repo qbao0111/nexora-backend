@@ -1,6 +1,6 @@
 # Nexora — Setup backend và test API bằng Swagger cho teammate FE
 
-Cập nhật: 31/08/2026. Dành cho môi trường Development, dữ liệu giả lập.
+Cập nhật: 31/08/2026. Dành cho môi trường Development, dùng Gemini với dữ liệu synthetic.
 
 ## 1. Cần chuẩn bị gì?
 
@@ -10,7 +10,8 @@ Cập nhật: 31/08/2026. Dành cho môi trường Development, dữ liệu gi�
 | .NET SDK | Cài .NET 10 SDK; kiểm tra phiên bản được chấp nhận trong `global.json` của repo. Hiện pin `10.0.203`, cho phép roll-forward `latestFeature`. |
 | PowerShell 7 | Các script dưới đây dùng `pwsh`, không phải Windows PowerShell 5.1. |
 | Database DEV | Xin qb connection string Npgsql của nhánh Neon **development** qua kênh riêng. Không dùng database production. |
-| AI | Dùng `Fake` khi tích hợp FE: không cần Gemini API key, không mất quota AI. |
+| AI Development | Dùng `Gemini` thật với API key trong user-secrets; chỉ gửi dữ liệu synthetic. |
+| AI automated tests | `FakeAiProvider` vẫn được dùng để test deterministic, không gọi mạng. |
 | File test | Một PDF/DOCX nhỏ, chỉ chứa dữ liệu giả. Mặc định tối đa 10 MiB. |
 
 Không cần cài PostgreSQL/Docker trên máy nếu dùng Neon DEV.
@@ -42,10 +43,13 @@ Mở PowerShell 7, trong repo backend:
 $devConnection = Read-Host "Nhap connection string Neon DEVELOPMENT do qb cap"
 dotnet user-secrets set "ConnectionStrings:Postgres" "$devConnection" --project src/Nexora.Api
 $devConnection = $null
-dotnet user-secrets set "Ai:Provider" "Fake" --project src/Nexora.Api
+dotnet user-secrets set "Ai:Provider" "Gemini" --project src/Nexora.Api
+dotnet user-secrets set "Ai:Gemini:Model" "gemini-3.5-flash" --project src/Nexora.Api
+dotnet user-secrets set "Ai:Gemini:ApiKey" "GEMINI_API_KEY_CUA_QB" --project src/Nexora.Api
 ```
 
 Nhập connection tại prompt giúp tránh ghi nguyên giá trị vào lịch sử câu lệnh. Không chụp màn hình lúc nhập.
+Thay `GEMINI_API_KEY_CUA_QB` bằng key thật trong terminal riêng; không commit, không gửi vào chat/PR/log. Nếu muốn tránh ghi key vào command history, set key từ prompt vào biến tạm rồi xóa biến sau khi lưu.
 Dạng connection phải là Npgsql key/value (`Host=...;Database=...;Username=...;Password=...;SSL Mode=Require`), không phải URL `postgresql://...`.
 Script Neon kiểm tra đuôi host `.neon.tech` và SSL; teammate vẫn phải tự xác nhận đúng nhánh DEV với qb.
 
@@ -57,8 +61,10 @@ Chỉ kiểm tra tên secret, không in giá trị để gửi người khác:
 
 ```powershell
 dotnet user-secrets list --project src/Nexora.Api |
-    ForEach-Object { ($_ -split ' = ', 2)[0] }
+    ForEach-Object { ($_ -split '\s*=\s*', 2)[0].Trim() }
 ```
+
+Kết quả cần có `ConnectionStrings:Postgres`, `Ai:Provider`, `Ai:Gemini:Model` và `Ai:Gemini:ApiKey`. Model phải là API ID `gemini-3.5-flash`, không phải tên hiển thị `Gemini 3.5 Flash`.
 
 Không đưa connection string, JWT, refresh token hoặc API key vào FE, source code, ảnh chụp, PR hay log chia sẻ.
 
@@ -85,7 +91,18 @@ Swagger chỉ có ở **Development**. Testing chỉ có OpenAPI JSON; Staging/P
 Swagger vào được chưa đủ: readiness phải healthy, và Worker phải đang chạy để xử lý CV/AI.
 Script ghi lại log của phiên mới; sao lưu phần log cần điều tra trước khi khởi động lại.
 
-## 5. Cách dùng Swagger và đăng nhập
+## 5. Xác nhận Gemini trước khi test FE
+
+Chạy smoke bằng PowerShell 7:
+
+```powershell
+pwsh ./scripts/gemini-live-smoke.ps1
+```
+
+Smoke dùng secret Gemini + Neon DEV, tự chạy API/Worker, migration nếu cần và dữ liệu synthetic. Kỳ vọng kết thúc bằng `INTERNAL DEVELOPMENT ENVIRONMENT READY (NEON, GEMINI AI)`. Lệnh này có thể tiêu thụ quota Gemini; không dùng CV/JD/answer thật.
+Nếu gặp `400` khi gọi model, kiểm tra `Ai:Gemini:Model` là `gemini-3.5-flash`. Nếu gặp `401/403`, kiểm tra key còn hiệu lực/quota nhưng không in key ra log.
+
+## 6. Cách dùng Swagger và đăng nhập
 
 1. Mở Swagger, chọn endpoint, bấm **Try it out**.
 2. Sửa request body, bấm **Execute**.
@@ -128,7 +145,7 @@ Một ý định thao tác mới → một key mới. Retry cùng ý định →
 Không đổi key liên tục chỉ vì mạng timeout; không dùng cùng key cho hai payload khác nhau.
 Không cần key cho GET, register/login, presign, finalize CV hoặc tạo JD.
 
-## 6. Test CV → JD → Analysis theo đúng thứ tự
+## 7. Test CV → JD → Analysis theo đúng thứ tự
 
 Dùng cùng tài khoản/token cho toàn bộ luồng.
 
@@ -224,9 +241,9 @@ Nếu `201`, lưu `data.id`.
 - `completed`: hiển thị kết quả backend.
 - `failed`: dừng, hiển thị lỗi an toàn và requestId nếu có.
 
-**Giới hạn hiện tại:** Fake AI dùng kết quả giả lập. Document extractor cũng đang là `FakeDocumentExtractor`, không trích xuất nội dung PDF/DOCX thật. Luồng này kiểm tra upload/auth/job/response, chưa chứng minh độ chính xác phân tích CV. Bật Gemini cũng không tự thay extractor.
+**Giới hạn hiện tại:** Với Development đã chọn Gemini, kết quả phân tích được tạo bởi Gemini thật. Tuy nhiên document extractor vẫn là `FakeDocumentExtractor`, không trích xuất nội dung PDF/DOCX thật; Gemini đang nhận phần text extraction giả lập. Vì vậy luồng này chưa chứng minh độ chính xác đọc CV thật. `dotnet test` vẫn dùng Fake AI theo thiết kế deterministic.
 
-## 7. Test plan, fake payment và interview
+## 8. Test plan, fake payment và interview bằng Gemini
 
 1. `GET /api/v1/plans` → lấy `prices[].id` của gói trả phí từ server.
 2. `POST /api/v1/checkout-sessions`, Idempotency-Key mới, body `{ "planPriceId": "UUID_PRICE" }`.
@@ -266,7 +283,7 @@ pwsh ./scripts/complete-fake-payment.ps1 -OrderId "UUID_ORDER"
 Chỉ coi report `404` là đang chờ nếu biết session đang `completing`. Sau terminal failure dừng poll và xử lý lỗi.
 Không tự test endpoint xóa account trên tài khoản dùng chung; endpoint đó thu hồi session và xóa/anonymize dữ liệu.
 
-## 8. Nối frontend thực tế
+## 9. Nối frontend thực tế
 
 Nếu FE dùng Vite, tạo `.env.local` trong **repo FE**:
 
@@ -295,7 +312,7 @@ Giữ accessToken trong memory. Refresh token ở cookie HttpOnly; không đọc
 Cookie refresh có Secure/SameSite; dùng `localhost` nhất quán và kiểm tra browser thực sự chấp nhận/gửi cookie. Nếu trình duyệt chặn Secure cookie trên HTTP local, dùng HTTPS dev tin cậy; không tắt Secure cho production.
 Swagger cùng origin API nên test được Swagger **không chứng minh** CORS/cookie từ FE đã đúng.
 
-## 9. Bảng xử lý lỗi nhanh
+## 10. Bảng xử lý lỗi nhanh
 
 | Hiện tượng | Cần kiểm tra |
 | --- | --- |
@@ -319,10 +336,10 @@ Swagger cùng origin API nên test được Swagger **không chứng minh** CORS
 Khi nhờ hỗ trợ, gửi: endpoint, HTTP status, `error.code`, `requestId`, thời điểm và mô tả bước tái hiện.
 Che token, password, connection string, upload capability và nội dung CV/answers thật.
 
-## 10. Checklist bàn giao FE
+## 11. Checklist bàn giao FE
 
 - [ ] Pull main; restore/build/test pass.
-- [ ] Secret riêng từng máy; Fake AI; đúng DB DEV.
+- [ ] Secret riêng từng máy; `Ai:Provider=Gemini`; model ID đúng; đúng DB DEV.
 - [ ] API healthy và Worker chạy.
 - [ ] Swagger register/login → Authorize → /me pass.
 - [ ] Presign → raw upload 204 → finalize 201 → JD → analysis completed.
@@ -331,5 +348,5 @@ Che token, password, connection string, upload capability và nội dung CV/answ
 - [ ] Không hard-code price, quota, userId, score; không dùng mock state làm authority.
 - [ ] Không commit secrets hoặc dữ liệu runtime.
 
-Hướng dẫn này không thay thế các production gates DEC-01–04, test PostgreSQL/concurrency, security và staging.
+Hướng dẫn này không thay thế các production gates DEC-01–04, test PostgreSQL/concurrency, security và staging. Gemini ở đây chỉ là development adapter; không bật traffic production.
 Tài liệu nguồn: [repo Nexora Backend](https://github.com/qbao0111/nexora-backend), `docs/03-api-data-contract.md`, `docs/frontend-integration.md`, `docs/development-setup.md`.
