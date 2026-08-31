@@ -190,3 +190,14 @@ This log records completed implementation milestones and verification evidence. 
 - Live evidence: API readiness and OpenAPI returned `200`; allowed Vite preflight returned `204` with exact origin/credentials; an untrusted origin was denied; register → pending checkout → signed fake payment → Basic entitlement with 3 available interviews passed against Neon.
 - Final restore/build passed with 0 warnings/errors; 14 unit and 21 integration tests passed. Formatting, PowerShell parsing, Markdown links, EF model drift, dependency vulnerability and secret-pattern checks passed.
 - Status: **BACKEND READY FOR NEW FRONTEND IMPLEMENTATION ON LOCAL DEVELOPMENT CONTRACT**.
+
+## 2026-08-31 — Development Swagger and Vietnamese FE onboarding completed
+
+- Added Swagger UI only in Development, reusing the existing built-in OpenAPI document without introducing a second schema generator. Testing retains JSON only; Staging/Production expose neither UI nor JSON.
+- Documented Bearer security from endpoint authorization metadata, the six existing idempotent mutation headers and raw PDF/DOCX upload bodies. No controller/business behavior, database schema or production provider decision changed.
+- Disabled Swagger authorization persistence and external schema validation. Added deterministic environment/asset/security/header/upload metadata tests supporting FR-AUTH-02, NFR-SEC-01/02 and the existing API contract.
+- Added a Vietnamese FE setup/Swagger walkthrough covering shared per-machine user-secrets, Fake AI, API + Worker startup, auth, resume/JD/analysis, fake payment/interview, CORS and exact 409 troubleshooting; explicitly documented the current fake document-extraction limitation. An identical standalone copy was delivered on the user's Desktop.
+- Final restore/build passed with 0 warnings/errors; 14 unit and 27 integration tests passed. Scoped formatting, whitespace and startup-script syntax checks passed; guide copies match.
+- NuGet reported no known vulnerable direct/transitive packages. Secret-pattern scan and changed-file review found only placeholders, existing synthetic test credentials and secret-setting names; no live secret was added.
+- Browser smoke on an isolated local API verified the loaded OpenAPI UI, Bearer control/header, canonical 401 for an invalid synthetic token, required idempotency input and PDF/DOCX file picker. This smoke used no live database or provider and does not claim a new Neon or production E2E run.
+- Status: **READY FOR DEVELOPMENT SWAGGER PULL REQUEST**.

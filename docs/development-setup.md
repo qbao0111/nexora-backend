@@ -1,7 +1,7 @@
 # Nexora Team Development Setup
 
 **Status:** Approved internal-development onboarding
-**Last updated:** 2026-08-25
+**Last updated:** 2026-08-31
 
 This guide gets a teammate from a fresh machine to a running Nexora API + Worker. It does not provision production/staging infrastructure or resolve DEC-01–04.
 
@@ -46,12 +46,10 @@ Both API and Worker use the shared user-secrets ID `Nexora.LocalDevelopment`, so
 
 ```powershell
 dotnet user-secrets set "ConnectionStrings:Postgres" "NEON_DEVELOPMENT_NPGSQL_CONNECTION" --project src/Nexora.Api
-dotnet user-secrets set "Ai:Provider" "Gemini" --project src/Nexora.Api
-dotnet user-secrets set "Ai:Gemini:ApiKey" "DEVELOPMENT_API_KEY" --project src/Nexora.Api
-dotnet user-secrets set "Ai:Gemini:Model" "APPROVED_DEVELOPMENT_MODEL" --project src/Nexora.Api
+dotnet user-secrets set "Ai:Provider" "Fake" --project src/Nexora.Api
 ```
 
-Use only the Neon `development` branch. The guarded scripts reject non-Neon hosts for this workflow and never expose a remote reset/drop action. Gemini settings are for synthetic development/testing only; Gemini remains unapproved for production under DEC-01.
+Use only the Neon `development` branch. The guarded scripts reject non-Neon hosts for this workflow and never expose a remote reset/drop action. Fake AI is sufficient for initial FE integration and needs no AI key. For explicitly approved live Gemini testing, configure `Ai:Provider=Gemini`, `Ai:Gemini:ApiKey` and `Ai:Gemini:Model` through user-secrets. Gemini remains unapproved for production under DEC-01.
 
 Verify presence without sharing values:
 
@@ -71,11 +69,14 @@ The command restores/builds, applies source-controlled migrations, starts API + 
 Check:
 
 - API readiness: `http://localhost:5088/api/v1/health`
+- Swagger UI (Development only): `http://localhost:5088/swagger`
 - OpenAPI: `http://localhost:5088/openapi/v1.json`
 - Runtime logs: `.nexora-local/logs/`
-- Expected Vite frontend origin: `http://localhost:5173`
+- Frontend origins: `http://localhost:5173` or `http://localhost:3000`
 
 Keep this terminal open while developing the frontend. Start the Vite frontend in a second terminal. Follow [frontend-integration.md](frontend-integration.md) for browser contracts.
+
+Swagger uses the existing OpenAPI document, with Bearer authorization, required idempotency headers and raw PDF/DOCX upload inputs. It does not persist authorization across reloads or use an external schema validator. Neither UI nor JSON is exposed in Staging/Production; Testing retains JSON only. See the [Vietnamese FE setup and Swagger walkthrough](frontend-swagger-guide.vi.md) for a copy-ready checklist and resume troubleshooting.
 
 ## 5. Test payment and AI flows
 
@@ -120,7 +121,7 @@ Update `project_log.md` after a completed verified slice, commit, push and creat
 | --- | --- |
 | API never becomes ready | Inspect `.nexora-local/logs/api.stderr.log`; verify Neon connection and migrations. |
 | Interview stays `starting` or report stays `completing` | Worker must be running; inspect Worker logs and AI configuration. |
-| Browser CORS failure | Serve Vite from exactly `http://localhost:5173`; do not open HTML through `file://`. |
+| Browser CORS failure | Use exactly `http://localhost:5173` or `http://localhost:3000`; do not open HTML through `file://`. |
 | Refresh returns `401` | Use `credentials: "include"`, keep API/FE on `localhost`, and confirm the refresh cookie exists. |
 | Protected call returns `401` | Send the current in-memory access token in the Bearer header. |
 | `IDEMPOTENCY_KEY_REQUIRED` | Generate one UUID for that mutation intent and reuse it only for retries. |

@@ -60,7 +60,7 @@ For frontend development, run both processes from one terminal:
 pwsh ./scripts/run-development.ps1
 ```
 
-The API is then available at `http://localhost:5088`, OpenAPI at `http://localhost:5088/openapi/v1.json`, and the development CORS allow-list accepts Vite on `http://localhost:5173`. Keep that terminal open; stopping it stops both child processes. See the [frontend local integration handoff](docs/frontend-integration.md) for auth, upload, polling, idempotency and core-journey contracts.
+The API is then available at `http://localhost:5088`, Development-only Swagger UI at `http://localhost:5088/swagger`, and OpenAPI at `http://localhost:5088/openapi/v1.json`. The development CORS allow-list accepts `http://localhost:5173` and `http://localhost:3000`. Keep that terminal open; stopping it stops both child processes. See the [Vietnamese FE setup and Swagger guide](docs/frontend-swagger-guide.vi.md) for setup, authorization, upload and troubleshooting, or the [frontend local integration handoff](docs/frontend-integration.md) for browser contracts.
 
 Alternatively, run both from the repository root in separate terminals and configure the same URL/environment explicitly:
 

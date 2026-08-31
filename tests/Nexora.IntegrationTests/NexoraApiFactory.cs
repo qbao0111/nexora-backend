@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Nexora.Business.Ai;
 using Nexora.Data.Persistence;
 
@@ -17,12 +18,21 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
     private readonly SqliteConnection _connection;
     private readonly IAiProvider? _aiProvider;
     private readonly IReadOnlyDictionary<string, string?>? _configurationOverrides;
+    private readonly string _environment = "Testing";
 
     public NexoraApiFactory() : this(null, null) { }
 
     internal NexoraApiFactory(IAiProvider aiProvider) : this(aiProvider, null) { }
 
     internal NexoraApiFactory(IReadOnlyDictionary<string, string?> configurationOverrides) : this(null, configurationOverrides) { }
+
+    internal NexoraApiFactory(string environment) : this(null, new Dictionary<string, string?>
+    {
+        ["Features:Ai"] = "false",
+        ["Features:Payment"] = "false",
+        ["Features:Upload"] = "false",
+        ["Ai:Provider"] = "Fake"
+    }) => _environment = environment;
 
     private NexoraApiFactory(IAiProvider? aiProvider, IReadOnlyDictionary<string, string?>? configurationOverrides)
     {
@@ -34,7 +44,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseEnvironment("Testing");
+        builder.UseEnvironment(_environment);
         builder.ConfigureAppConfiguration((_, configuration) =>
         {
             var values = new Dictionary<string, string?>
@@ -62,6 +72,18 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
                 services.AddSingleton(_aiProvider);
             }
         });
+    }
+
+    protected override IHost CreateHost(IHostBuilder builder)
+    {
+        if (_environment != "Testing")
+            builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(
+                new Dictionary<string, string?>(_configurationOverrides!)
+                {
+                    // Supply startup configuration before Program reads it; never use a live dev database/provider.
+                    ["ConnectionStrings:Postgres"] = "Host=localhost;Database=nexora_tests"
+                }));
+        return base.CreateHost(builder);
     }
 
     public HttpClient CreateHttpsClient(bool handleCookies = true) => CreateClient(new WebApplicationFactoryClientOptions

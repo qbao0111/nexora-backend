@@ -28,7 +28,7 @@ ProductionSafety.ValidateDevelopmentAdapters(
     builder.Configuration.GetValue("Features:Upload", true));
 builder.Services.AddIntegrations(builder.Configuration);
 builder.Services.AddControllers();
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(OpenApiConfiguration.Configure);
 builder.Services.AddOptions<OperationsHealthOptions>()
     .Bind(builder.Configuration.GetSection(OperationsHealthOptions.SectionName))
     .Validate(options => options.MaxQueueLagMinutes > 0 && options.MaxPaymentPendingMinutes > 0 && options.RecentFailureWindowMinutes > 0,
@@ -110,6 +110,14 @@ app.UseRateLimiter();
 app.UseAuthorization();
 app.UseMiddleware<FeatureGateMiddleware>();
 if (app.Environment.IsDevelopment() || app.Environment.IsEnvironment("Testing")) app.MapOpenApi("/openapi/{documentName}.json");
+if (app.Environment.IsDevelopment())
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("../openapi/v1.json", "Nexora API v1");
+        options.DocumentTitle = "Nexora API — Development";
+        options.ConfigObject.PersistAuthorization = false;
+        options.EnableValidator("");
+    });
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/api/v1/health", new HealthCheckOptions { Predicate = registration => registration.Tags.Contains("ready") });
 app.MapHealthChecks("/api/v1/health/operations", new HealthCheckOptions { Predicate = registration => registration.Tags.Contains("operations") });
