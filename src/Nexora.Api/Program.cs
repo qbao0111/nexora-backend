@@ -27,7 +27,7 @@ ProductionSafety.ValidateDevelopmentAdapters(
     builder.Configuration.GetValue("Features:Payment", true),
     builder.Configuration.GetValue("Features:Upload", true));
 builder.Services.AddIntegrations(builder.Configuration);
-builder.Services.AddControllers();
+builder.Services.AddControllers(options => options.Conventions.Add(new DevelopmentOnlyControllerConvention(builder.Environment)));
 builder.Services.AddOpenApi(OpenApiConfiguration.Configure);
 builder.Services.AddOptions<OperationsHealthOptions>()
     .Bind(builder.Configuration.GetSection(OperationsHealthOptions.SectionName))

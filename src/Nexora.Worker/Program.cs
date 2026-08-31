@@ -4,6 +4,11 @@ using Nexora.Integrations;
 using Nexora.Worker;
 
 var builder = Host.CreateApplicationBuilder(args);
+ProductionSafety.ValidateDevelopmentAdapters(
+    builder.Environment.IsProduction(),
+    builder.Configuration.GetValue("Features:Ai", true),
+    builder.Configuration.GetValue("Features:Payment", true),
+    builder.Configuration.GetValue("Features:Upload", true));
 builder.Services.AddOptions<WorkerPollingOptions>()
     .Bind(builder.Configuration.GetSection(WorkerPollingOptions.SectionName))
     .Validate(options => options.BusyDelayMilliseconds >= 0, "Busy delay must not be negative.")

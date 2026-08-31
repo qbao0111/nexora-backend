@@ -1,8 +1,8 @@
 # Nexora
 
-**Status:** **INTERNAL DEVELOPMENT ENVIRONMENT READY (NEON)**
+**Status:** **REAL INTERNAL DEVELOPMENT FLOW (GEMINI)**
 
-**Current milestone:** Shared Neon development baseline verified; ready for continued internal feature work
+**Current milestone:** Real browser/API/PostgreSQL/Gemini flow is the development verification path
 
 **Specification baseline:** Approved implementation baseline
 **Last updated:** 2026-08-25
@@ -73,37 +73,20 @@ dotnet run --project src/Nexora.Api --no-launch-profile
 dotnet run --project src/Nexora.Worker --no-launch-profile
 ```
 
-Development defaults use `FakeAiProvider`, `FakePaymentProvider`, and `LocalStorageProvider`. Both processes use the same ignored `.nexora-local/storage` path when launched from the repository root. Readiness is `/api/v1/health`; liveness is `/health/live`.
+Both processes use the same ignored `.nexora-local/storage` path when launched from the repository root. Development uses Gemini for AI, `FakePaymentProvider` for payment, and `LocalStorageProvider` for private files. Readiness is `/api/v1/health`; liveness is `/health/live`.
 
-### Automated Neon smoke
+### Gemini development configuration
 
-The smoke script builds, migrates, launches API and Worker together, and verifies registration/login, `/me`, plans, duplicate fake webhook behavior, entitlement fulfillment, private CV/JD upload, worker analysis, active interview, official answers, idempotent report generation, dashboard history, and persistence across an API restart:
-
-```powershell
-pwsh ./scripts/local-smoke.ps1 -Neon
-```
-
-It reads the connection from `NEXORA_DEV_POSTGRES`, stops API and Worker on completion, does not print the connection string, and never resets the Neon database. Runtime logs are written under ignored `.nexora-local/logs/` without access tokens or raw request bodies.
-
-### Optional Gemini development adapter
-
-Fake AI remains the deterministic default. Gemini may be enabled with a development key through user-secrets:
+Gemini is the only application AI provider. Configure its development key and model through user-secrets:
 
 ```powershell
-dotnet user-secrets set "Ai:Provider" "Gemini" --project src/Nexora.Api
 dotnet user-secrets set "Ai:Gemini:ApiKey" "YOUR_DEVELOPMENT_KEY" --project src/Nexora.Api
 dotnet user-secrets set "Ai:Gemini:Model" "YOUR_CONFIGURED_MODEL" --project src/Nexora.Api
 ```
 
-Restart API and Worker after changing provider settings. Gemini is not selected as the DEC-01 production provider.
+Restart API and Worker after changing secrets. If AI is enabled and either value is missing, startup fails with a clear configuration error. Gemini is an internal-development integration; DEC-01 production provider/model and budget decisions remain deferred.
 
-Run the opt-in live contract smoke only with synthetic candidate data:
-
-```powershell
-pwsh ./scripts/gemini-live-smoke.ps1
-```
-
-The script reads the Neon development connection and Gemini settings from local .NET user-secrets (or `NEXORA_DEV_POSTGRES` for the connection), then exercises the complete API + Worker journey. It is intentionally separate from `dotnet test`: normal automated tests remain deterministic and network-free. The adapter enforces a configured timeout, at most three attempts, normalized safe failures, Nexora-owned response schemas and server semantic validation. A successful development smoke does not approve Gemini for production. Do not send real CV/JD/transcript data through a free development quota; review the current [Gemini pricing/data-use terms](https://ai.google.dev/gemini-api/docs/pricing) before testing.
+Use the real browser/frontend journey for CV, JD and interview validation. A normal text PDF/DOCX stays local; only suspicious extraction automatically uses one Gemini document-understanding fallback that returns extracted text and the compact resume profile together. See [frontend integration](docs/frontend-integration.md) and the Desktop guides generated for the project owner.
 
 ## Optional offline/local PostgreSQL
 
@@ -112,7 +95,6 @@ The script reads the Neon development connection and Gemini settings from local 
 ```powershell
 pwsh ./scripts/local-db.ps1 Up
 pwsh ./scripts/local-db.ps1 Migrate
-pwsh ./scripts/local-smoke.ps1
 ```
 
 Safe shutdown preserves the named volume: `pwsh ./scripts/local-db.ps1 Down`. `pwsh ./scripts/local-db.ps1 Reset -ResetStorage` removes only the known local Compose volume and ignored local storage root; it rejects remote hosts and database names other than `nexora_dev`.
@@ -126,7 +108,7 @@ Safe shutdown preserves the named volume: `pwsh ./scripts/local-db.ps1 Down`. `p
 
 ## Deferred production enablement decisions
 
-DEC-01 through DEC-04 do **not** block internal development or fake/development adapters. They block only the corresponding real production capability:
+DEC-01 through DEC-04 do **not** block internal development or the explicitly documented development adapters. They block only the corresponding real production capability:
 
 - **DEC-01:** production AI provider/model and production AI budgets.
 - **DEC-02:** production Vietnamese payment provider and refund/invoice/tax policy.
@@ -137,4 +119,4 @@ Neon development usage does not choose the production database/hosting vendor. L
 
 ## Next milestone
 
-Continue internal feature work on a dedicated feature branch using the shared Neon `development` branch and deterministic fake providers. Production integration, staging/go-live evidence and DEC-01..04 remain separate work.
+Continue internal feature work on a dedicated feature branch using the shared Neon `development` branch, Gemini AI, fake payment and local storage. Production integration, staging/go-live evidence and DEC-01..04 remain separate work.

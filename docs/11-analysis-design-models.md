@@ -19,7 +19,7 @@ Nexora là web ứng dụng luyện phỏng vấn: candidate cá nhân hoá prac
 | CRUD test load | 50 VUs, 15 RPS trong 10 phút |
 | Burst | 100 VUs, 30 RPS trong 60 giây |
 
-AI provider được fake/sandbox trong test load. Không benchmark endpoint bằng cách làm request phải chờ inference của model.
+Không benchmark endpoint bằng cách làm request phải chờ inference của model; mọi AI load test tương lai phải dùng provider sandbox được phê duyệt riêng.
 
 ## 3. Use-case model
 

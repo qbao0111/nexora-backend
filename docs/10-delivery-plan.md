@@ -3,7 +3,7 @@
 **Status:** Approved implementation baseline  
 **Last updated:** 2026-08-21
 
-DEC-01–04 are production enablement gates, not prerequisites for Phases 0–3. Fake/development adapters are the required path until production-specific decisions are approved.
+DEC-01–04 are production enablement gates, not prerequisites for Phases 0–3. Internal Gemini, FakePayment and LocalStorage are the development path until production-specific decisions are approved.
 
 ## Phase 0 — Repository and engineering readiness
 
@@ -40,14 +40,13 @@ DEC-01–04 are production enablement gates, not prerequisites for Phases 0–3.
 
 - CV/JD private persistence and extraction boundary.
 - Canonical interview lifecycle `draft → starting → active → completing → completed`, plus `starting → failed` and `active → abandoned`.
-- `IAiProvider` with `FakeAiProvider` first.
-- `GeminiAiProvider` as configuration-driven development/testing adapter only.
+- `IAiProvider` with `GeminiAiProvider` as the internal-development adapter; deterministic test doubles remain test-project-only.
 - Durable question/official-answer flow, validated evaluation and idempotent evidence/rubric report.
 - Basic dashboard/history for the main journey.
 - STAR/scenario persistence only according to SRS Should priority and available capacity.
 - Migrate relevant static frontend paths to `fetch` API with loading/error/retry states.
 
-**Exit:** T-06/T-07/T-08 pass in integration/staging using fake/dev providers; official answer, state and report idempotency are proven.
+**Exit:** T-06/T-07/T-08 pass in integration/staging with the internal Gemini adapter and test-project doubles; official answer, state and report idempotency are proven.
 
 ## Phase 4 — Production integration and hardening
 

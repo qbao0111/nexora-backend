@@ -77,7 +77,7 @@ Production application host (DEC-04)
 - C# nullable enabled, `async` all I/O, cancellation token cho HTTP/job.
 - Controller mỏng: bind DTO → validation → service → DTO response.
 - Business service không phụ thuộc `HttpContext`, controller không gọi `DbContext` trực tiếp.
-- Integration adapter có fake/development implementation để test; gọi external provider đặt timeout/circuit breaker. Allowed initial implementations: `FakeAiProvider`, development-only `GeminiAiProvider`, `FakePaymentProvider`, `LocalStorageProvider`/development storage adapter. Không implementation nào là production selection mặc định.
+- Integration adapter đặt timeout/bounded retry cho external provider. Development uses `GeminiAiProvider`; deterministic AI test doubles, when needed, live only in the test project. `FakePaymentProvider` and `LocalStorageProvider` remain development adapters. Gemini is not a production selection until DEC-01 is approved.
 - EF migrations là artefact source-controlled và review cùng thay đổi entity.
 
 ## 9. Provider decision boundary

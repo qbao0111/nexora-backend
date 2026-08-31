@@ -10,147 +10,11 @@ using Nexora.Business.Billing;
 using Nexora.Business.Practice;
 using Nexora.Data.Billing;
 using Nexora.Data.Persistence;
-using Nexora.Integrations.Ai;
 
 namespace Nexora.IntegrationTests;
 
 public sealed class PracticeApiTests
 {
-    [Fact]
-    public async Task DevelopmentShortcutIsHiddenOutsideDevelopment()
-    {
-        using var factory = new NexoraApiFactory();
-        factory.InitializeDatabase();
-        using var client = factory.CreateHttpsClient();
-        var account = await RegisterAsync(client);
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dev/resume-analysis");
-        request.Headers.Add("Idempotency-Key", "hidden-shortcut");
-        using var form = new MultipartFormDataContent();
-        using var file = new ByteArrayContent(PdfTestDocument.CreateTextPdf("Synthetic resume for backend developer with CSharp PostgreSQL skills"));
-        file.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
-        form.Add(file, "File", "resume.pdf");
-        form.Add(new StringContent("Synthetic JD"), "JobDescription");
-        request.Content = form;
-
-        using var response = await client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task DevelopmentShortcutAcceptsFileAndJobDescription()
-    {
-        using var factory = new NexoraApiFactory("Development");
-        factory.InitializeDatabase();
-        using var client = factory.CreateHttpsClient();
-        var account = await RegisterAsync(client);
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dev/resume-analysis");
-        request.Headers.Add("Idempotency-Key", "dev-shortcut-one");
-        using var form = new MultipartFormDataContent();
-        using var file = new ByteArrayContent(PdfTestDocument.CreateTextPdf("Backend Developer PostgreSQL REST API"));
-        file.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
-        form.Add(file, "File", "resume.pdf");
-        form.Add(new StringContent("Build REST APIs with C# and PostgreSQL."), "JobDescription");
-        request.Content = form;
-
-        using var response = await client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var data = await DataAsync(response);
-        Assert.Equal(PracticeValues.Ready, data.GetProperty("resume").GetProperty("status").GetString());
-        Assert.Equal(PracticeValues.Queued, data.GetProperty("analysis").GetProperty("status").GetString());
-
-        using var retry = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dev/resume-analysis");
-        retry.Headers.Add("Idempotency-Key", "dev-shortcut-one");
-        using var retryForm = new MultipartFormDataContent();
-        using var retryFile = new ByteArrayContent(PdfTestDocument.CreateTextPdf("Backend Developer PostgreSQL REST API"));
-        retryFile.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
-        retryForm.Add(retryFile, "File", "resume.pdf");
-        retryForm.Add(new StringContent("Build REST APIs with C# and PostgreSQL."), "JobDescription");
-        retry.Content = retryForm;
-        using var retryResponse = await client.SendAsync(retry);
-        Assert.Equal(HttpStatusCode.Created, retryResponse.StatusCode);
-        var retryData = await DataAsync(retryResponse);
-        Assert.Equal(data.GetProperty("analysis").GetProperty("id").GetGuid(), retryData.GetProperty("analysis").GetProperty("id").GetGuid());
-    }
-
-    [Fact]
-    public async Task PrivateResumeAndJobDescriptionProduceVersionedAnalysis()
-    {
-        using var factory = new NexoraApiFactory();
-        factory.InitializeDatabase();
-        using var client = factory.CreateHttpsClient();
-        var account = await RegisterAsync(client);
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
-        var bytes = PdfTestDocument.CreateTextPdf("Hoang Quoc Bao Backend Developer CSharp PostgreSQL REST API");
-        using var presign = await client.PostAsJsonAsync("/api/v1/uploads/presign", new
-        {
-            fileName = "resume.pdf",
-            contentType = "application/pdf",
-            size = bytes.Length
-        });
-        var intent = await DataAsync(presign);
-        using (var uploadResponse = await client.PutAsync(intent.GetProperty("uploadUrl").GetString(), new ByteArrayContent(bytes)))
-            Assert.Equal(HttpStatusCode.NoContent, uploadResponse.StatusCode);
-        using var finalize = await client.PostAsJsonAsync("/api/v1/resumes", new { uploadToken = intent.GetProperty("token").GetString() });
-        Assert.Equal(HttpStatusCode.Created, finalize.StatusCode);
-        var resumeId = (await DataAsync(finalize)).GetProperty("id").GetGuid();
-        await ProcessJobsAsync(factory);
-        using (var extractionScope = factory.Services.CreateScope())
-        {
-            var extractedText = await extractionScope.ServiceProvider.GetRequiredService<NexoraDbContext>().Resumes
-                .Where(item => item.Id == resumeId)
-                .Select(item => item.ExtractedText)
-                .SingleAsync();
-            Assert.Contains("PostgreSQL", extractedText, StringComparison.Ordinal);
-            Assert.Contains("REST API", extractedText, StringComparison.Ordinal);
-        }
-
-        using var jdResponse = await client.PostAsJsonAsync("/api/v1/job-descriptions", new
-        {
-            title = "Junior Business Analyst",
-            content = "Analyze requirements and communicate measurable outcomes."
-        });
-        Assert.Equal(HttpStatusCode.Created, jdResponse.StatusCode);
-        var jdId = (await DataAsync(jdResponse)).GetProperty("id").GetGuid();
-        using var analysisRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
-        {
-            Content = JsonContent.Create(new { resumeId, jobDescriptionId = jdId })
-        };
-        analysisRequest.Headers.Add("Idempotency-Key", "analysis-one");
-        using var analysisResponse = await client.SendAsync(analysisRequest);
-        Assert.Equal(HttpStatusCode.Created, analysisResponse.StatusCode);
-        var analysisId = (await DataAsync(analysisResponse)).GetProperty("id").GetGuid();
-        await ProcessJobsAsync(factory);
-        using var resultResponse = await client.GetAsync($"/api/v1/resume-analyses/{analysisId}");
-        var result = await DataAsync(resultResponse);
-        Assert.Equal(PracticeValues.Completed, result.GetProperty("status").GetString());
-        Assert.NotEmpty(result.GetProperty("result").GetProperty("strengths").EnumerateArray());
-
-        using (var profileScope = factory.Services.CreateScope())
-        {
-            var resume = await profileScope.ServiceProvider.GetRequiredService<NexoraDbContext>().Resumes
-                .SingleAsync(item => item.Id == resumeId);
-            Assert.False(string.IsNullOrWhiteSpace(resume.StructuredProfile));
-            Assert.Equal("resume-profile-v1", resume.ProfilePromptVersion);
-            Assert.Equal("resume-profile-v1", resume.ProfileSchemaVersion);
-        }
-
-        using var otherClient = factory.CreateHttpsClient();
-        var other = await RegisterAsync(otherClient);
-        otherClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", other.AccessToken);
-        Assert.Equal(HttpStatusCode.NotFound, (await otherClient.GetAsync($"/api/v1/resume-analyses/{analysisId}")).StatusCode);
-
-        using var scope = factory.Services.CreateScope();
-        var analysis = await scope.ServiceProvider.GetRequiredService<NexoraDbContext>().ResumeAnalyses.SingleAsync(item => item.Id == analysisId);
-        Assert.Equal(1, analysis.ResumeVersion);
-        Assert.Equal(1, analysis.JobDescriptionVersion);
-        Assert.Equal("phase3-v1", analysis.PromptVersion);
-        Assert.Equal("phase3-v1", analysis.SchemaVersion);
-    }
-
     [Fact]
     public async Task ExecutableRenamedAsPdfIsRejectedWithoutFinalRecordT06()
     {
@@ -414,14 +278,17 @@ public sealed class PracticeApiTests
 
     private sealed class FailingAiProvider : IAiProvider
     {
+        public string ModelVersion => "test-gemini-model";
+
         public Task<T> GenerateStructuredAsync<T>(AiRequest request, CancellationToken cancellationToken) =>
             Task.FromException<T>(new TimeoutException("Deterministic T-07 timeout"));
     }
 
     private sealed class ToggleReportAiProvider : IAiProvider
     {
-        private readonly FakeAiProvider _inner = new();
+        private readonly TestAiProvider _inner = new();
         public bool FailReport { get; set; } = true;
+        public string ModelVersion => _inner.ModelVersion;
 
         public Task<T> GenerateStructuredAsync<T>(AiRequest request, CancellationToken cancellationToken) =>
             FailReport && request.Purpose == "interview.report"

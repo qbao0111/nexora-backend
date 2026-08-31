@@ -3,6 +3,8 @@ namespace Nexora.Business.Practice;
 public static class PracticeValues
 {
     public const string Uploaded = "uploaded";
+    public const string Extracting = "extracting";
+    public const string OcrFallback = "ocr_fallback";
     public const string Ready = "ready";
     public const string Failed = "failed";
     public const string Queued = "queued";
@@ -32,7 +34,8 @@ public enum DocumentExtractionMethod
 {
     PdfText,
     PdfLayoutReconstructed,
-    DocxOpenXml
+    DocxOpenXml,
+    GeminiOcr
 }
 
 public enum DocumentExtractionQuality
@@ -72,6 +75,29 @@ public sealed record DocumentExtractionResult(
 public interface IDetailedDocumentExtractor
 {
     Task<DocumentExtractionResult> ExtractDetailedAsync(Stream content, string contentType, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Applies the same normalization and deterministic quality gate to text returned by a fallback provider.
+    /// </summary>
+    DocumentExtractionResult EvaluateExtractedText(
+        string text,
+        int pageCount,
+        DocumentExtractionMethod method,
+        IEnumerable<string>? warnings = null);
+}
+
+public sealed record DocumentOcrResult(
+    string ExtractedText,
+    ResumeProfile Profile,
+    int PageCount,
+    IReadOnlyCollection<string> Warnings);
+
+public interface IDocumentOcrProvider
+{
+    Task<DocumentOcrResult> ExtractAsync(
+        Stream content,
+        string contentType,
+        CancellationToken cancellationToken);
 }
 
 public sealed record ResumeExperience(
@@ -112,9 +138,23 @@ public interface IResumeContextBuilder
     string BuildReportContext(string transcript, ResumeProfile? profile);
 }
 
-public sealed record ResumeView(Guid Id, string FileName, string ContentType, long Size, string Status, DateTimeOffset CreatedAt);
+public sealed record ResumeView(
+    Guid Id,
+    string FileName,
+    string ContentType,
+    long Size,
+    string Status,
+    DateTimeOffset CreatedAt,
+    string? ErrorCode = null,
+    string? ErrorMessage = null);
 public sealed record JobDescriptionView(Guid Id, string Title, string Content, DateTimeOffset CreatedAt);
-public sealed record ResumeAnalysisView(Guid Id, string Status, object? Result, DateTimeOffset CreatedAt, DateTimeOffset? CompletedAt);
+public sealed record ResumeAnalysisView(
+    Guid Id,
+    string Status,
+    object? Result,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? CompletedAt,
+    string? ErrorCode = null);
 public sealed record DevelopmentResumeAnalysisView(ResumeView Resume, JobDescriptionView JobDescription, ResumeAnalysisView Analysis);
 
 public sealed record StartInterviewCommand(
@@ -152,6 +192,7 @@ public interface IPracticeService
         Guid userId, Stream content, string fileName, string contentType, long size, string jobDescription, string idempotencyKey,
         CancellationToken cancellationToken);
     Task<ResumeView> CreateResumeAsync(Guid userId, string uploadToken, CancellationToken cancellationToken);
+    Task<ResumeView> GetResumeAsync(Guid userId, Guid resumeId, CancellationToken cancellationToken);
     Task<JobDescriptionView> CreateJobDescriptionAsync(Guid userId, string title, string content, CancellationToken cancellationToken);
     Task<ResumeAnalysisView> StartResumeAnalysisAsync(Guid userId, Guid resumeId, Guid jobDescriptionId, string idempotencyKey, CancellationToken cancellationToken);
     Task<ResumeAnalysisView> GetResumeAnalysisAsync(Guid userId, Guid analysisId, CancellationToken cancellationToken);

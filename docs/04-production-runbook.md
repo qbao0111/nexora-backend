@@ -48,9 +48,7 @@ Không commit `.env`, CV mẫu có dữ liệu thật hoặc webhook payload pro
 
 ## Performance baseline để test staging
 
-Cho MVP (vài chục–vài trăm user), gate staging ban đầu là **50 virtual users trong 10 phút, tải ổn định 15 RPS CRUD/API**, cộng **burst 100 virtual users trong 60 giây, tối đa 30 RPS**. P95 endpoint synchronous không-AI dưới 500 ms, error rate dưới 1%; job creation chỉ enqueue, không chờ model. Chạy thêm 5 concurrent AI jobs bằng provider fake/sandbox để đo queue lag. Đây là baseline kỹ thuật, không phải cam kết capacity; chỉnh lại khi có số liệu production.
-
-Chạy baseline CRUD bằng `k6 run tests/load/phase4-crud.js` với `NEXORA_BASE_URL` và access token synthetic trong `NEXORA_ACCESS_TOKEN`. Không dùng account hoặc CV thật cho load test.
+Cho MVP (vài chục–vài trăm user), gate staging ban đầu là **50 virtual users trong 10 phút, tải ổn định 15 RPS CRUD/API**, cộng **burst 100 virtual users trong 60 giây, tối đa 30 RPS**. P95 endpoint synchronous không-AI dưới 500 ms, error rate dưới 1%; job creation chỉ enqueue, không chờ model. AI load testing và k6 CRUD script không thuộc luồng development nội bộ hiện tại; chỉ thực hiện lại bằng dữ liệu/đối tượng được phê duyệt khi chuẩn bị staging. Đây là baseline kỹ thuật, không phải cam kết capacity; chỉnh lại khi có số liệu production.
 
 ## Backup/restore rehearsal
 
@@ -70,7 +68,7 @@ Không chạy drill vào production target. Không ghi connection string/token v
 
 ## Production enablement gates
 
-- **DEC-01:** production AI provider/model and budgets approved before real production AI traffic; fake/Gemini development traffic remains allowed.
+- **DEC-01:** production AI provider/model and budgets approved before real production AI traffic; internal Gemini development traffic remains allowed.
 - **DEC-02:** production Vietnamese payment/refund/invoice/tax decision approved before real payments; `FakePaymentProvider` verified webhook flow remains allowed.
 - **DEC-03:** final retention periods and approved legal/privacy text completed before processing affected personal data in production.
 - **DEC-04:** hosting/storage vendors, domains, mail and infrastructure accounts completed before production deployment.

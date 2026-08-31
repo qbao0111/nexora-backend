@@ -15,4 +15,8 @@ public sealed class ResumesController(IPracticeService practiceService) : Contro
         var resume = await practiceService.CreateResumeAsync(User.GetRequiredUserId(), request.UploadToken, cancellationToken);
         return StatusCode(201, new ApiResponse<ResumeView>(resume));
     }
+
+    [HttpGet("{id:guid}")]
+    public async Task<ActionResult<ApiResponse<ResumeView>>> Get(Guid id, CancellationToken cancellationToken) =>
+        Ok(new ApiResponse<ResumeView>(await practiceService.GetResumeAsync(User.GetRequiredUserId(), id, cancellationToken)));
 }

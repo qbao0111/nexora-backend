@@ -5,7 +5,11 @@ public static class ProductionSafety
     public static void ValidateDevelopmentAdapters(bool isProduction, bool aiEnabled, bool paymentEnabled, bool uploadEnabled)
     {
         if (!isProduction || (!aiEnabled && !paymentEnabled && !uploadEnabled)) return;
+        var enabled = new List<string>();
+        if (aiEnabled) enabled.Add("AI (DEC-01)");
+        if (paymentEnabled) enabled.Add("fake payment (DEC-02)");
+        if (uploadEnabled) enabled.Add("local upload (DEC-04)");
         throw new InvalidOperationException(
-            "Production cannot enable the current fake AI, fake payment or local upload adapters before DEC-01, DEC-02 and DEC-04 are resolved. Disable Features:Ai, Features:Payment and Features:Upload.");
+            $"Production cannot enable {string.Join(", ", enabled)} before the corresponding production decisions are resolved. Disable the affected Features settings.");
     }
 }
