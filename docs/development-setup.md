@@ -1,7 +1,7 @@
 # Nexora Team Development Setup
 
 **Status:** Approved internal-development onboarding
-**Last updated:** 2026-08-31
+**Last updated:** 2026-09-01
 
 This guide gets a teammate from a fresh machine to a running Nexora API + Worker. It does not provision production/staging infrastructure or resolve DEC-01–04.
 
@@ -49,7 +49,7 @@ dotnet user-secrets set "ConnectionStrings:Postgres" "NEON_DEVELOPMENT_NPGSQL_CO
 dotnet user-secrets set "Ai:Provider" "Fake" --project src/Nexora.Api
 ```
 
-Use only the Neon `development` branch. The guarded scripts reject non-Neon hosts for this workflow and never expose a remote reset/drop action. Fake AI is sufficient for initial FE integration and needs no AI key. For explicitly approved live Gemini testing, configure `Ai:Provider=Gemini`, `Ai:Gemini:ApiKey` and `Ai:Gemini:Model` through user-secrets. Gemini remains unapproved for production under DEC-01.
+Use only the Neon `development` branch. The guarded scripts reject non-Neon hosts for this workflow and never expose a remote reset/drop action. If the Neon branch selector says `production`, replace the secret with the connection from `development` before creating any test users. Fake AI is sufficient for initial FE integration and needs no AI key. For explicitly approved live Gemini testing, configure `Ai:Provider=Gemini`, `Ai:Gemini:ApiKey` and `Ai:Gemini:Model` through user-secrets. Gemini remains unapproved for production under DEC-01.
 
 Verify presence without sharing values:
 
@@ -64,7 +64,7 @@ dotnet user-secrets list --project src/Nexora.Api |
 pwsh ./scripts/run-development.ps1
 ```
 
-The command restores/builds, applies source-controlled migrations, starts API + Worker, waits for readiness and keeps both alive until the terminal is stopped.
+The command restores/builds, applies source-controlled migrations, starts API + Worker, waits for readiness and keeps both alive until the terminal is stopped. It also sets one absolute shared storage root for both processes, so uploads are available to the Worker regardless of the launch directory.
 
 Check:
 
@@ -77,6 +77,8 @@ Check:
 Keep this terminal open while developing the frontend. Start the Vite frontend in a second terminal. Follow [frontend-integration.md](frontend-integration.md) for browser contracts.
 
 Swagger uses the existing OpenAPI document, with Bearer authorization, required idempotency headers and raw PDF/DOCX upload inputs. It does not persist authorization across reloads or use an external schema validator. Neither UI nor JSON is exposed in Staging/Production; Testing retains JSON only. See the [Vietnamese FE setup and Swagger walkthrough](frontend-swagger-guide.vi.md) for a copy-ready checklist and resume troubleshooting.
+
+Resume extraction uses the real PDF/DOCX adapter. Text-based PDFs and DOCX files are supported; scanned/image-only PDFs fail extraction until OCR is added in a later phase.
 
 ## 5. Test payment and AI flows
 

@@ -26,7 +26,7 @@ public sealed class PrivacyApiTests
         var account = await RegisterAsync(client);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
 
-        var bytes = Encoding.ASCII.GetBytes("%PDF-1.7 synthetic privacy resume");
+        var bytes = PdfTestDocument.CreateTextPdf("Private privacy resume");
         using var presign = await client.PostAsJsonAsync("/api/v1/uploads/presign", new
         {
             fileName = "private-resume.pdf",
