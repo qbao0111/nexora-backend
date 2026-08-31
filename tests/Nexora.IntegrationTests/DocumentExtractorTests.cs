@@ -19,6 +19,17 @@ public sealed class DocumentExtractorTests
     }
 
     [Fact]
+    public async Task RemovesNullCharactersFromPdfText()
+    {
+        using var content = new MemoryStream(PdfTestDocument.CreateTextPdf("Backend\0Developer PostgreSQL REST API"));
+        var result = await new PdfDocxDocumentExtractor().ExtractAsync(content, "application/pdf", CancellationToken.None);
+
+        Assert.DoesNotContain('\0', result);
+        Assert.Contains("Backend", result, StringComparison.Ordinal);
+        Assert.Contains("Developer", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ExtractsTextFromDocx()
     {
         using var content = CreateDocx("Backend Developer CSharp PostgreSQL REST API");
