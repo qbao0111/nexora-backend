@@ -17,6 +17,66 @@ namespace Nexora.IntegrationTests;
 public sealed class PracticeApiTests
 {
     [Fact]
+    public async Task DevelopmentShortcutIsHiddenOutsideDevelopment()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dev/resume-analysis");
+        request.Headers.Add("Idempotency-Key", "hidden-shortcut");
+        using var form = new MultipartFormDataContent();
+        using var file = new ByteArrayContent(PdfTestDocument.CreateTextPdf("Synthetic resume"));
+        file.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+        form.Add(file, "File", "resume.pdf");
+        form.Add(new StringContent("Synthetic JD"), "JobDescription");
+        request.Content = form;
+
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DevelopmentShortcutAcceptsFileAndJobDescription()
+    {
+        using var factory = new NexoraApiFactory("Development");
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dev/resume-analysis");
+        request.Headers.Add("Idempotency-Key", "dev-shortcut-one");
+        using var form = new MultipartFormDataContent();
+        using var file = new ByteArrayContent(PdfTestDocument.CreateTextPdf("Backend Developer PostgreSQL REST API"));
+        file.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+        form.Add(file, "File", "resume.pdf");
+        form.Add(new StringContent("Build REST APIs with C# and PostgreSQL."), "JobDescription");
+        request.Content = form;
+
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var data = await DataAsync(response);
+        Assert.Equal(PracticeValues.Ready, data.GetProperty("resume").GetProperty("status").GetString());
+        Assert.Equal(PracticeValues.Queued, data.GetProperty("analysis").GetProperty("status").GetString());
+
+        using var retry = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dev/resume-analysis");
+        retry.Headers.Add("Idempotency-Key", "dev-shortcut-one");
+        using var retryForm = new MultipartFormDataContent();
+        using var retryFile = new ByteArrayContent(PdfTestDocument.CreateTextPdf("Backend Developer PostgreSQL REST API"));
+        retryFile.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+        retryForm.Add(retryFile, "File", "resume.pdf");
+        retryForm.Add(new StringContent("Build REST APIs with C# and PostgreSQL."), "JobDescription");
+        retry.Content = retryForm;
+        using var retryResponse = await client.SendAsync(retry);
+        Assert.Equal(HttpStatusCode.Created, retryResponse.StatusCode);
+        var retryData = await DataAsync(retryResponse);
+        Assert.Equal(data.GetProperty("analysis").GetProperty("id").GetGuid(), retryData.GetProperty("analysis").GetProperty("id").GetGuid());
+    }
+
+    [Fact]
     public async Task PrivateResumeAndJobDescriptionProduceVersionedAnalysis()
     {
         using var factory = new NexoraApiFactory();

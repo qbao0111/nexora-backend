@@ -145,6 +145,18 @@ Một ý định thao tác mới → một key mới. Retry cùng ý định →
 Không đổi key liên tục chỉ vì mạng timeout; không dùng cùng key cho hai payload khác nhau.
 Không cần key cho GET, register/login, presign, finalize CV hoặc tạo JD.
 
+### Shortcut Development: chọn file + nhập JD
+
+Để debug nhanh trên Swagger, dùng `POST /api/v1/dev/resume-analysis` thay cho 5 bước upload thủ công:
+
+- `multipart/form-data`: chọn `File` (PDF/DOCX) và nhập `JobDescription`.
+- Điền một `Idempotency-Key` mới (có thể dùng UUID); không cần nhập `size`, `resumeId` hay `jobDescriptionId`.
+- Endpoint tự upload, trích xuất CV bằng extractor PDF/DOCX thật, tạo JD và queue analysis.
+- Kết quả trả về `data.resume`, `data.jobDescription`, `data.analysis`; lưu `data.analysis.id` rồi poll `GET /api/v1/resume-analyses/{id}` như bên dưới.
+- Route chỉ tồn tại ở **Development**, không được expose ở Staging/Production. API vẫn cần `Authorize` bằng access token.
+
+FE production nên dùng flow chuẩn ở mục kế tiếp; FE có thể lấy `file.size` trực tiếp từ `File` khi gọi presign, không yêu cầu người dùng tự gõ số byte.
+
 ## 7. Test CV → JD → Analysis theo đúng thứ tự
 
 Dùng cùng tài khoản/token cho toàn bộ luồng.

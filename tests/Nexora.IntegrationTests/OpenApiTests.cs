@@ -48,7 +48,8 @@ public sealed class OpenApiTests
         Assert.False(paths.GetProperty("/api/v1/auth/login").GetProperty("post").TryGetProperty("security", out _));
         Assert.False(paths.GetProperty("/api/v1/plans").GetProperty("get").TryGetProperty("security", out _));
         foreach (var path in new[] { "/api/v1/checkout-sessions", "/api/v1/resume-analyses", "/api/v1/interviews",
-                     "/api/v1/interviews/{id}/answers", "/api/v1/interviews/{id}/complete", "/api/v1/me/deletion-requests" })
+                     "/api/v1/interviews/{id}/answers", "/api/v1/interviews/{id}/complete", "/api/v1/me/deletion-requests",
+                     "/api/v1/dev/resume-analysis" })
         {
             var header = Assert.Single(paths.GetProperty(path).GetProperty("post").GetProperty("parameters").EnumerateArray(),
                 parameter => parameter.GetProperty("name").GetString() == "Idempotency-Key");
@@ -61,5 +62,11 @@ public sealed class OpenApiTests
         Assert.Equal("binary", content.GetProperty("application/pdf").GetProperty("schema").GetProperty("format").GetString());
         Assert.True(content.TryGetProperty("application/vnd.openxmlformats-officedocument.wordprocessingml.document", out _));
         Assert.False(content.TryGetProperty("multipart/form-data", out _));
+
+        var shortcut = paths.GetProperty("/api/v1/dev/resume-analysis").GetProperty("post");
+        var shortcutBody = shortcut.GetProperty("requestBody").GetProperty("content").GetProperty("multipart/form-data");
+        var shortcutProperties = shortcutBody.GetProperty("schema").GetProperty("properties");
+        Assert.True(shortcutProperties.TryGetProperty("File", out _));
+        Assert.True(shortcutProperties.TryGetProperty("JobDescription", out _));
     }
 }

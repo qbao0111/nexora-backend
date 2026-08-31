@@ -31,6 +31,7 @@ public interface IDocumentExtractor
 public sealed record ResumeView(Guid Id, string FileName, string ContentType, long Size, string Status, DateTimeOffset CreatedAt);
 public sealed record JobDescriptionView(Guid Id, string Title, string Content, DateTimeOffset CreatedAt);
 public sealed record ResumeAnalysisView(Guid Id, string Status, object? Result, DateTimeOffset CreatedAt, DateTimeOffset? CompletedAt);
+public sealed record DevelopmentResumeAnalysisView(ResumeView Resume, JobDescriptionView JobDescription, ResumeAnalysisView Analysis);
 
 public sealed record StartInterviewCommand(
     string Role,
@@ -63,6 +64,9 @@ public sealed record ReportSummary(Guid Id, Guid InterviewId, int OverallScore, 
 
 public interface IPracticeService
 {
+    Task<DevelopmentResumeAnalysisView> CreateDevelopmentResumeAnalysisAsync(
+        Guid userId, Stream content, string fileName, string contentType, long size, string jobDescription, string idempotencyKey,
+        CancellationToken cancellationToken);
     Task<ResumeView> CreateResumeAsync(Guid userId, string uploadToken, CancellationToken cancellationToken);
     Task<JobDescriptionView> CreateJobDescriptionAsync(Guid userId, string title, string content, CancellationToken cancellationToken);
     Task<ResumeAnalysisView> StartResumeAnalysisAsync(Guid userId, Guid resumeId, Guid jobDescriptionId, string idempotencyKey, CancellationToken cancellationToken);

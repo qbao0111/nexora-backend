@@ -215,3 +215,10 @@ This log records completed implementation milestones and verification evidence. 
 - Updated the Development runner to pass one absolute `.nexora-local/storage` path to both API and Worker, preventing relative-working-directory upload/extraction failures.
 - Updated FE onboarding to explain real extraction and to stop when the Neon branch selector is `production`; Development secrets must use the dedicated Neon `development` branch.
 - Verification: restore/build passed with 0 warnings/errors; 14 unit and 29 integration tests passed. Live Gemini/Neon verification remains opt-in and must target the development branch only.
+
+## 2026-09-01 — Development one-call resume analysis shortcut
+
+- Added the Development-only `POST /api/v1/dev/resume-analysis` helper for the FE debug flow: choose one PDF/DOCX and enter JD text; the backend handles upload, real extraction, JD creation and analysis queueing.
+- Kept the production contract unchanged. The helper requires Bearer auth and `Idempotency-Key`, returns the generated resume/JD/analysis projections and remains hidden outside Development.
+- Added request fingerprinting so retrying the same key and payload returns the existing analysis instead of creating duplicates. No manual file-size, `resumeId` or `jobDescriptionId` input is needed for this shortcut.
+- Verification: restore/build passed with 0 warnings/errors; 14 unit and 31 integration tests passed, including the shortcut, idempotent retry and non-Development 404 guard. NuGet reported no vulnerable direct/transitive packages; no live secret was added.
