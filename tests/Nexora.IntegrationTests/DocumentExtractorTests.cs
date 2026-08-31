@@ -57,6 +57,28 @@ public sealed class DocumentExtractorTests
     }
 
     [Fact]
+    public async Task PreservesVietnamesePdfText()
+    {
+        using var content = new MemoryStream(PdfTestDocument.CreateUnicodeTextPdf("Kỹ sư phần mềm Backend PostgreSQL"));
+        var result = await new PdfDocxDocumentExtractor().ExtractDetailedAsync(content, "application/pdf", CancellationToken.None);
+
+        Assert.Contains("Kỹ sư phần mềm", result.Text, StringComparison.Ordinal);
+        Assert.Contains("PostgreSQL", result.Text, StringComparison.Ordinal);
+        Assert.Equal(DocumentExtractionQuality.Good, result.Quality);
+    }
+
+    [Fact]
+    public async Task PreservesMixedVietnameseAndEnglishPdfText()
+    {
+        using var content = new MemoryStream(PdfTestDocument.CreateUnicodeTextPdf("Kỹ sư Backend Developer - xây dựng REST API"));
+        var result = await new PdfDocxDocumentExtractor().ExtractDetailedAsync(content, "application/pdf", CancellationToken.None);
+
+        Assert.Contains("Kỹ sư", result.Text, StringComparison.Ordinal);
+        Assert.Contains("Backend Developer", result.Text, StringComparison.Ordinal);
+        Assert.Contains("REST API", result.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RemovesNullCharactersFromPdfText()
     {
         using var content = new MemoryStream(PdfTestDocument.CreateTextPdf("Backend\0Developer PostgreSQL REST API"));
