@@ -83,6 +83,40 @@ internal static class PdfTestDocument
         return Encoding.ASCII.GetBytes(document.ToString());
     }
 
+    public static byte[] CreateUnicodeTextPdf(string text)
+    {
+        var codePoints = text.EnumerateRunes().Select(rune => rune.Value).ToArray();
+        var hexText = string.Concat(codePoints.Select(value => value.ToString("X4", CultureInfo.InvariantCulture)));
+        var mappings = codePoints.Distinct().Select(value =>
+            $"<{value:X4}> <{value:X4}>").ToArray();
+        var cmap = $"/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n{mappings.Length} beginbfchar\n{string.Join("\n", mappings)}\nendbfchar\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n";
+        var pageContent = $"BT\n/F1 14 Tf\n72 720 Td\n<{hexText}> Tj\nET\n";
+        var objects = new[]
+        {
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n",
+            $"4 0 obj\n<< /Length {Encoding.ASCII.GetByteCount(pageContent)} >>\nstream\n{pageContent}endstream\nendobj\n",
+            "5 0 obj\n<< /Type /Font /Subtype /Type0 /BaseFont /NexoraUnicode /Encoding /Identity-H /DescendantFonts [6 0 R] /ToUnicode 7 0 R >>\nendobj\n",
+            "6 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /NexoraUnicode /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 8 0 R /DW 1000 /CIDToGIDMap /Identity >>\nendobj\n",
+            $"7 0 obj\n<< /Length {Encoding.ASCII.GetByteCount(cmap)} >>\nstream\n{cmap}endstream\nendobj\n",
+            "8 0 obj\n<< /Type /FontDescriptor /FontName /NexoraUnicode /Flags 4 /FontBBox [0 -200 1000 1000] /ItalicAngle 0 /Ascent 1000 /Descent -200 /CapHeight 700 /StemV 80 >>\nendobj\n"
+        };
+        var document = new StringBuilder("%PDF-1.4\n");
+        var offsets = new List<int> { 0 };
+        foreach (var item in objects)
+        {
+            offsets.Add(Encoding.ASCII.GetByteCount(document.ToString()));
+            document.Append(item);
+        }
+        var xrefOffset = Encoding.ASCII.GetByteCount(document.ToString());
+        document.Append(string.Format(CultureInfo.InvariantCulture, "xref\n0 {0}\n0000000000 65535 f \n", offsets.Count));
+        foreach (var offset in offsets.Skip(1))
+            document.Append(string.Format(CultureInfo.InvariantCulture, "{0:D10} 00000 n \n", offset));
+        document.Append(string.Format(CultureInfo.InvariantCulture, "trailer\n<< /Size {0} /Root 1 0 R >>\nstartxref\n{1}\n%%EOF\n", offsets.Count, xrefOffset));
+        return Encoding.ASCII.GetBytes(document.ToString());
+    }
+
     private static byte[] CreateCustomPagePdf(string commands)
     {
         var stream = $"BT\n/F1 12 Tf\n{commands}\nET\n";
