@@ -92,6 +92,7 @@ try {
 
     Write-Host 'Nexora API + Worker are ready.'
     Write-Host "API:      $ApiUrl/api/v1"
+    Write-Host "Swagger:  $ApiUrl/swagger"
     Write-Host "OpenAPI:  $ApiUrl/openapi/v1.json"
     Write-Host 'Frontend: http://localhost:5173'
     Write-Host "Logs:     $logRoot"

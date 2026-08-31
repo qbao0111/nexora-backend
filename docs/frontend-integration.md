@@ -29,10 +29,13 @@ This builds, applies Neon development migrations, then keeps API and Worker runn
 | --- | --- |
 | API origin | `http://localhost:5088` |
 | API base | `http://localhost:5088/api/v1` |
+| Swagger UI (Development only) | `http://localhost:5088/swagger` |
 | OpenAPI | `http://localhost:5088/openapi/v1.json` |
-| Vite frontend | `http://localhost:5173` |
+| Frontend | `http://localhost:5173` or `http://localhost:3000` |
 
 Use `localhost` consistently for browser cookie testing. The development CORS allow-list also accepts `http://127.0.0.1:5173`, but mixing the two host names can change cookie/site behavior.
+
+For step-by-step setup, Swagger authorization, binary upload and `RESUME_NOT_READY` troubleshooting, use the [Vietnamese FE guide](frontend-swagger-guide.vi.md). Swagger testing is same-origin and does not replace cross-origin FE cookie/CORS testing.
 
 ## 3. API client invariants
 
