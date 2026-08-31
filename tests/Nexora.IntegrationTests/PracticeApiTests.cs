@@ -24,7 +24,7 @@ public sealed class PracticeApiTests
         using var client = factory.CreateHttpsClient();
         var account = await RegisterAsync(client);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
-        var bytes = Encoding.ASCII.GetBytes("%PDF-1.7 synthetic resume");
+        var bytes = PdfTestDocument.CreateTextPdf("Hoang Quoc Bao Backend Developer CSharp PostgreSQL REST API");
         using var presign = await client.PostAsJsonAsync("/api/v1/uploads/presign", new
         {
             fileName = "resume.pdf",
@@ -38,6 +38,15 @@ public sealed class PracticeApiTests
         Assert.Equal(HttpStatusCode.Created, finalize.StatusCode);
         var resumeId = (await DataAsync(finalize)).GetProperty("id").GetGuid();
         await ProcessJobsAsync(factory);
+        using (var extractionScope = factory.Services.CreateScope())
+        {
+            var extractedText = await extractionScope.ServiceProvider.GetRequiredService<NexoraDbContext>().Resumes
+                .Where(item => item.Id == resumeId)
+                .Select(item => item.ExtractedText)
+                .SingleAsync();
+            Assert.Contains("PostgreSQL", extractedText, StringComparison.Ordinal);
+            Assert.Contains("REST API", extractedText, StringComparison.Ordinal);
+        }
 
         using var jdResponse = await client.PostAsJsonAsync("/api/v1/job-descriptions", new
         {

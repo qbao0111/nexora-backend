@@ -66,6 +66,7 @@ $savedEnvironment = @{
     Aspnet = $env:ASPNETCORE_ENVIRONMENT
     Urls = $env:ASPNETCORE_URLS
     Connection = $env:ConnectionStrings__Postgres
+    Storage = $env:Storage__Local__RootPath
 }
 
 Push-Location $repoRoot
@@ -85,6 +86,7 @@ try {
     $env:ASPNETCORE_ENVIRONMENT = 'Development'
     $env:ASPNETCORE_URLS = $ApiUrl
     $env:ConnectionStrings__Postgres = $ConnectionString
+    $env:Storage__Local__RootPath = Join-Path $runtimeRoot 'storage'
 
     $workerProcess = Start-NexoraProcess Worker
     $apiProcess = Start-NexoraProcess Api
@@ -111,5 +113,6 @@ finally {
     $env:ASPNETCORE_ENVIRONMENT = $savedEnvironment.Aspnet
     $env:ASPNETCORE_URLS = $savedEnvironment.Urls
     $env:ConnectionStrings__Postgres = $savedEnvironment.Connection
+    $env:Storage__Local__RootPath = $savedEnvironment.Storage
     Pop-Location
 }

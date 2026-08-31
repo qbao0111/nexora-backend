@@ -18,6 +18,7 @@
     <ProjectReference Include="..\..\src\Nexora.Api\Nexora.Api.csproj" />
     <ProjectReference Include="..\..\src\Nexora.Business\Nexora.Business.csproj" />
     <ProjectReference Include="..\..\src\Nexora.Data\Nexora.Data.csproj" />
+    <ProjectReference Include="..\..\src\Nexora.Integrations\Nexora.Integrations.csproj" />
   </ItemGroup>
 
   <ItemGroup>

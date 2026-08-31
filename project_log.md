@@ -207,3 +207,11 @@ This log records completed implementation milestones and verification evidence. 
 - Updated the Vietnamese FE/Swagger onboarding guide for the verified Development path: Gemini API key from user-secrets, model ID `gemini-3.5-flash`, PowerShell 7 smoke command, quota warning and troubleshooting for model/auth failures.
 - Clarified that automated `dotnet test` remains deterministic Fake AI, payment remains fake for development, and `FakeDocumentExtractor` still limits real CV text-analysis fidelity.
 - Updated the repository guide and its standalone Desktop copy; no connection string, API key or other secret was written to either document.
+
+## 2026-09-01 — Real PDF/DOCX extraction and development storage alignment
+
+- Replaced the Development `FakeDocumentExtractor` registration with a real PDF/DOCX text extractor using PdfPig and Open XML; image-only/scanned PDFs fail safely because OCR is not in scope.
+- Added deterministic PDF and DOCX extraction tests and made the practice integration fixture a valid text PDF; the extracted content is asserted before analysis.
+- Updated the Development runner to pass one absolute `.nexora-local/storage` path to both API and Worker, preventing relative-working-directory upload/extraction failures.
+- Updated FE onboarding to explain real extraction and to stop when the Neon branch selector is `production`; Development secrets must use the dedicated Neon `development` branch.
+- Verification: restore/build passed with 0 warnings/errors; 14 unit and 29 integration tests passed. Live Gemini/Neon verification remains opt-in and must target the development branch only.

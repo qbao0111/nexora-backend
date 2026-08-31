@@ -1,6 +1,6 @@
 # Nexora — Setup backend và test API bằng Swagger cho teammate FE
 
-Cập nhật: 31/08/2026. Dành cho môi trường Development, dùng Gemini với dữ liệu synthetic.
+Cập nhật: 01/09/2026. Dành cho môi trường Development, dùng Gemini với dữ liệu synthetic.
 
 ## 1. Cần chuẩn bị gì?
 
@@ -51,7 +51,7 @@ dotnet user-secrets set "Ai:Gemini:ApiKey" "GEMINI_API_KEY_CUA_QB" --project src
 Nhập connection tại prompt giúp tránh ghi nguyên giá trị vào lịch sử câu lệnh. Không chụp màn hình lúc nhập.
 Thay `GEMINI_API_KEY_CUA_QB` bằng key thật trong terminal riêng; không commit, không gửi vào chat/PR/log. Nếu muốn tránh ghi key vào command history, set key từ prompt vào biến tạm rồi xóa biến sau khi lưu.
 Dạng connection phải là Npgsql key/value (`Host=...;Database=...;Username=...;Password=...;SSL Mode=Require`), không phải URL `postgresql://...`.
-Script Neon kiểm tra đuôi host `.neon.tech` và SSL; teammate vẫn phải tự xác nhận đúng nhánh DEV với qb.
+Script Neon kiểm tra đuôi host `.neon.tech` và SSL; teammate vẫn phải tự xác nhận đúng nhánh DEV với qb. Nếu Neon đang mở branch `production`, connection secret hiện tại đang trỏ nhầm DB: dừng API/Worker, lấy connection của branch `development` trong Neon rồi set lại secret. Không tạo user test mới trên `production` để “thử nhanh”.
 
 API và Worker dùng chung user-secrets ID `Nexora.LocalDevelopment`, nên chỉ cần set một lần.
 User-secrets nằm ngoài git nhưng không phải kho mã hóa production; không chia sẻ file secrets.
@@ -74,7 +74,7 @@ Không đưa connection string, JWT, refresh token hoặc API key vào FE, sourc
 pwsh ./scripts/run-development.ps1
 ```
 
-Script build, áp dụng migration lên DB đã cấu hình, chạy API + Worker và chờ readiness.
+Script build, áp dụng migration lên DB đã cấu hình, chạy API + Worker và chờ readiness. Script tự ép API và Worker dùng chung đường dẫn tuyệt đối `.nexora-local/storage`, nên không còn lệch file khi chạy từ Visual Studio/terminal khác nhau.
 Chỉ dùng DB DEV được qb cho phép migrate. Không chạy script reset/drop database.
 Giữ terminal này mở; `Ctrl+C` dừng cả hai process.
 
@@ -204,7 +204,7 @@ Nếu cần dùng Postman: PUT `http://localhost:5088{uploadUrl}`, Body → bina
 { "uploadToken": "TOKEN_TU_BUOC_1" }
 ```
 
-Thay placeholder bằng token thật. CV ban đầu là `uploaded`; Worker sẽ xử lý.
+Thay placeholder bằng token thật. CV ban đầu là `uploaded`; Worker sẽ xử lý bằng extractor thật cho PDF/DOCX rồi chuyển sang `ready` khi đọc được text.
 Hiện chưa có `GET /api/v1/resumes/{id}`; không tự dựng endpoint này để poll.
 
 ### Bước 4 — Tạo JD
@@ -241,7 +241,7 @@ Nếu `201`, lưu `data.id`.
 - `completed`: hiển thị kết quả backend.
 - `failed`: dừng, hiển thị lỗi an toàn và requestId nếu có.
 
-**Giới hạn hiện tại:** Với Development đã chọn Gemini, kết quả phân tích được tạo bởi Gemini thật. Tuy nhiên document extractor vẫn là `FakeDocumentExtractor`, không trích xuất nội dung PDF/DOCX thật; Gemini đang nhận phần text extraction giả lập. Vì vậy luồng này chưa chứng minh độ chính xác đọc CV thật. `dotnet test` vẫn dùng Fake AI theo thiết kế deterministic.
+Với Development đã chọn Gemini, kết quả phân tích được tạo bởi Gemini thật và nhận text trích xuất thật từ PDF/DOCX. PDF scan chỉ có ảnh hoặc tài liệu không có text sẽ vào trạng thái extraction failed vì OCR chưa nằm trong phase này; xem log Worker rồi upload lại file text-based hợp lệ. `dotnet test` vẫn dùng Fake AI theo thiết kế deterministic, nhưng test integration đã kiểm tra text PDF/DOCX thật.
 
 ## 8. Test plan, fake payment và interview bằng Gemini
 
@@ -319,7 +319,7 @@ Swagger cùng origin API nên test được Swagger **không chứng minh** CORS
 | Swagger `404` | Pull main mới, build lại, chạy script Development; đúng port 5088. Không mở Swagger ở production. |
 | Không mở được API | Terminal còn chạy không, đúng port không, log API có lỗi startup không. |
 | Thiếu `ConnectionStrings:Postgres` | Secret phải set trên chính máy teammate. API thường không khởi động, không phải lỗi 409 trực tiếp. |
-| DB sai/mất kết nối | Readiness không healthy, log lỗi DB; xác nhận connection/migration với qb. |
+| DB sai/mất kết nối | Readiness không healthy, log lỗi DB; xác nhận connection/migration với qb. Nếu Neon hiển thị branch `production`, thay secret bằng connection branch `development` trước khi chạy lại. |
 | `401 UNAUTHENTICATED` | Login, Authorize lại token chưa hết hạn; chỉ dán token, không gõ Bearer hai lần. |
 | Refresh `401` | Cookie thiếu/hết hạn, sai host hoặc chưa include credentials; login lại. |
 | `400 IDEMPOTENCY_KEY_REQUIRED` | Điền header key cho đúng mutation. |
