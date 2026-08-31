@@ -53,6 +53,7 @@ public static class DependencyInjection
         services.AddDbContext<NexoraDbContext>(options => options.UseNpgsql(connectionString));
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IBillingService, BillingService>();
+        services.AddSingleton<IResumeContextBuilder, ResumeContextBuilder>();
         services.AddScoped<PracticeService>();
         services.AddScoped<IPracticeService>(provider => provider.GetRequiredService<PracticeService>());
         services.AddScoped<IPracticeJobProcessor>(provider => provider.GetRequiredService<PracticeService>());

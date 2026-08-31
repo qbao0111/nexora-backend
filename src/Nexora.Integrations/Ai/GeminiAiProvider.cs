@@ -125,13 +125,18 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
         {request.UntrustedInput}
         </untrusted-input>
         {PurposeInstructions(request.Purpose)}
-        Return only JSON matching the supplied response schema. Every required array must contain useful items.
+        Return only JSON matching the supplied response schema. {ArrayInstruction(request.Purpose)}
         Keep evidence and list items concise. Return at most three items in strengths, gaps, recommendations, and actionPlan arrays.
         Do not invent candidate achievements. Evidence must be grounded in the supplied input; describe missing evidence as a suggestion.
         """;
 
+    private static string ArrayInstruction(string purpose) => purpose == "resume.profile"
+        ? "Keep profile arrays empty when the source contains no corresponding information."
+        : "Every required array must contain useful items.";
+
     private static string PurposeInstructions(string purpose) => purpose switch
     {
+        "resume.profile" => "Extract a faithful compact resume profile. Use null or empty arrays for information that is absent; never infer or fabricate candidate details.",
         "resume.analysis" => "Identify grounded strengths, gaps, and actionable recommendations for the target job.",
         "interview.first-question" => "Generate one concise interview-practice question appropriate for the supplied role.",
         "interview.followup" => "Generate one concise follow-up question based only on the supplied answer.",

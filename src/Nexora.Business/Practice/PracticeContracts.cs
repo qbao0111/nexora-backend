@@ -28,6 +28,90 @@ public interface IDocumentExtractor
     Task<string> ExtractAsync(Stream content, string contentType, CancellationToken cancellationToken);
 }
 
+public enum DocumentExtractionMethod
+{
+    PdfText,
+    PdfLayoutReconstructed,
+    DocxOpenXml
+}
+
+public enum DocumentExtractionQuality
+{
+    Good,
+    Suspicious,
+    Failed
+}
+
+public sealed class DocumentExtractionQualityOptions
+{
+    public int MinimumWords { get; set; } = 5;
+    public int MinimumCharactersPerPage { get; set; } = 20;
+    public double GoodScore { get; set; } = 0.75;
+    public double SuspiciousScore { get; set; } = 0.40;
+    public double MinimumPrintableRatio { get; set; } = 0.95;
+    public double MaximumReplacementRatio { get; set; } = 0.01;
+    public double MaximumControlRatio { get; set; } = 0.01;
+    public double MaximumRepeatedLineRatio { get; set; } = 0.40;
+}
+
+public sealed record DocumentExtractionResult(
+    string Text,
+    int PageCount,
+    int CharacterCount,
+    int WordCount,
+    DocumentExtractionMethod ExtractionMethod,
+    double QualityScore,
+    DocumentExtractionQuality Quality,
+    double PrintableCharacterRatio,
+    double ReplacementCharacterRatio,
+    double ControlCharacterRatio,
+    double AverageUsableCharactersPerPage,
+    double RepeatedLineRatio,
+    IReadOnlyCollection<string> Warnings);
+
+public interface IDetailedDocumentExtractor
+{
+    Task<DocumentExtractionResult> ExtractDetailedAsync(Stream content, string contentType, CancellationToken cancellationToken);
+}
+
+public sealed record ResumeExperience(
+    string? Company,
+    string? Role,
+    string? Start,
+    string? End,
+    IReadOnlyCollection<string> Highlights);
+
+public sealed record ResumeEducation(
+    string? Institution,
+    string? Degree,
+    string? Start,
+    string? End,
+    IReadOnlyCollection<string> Details);
+
+public sealed record ResumeProject(
+    string? Name,
+    string? Role,
+    IReadOnlyCollection<string> Technologies,
+    IReadOnlyCollection<string> Highlights);
+
+public sealed record ResumeProfile(
+    string? Summary,
+    IReadOnlyCollection<string> Skills,
+    IReadOnlyCollection<ResumeExperience> Experiences,
+    IReadOnlyCollection<ResumeEducation> Education,
+    IReadOnlyCollection<ResumeProject> Projects,
+    IReadOnlyCollection<string> Certifications,
+    IReadOnlyCollection<string> Languages);
+
+public interface IResumeContextBuilder
+{
+    string BuildProfileExtractionContext(string rawExtractedText);
+    string BuildResumeAnalysisContext(ResumeProfile profile, string jobDescription);
+    string BuildInterviewQuestionContext(string role, string seniority, string? jobDescription, ResumeProfile? profile);
+    string BuildAnswerEvaluationContext(string question, string answer, ResumeProfile? profile);
+    string BuildReportContext(string transcript, ResumeProfile? profile);
+}
+
 public sealed record ResumeView(Guid Id, string FileName, string ContentType, long Size, string Status, DateTimeOffset CreatedAt);
 public sealed record JobDescriptionView(Guid Id, string Title, string Content, DateTimeOffset CreatedAt);
 public sealed record ResumeAnalysisView(Guid Id, string Status, object? Result, DateTimeOffset CreatedAt, DateTimeOffset? CompletedAt);

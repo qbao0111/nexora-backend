@@ -23,6 +23,10 @@ public sealed class ResumeRecord
     public Guid StoredFileId { get; set; }
     public string Status { get; set; } = string.Empty;
     public string? ExtractedText { get; set; }
+    public string? StructuredProfile { get; set; }
+    public string? ProfileModelVersion { get; set; }
+    public string? ProfilePromptVersion { get; set; }
+    public string? ProfileSchemaVersion { get; set; }
     public int Version { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

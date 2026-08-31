@@ -19,7 +19,8 @@ public sealed partial class PracticeService(
     NexoraDbContext dbContext,
     IUploadProvider uploadProvider,
     IStorageProvider storageProvider,
-    IDocumentExtractor documentExtractor,
+    IDetailedDocumentExtractor detailedDocumentExtractor,
+    IResumeContextBuilder resumeContextBuilder,
     IAiProvider aiProvider,
     IBillingService billingService,
     TimeProvider timeProvider,
@@ -29,12 +30,16 @@ public sealed partial class PracticeService(
     private const string ModelVersion = "fake-ai-v1";
     private const string PromptVersion = "phase3-v1";
     private const string SchemaVersion = "phase3-v1";
+    private const string ProfileModelVersion = "fake-ai-v1";
+    private const string ProfilePromptVersion = "resume-profile-v1";
+    private const string ProfileSchemaVersion = "resume-profile-v1";
     private const string RubricVersion = "interview-rubric-v1";
     private const string Disclaimer = "Điểm số chỉ là ước lượng phục vụ coaching, không phải đánh giá tuyển dụng.";
     private static readonly JsonDocument EmptySchema = JsonDocument.Parse("{}");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly JsonDocument QuestionSchema = JsonDocument.Parse("""{"type":"object","properties":{"content":{"type":"string"}},"required":["content"]}""");
     private static readonly JsonDocument AnalysisSchema = JsonDocument.Parse("""{"type":"object","properties":{"strengths":{"type":"array","items":{"type":"string"}},"gaps":{"type":"array","items":{"type":"string"}},"recommendations":{"type":"array","items":{"type":"string"}}},"required":["strengths","gaps","recommendations"]}""");
+    private static readonly JsonDocument ProfileSchema = JsonDocument.Parse("""{"type":"object","properties":{"summary":{"type":"string"},"skills":{"type":"array","items":{"type":"string"}},"experiences":{"type":"array","items":{"type":"object","properties":{"company":{"type":"string"},"role":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},"highlights":{"type":"array","items":{"type":"string"}}},"required":["company","role","start","end","highlights"]}},"education":{"type":"array","items":{"type":"object","properties":{"institution":{"type":"string"},"degree":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},"details":{"type":"array","items":{"type":"string"}}},"required":["institution","degree","start","end","details"]}},"projects":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"technologies":{"type":"array","items":{"type":"string"}},"highlights":{"type":"array","items":{"type":"string"}}},"required":["name","role","technologies","highlights"]}},"certifications":{"type":"array","items":{"type":"string"}},"languages":{"type":"array","items":{"type":"string"}}},"required":["summary","skills","experiences","education","projects","certifications","languages"]}""");
     private static readonly JsonDocument EvaluationSchema = JsonDocument.Parse("""{"type":"object","properties":{"scores":{"type":"array","items":{"type":"object","properties":{"criterion":{"type":"string"},"score":{"type":"integer"},"evidence":{"type":"string"}},"required":["criterion","score","evidence"]}},"feedback":{"type":"string"}},"required":["scores","feedback"]}""");
     private static readonly JsonDocument ReportSchema = JsonDocument.Parse("""{"type":"object","properties":{"scores":{"type":"array","items":{"type":"object","properties":{"criterion":{"type":"string"},"score":{"type":"integer"},"evidence":{"type":"string"}},"required":["criterion","score","evidence"]}},"strengths":{"type":"array","items":{"type":"string"}},"gaps":{"type":"array","items":{"type":"string"}},"actionPlan":{"type":"array","items":{"type":"string"}}},"required":["scores","strengths","gaps","actionPlan"]}""");
 
@@ -275,6 +280,7 @@ public sealed partial class PracticeService(
         if (prior is not null) return await MapExistingAnswerAsync(userId, interviewId, prior.ResourceId, cancellationToken);
 
         var snapshot = await dbContext.InterviewSessions.AsNoTracking().Include(item => item.Questions).Include(item => item.Answers)
+            .Include(item => item.Resume).Include(item => item.JobDescription)
             .SingleOrDefaultAsync(item => item.Id == interviewId && item.UserId == userId, cancellationToken) ?? throw NotFound();
         if (snapshot.Status != PracticeValues.Active) throw InvalidState();
         var question = snapshot.Questions.SingleOrDefault(item => item.Id == questionId) ?? throw NotFound();
@@ -282,11 +288,13 @@ public sealed partial class PracticeService(
 
         AnswerEvaluation evaluation;
         GeneratedQuestion? generated = null;
+        var answerContext = resumeContextBuilder.BuildAnswerEvaluationContext(
+            question.Content, content.Trim(), TryReadResumeProfile(snapshot.Resume?.StructuredProfile));
         try
         {
-            evaluation = await aiProvider.GenerateStructuredAsync<AnswerEvaluation>(Request("interview.evaluate", content.Trim(), interviewId), cancellationToken);
+            evaluation = await aiProvider.GenerateStructuredAsync<AnswerEvaluation>(Request("interview.evaluate", answerContext, interviewId), cancellationToken);
             if (snapshot.Questions.Count < 2)
-                generated = await aiProvider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.followup", content.Trim(), interviewId), cancellationToken);
+                generated = await aiProvider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.followup", answerContext, interviewId), cancellationToken);
         }
         catch (AiProviderException exception)
         {
@@ -442,13 +450,88 @@ public sealed partial class PracticeService(
     {
         var resume = await dbContext.Resumes.Include(item => item.StoredFile).SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
         await using var stream = await storageProvider.OpenReadAsync(resume.StoredFile.StorageKey, cancellationToken);
-        var text = await documentExtractor.ExtractAsync(stream, resume.StoredFile.ContentType, cancellationToken);
-        if (string.IsNullOrWhiteSpace(text)) throw InvalidAiOutput();
-        resume.ExtractedText = text;
+        var extraction = await detailedDocumentExtractor.ExtractDetailedAsync(stream, resume.StoredFile.ContentType, cancellationToken);
+        if (extraction.Quality != DocumentExtractionQuality.Good)
+            throw new InvalidDataException("Document text extraction quality is insufficient; OCR may be required.");
+        resume.ExtractedText = extraction.Text;
         resume.Status = PracticeValues.Ready;
         resume.UpdatedAt = timeProvider.GetUtcNow();
+        ResumeExtractionMeasured(logger, resume.Id, extraction.PageCount, extraction.CharacterCount, extraction.WordCount,
+            extraction.ExtractionMethod.ToString(), extraction.QualityScore, string.Join(',', extraction.Warnings));
         MarkProcessed(job);
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<ResumeProfile> EnsureResumeProfileAsync(
+        ResumeRecord resume, Guid correlationId, CancellationToken cancellationToken)
+    {
+        if (resume.ProfilePromptVersion == ProfilePromptVersion &&
+            resume.ProfileSchemaVersion == ProfileSchemaVersion &&
+            resume.ProfileModelVersion == ProfileModelVersion)
+        {
+            var existing = TryReadResumeProfile(resume.StructuredProfile);
+            if (existing is not null) return existing;
+        }
+
+        if (string.IsNullOrWhiteSpace(resume.ExtractedText)) throw InvalidAiOutput();
+        var context = resumeContextBuilder.BuildProfileExtractionContext(resume.ExtractedText);
+        ResumeProfile profile;
+        try
+        {
+            profile = await aiProvider.GenerateStructuredAsync<ResumeProfile>(
+                Request("resume.profile", context, correlationId), cancellationToken);
+        }
+        catch (AiProviderException exception)
+        {
+            throw AiUnavailable(exception);
+        }
+
+        ValidateResumeProfile(profile);
+        resume.StructuredProfile = JsonSerializer.Serialize(profile, JsonOptions);
+        resume.ProfileModelVersion = ProfileModelVersion;
+        resume.ProfilePromptVersion = ProfilePromptVersion;
+        resume.ProfileSchemaVersion = ProfileSchemaVersion;
+        resume.UpdatedAt = timeProvider.GetUtcNow();
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return profile;
+    }
+
+    private static ResumeProfile? TryReadResumeProfile(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        try
+        {
+            var profile = JsonSerializer.Deserialize<ResumeProfile>(value, JsonOptions);
+            return profile is null ? null : IsResumeProfileValid(profile) ? profile : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static void ValidateResumeProfile(ResumeProfile profile)
+    {
+        if (!IsResumeProfileValid(profile)) throw InvalidAiOutput();
+    }
+
+    private static bool IsResumeProfileValid(ResumeProfile? profile)
+    {
+        if (profile is null) return false;
+        var hasContent = !string.IsNullOrWhiteSpace(profile.Summary) ||
+            (profile.Skills?.Count ?? 0) > 0 ||
+            (profile.Experiences?.Count ?? 0) > 0 ||
+            (profile.Education?.Count ?? 0) > 0 ||
+            (profile.Projects?.Count ?? 0) > 0 ||
+            (profile.Certifications?.Count ?? 0) > 0 ||
+            (profile.Languages?.Count ?? 0) > 0;
+        return hasContent &&
+            (profile.Skills?.Count ?? 0) <= 100 &&
+            (profile.Experiences?.Count ?? 0) <= 30 &&
+            (profile.Education?.Count ?? 0) <= 20 &&
+            (profile.Projects?.Count ?? 0) <= 30 &&
+            (profile.Certifications?.Count ?? 0) <= 50 &&
+            (profile.Languages?.Count ?? 0) <= 30;
     }
 
     private async Task AnalyzeResumeAsync(OutboxEvent job, CancellationToken cancellationToken)
@@ -458,7 +541,8 @@ public sealed partial class PracticeService(
         analysis.Status = PracticeValues.Processing;
         analysis.UpdatedAt = timeProvider.GetUtcNow();
         await dbContext.SaveChangesAsync(cancellationToken);
-        var input = $"<resume>{Bound(analysis.Resume.ExtractedText)}</resume><job-description>{Bound(analysis.JobDescription.Content)}</job-description>";
+        var profile = await EnsureResumeProfileAsync(analysis.Resume, analysis.Id, cancellationToken);
+        var input = resumeContextBuilder.BuildResumeAnalysisContext(profile, analysis.JobDescription.Content);
         var result = await aiProvider.GenerateStructuredAsync<ResumeAnalysisOutput>(Request("resume.analysis", input, analysis.Id), cancellationToken);
         if (result.Strengths.Count == 0 || result.Gaps.Count == 0 || result.Recommendations.Count == 0) throw InvalidAiOutput();
         analysis.Result = JsonSerializer.Serialize(result, JsonOptions);
@@ -470,9 +554,13 @@ public sealed partial class PracticeService(
 
     private async Task ActivateInterviewAsync(OutboxEvent job, CancellationToken cancellationToken)
     {
-        var snapshot = await dbContext.InterviewSessions.AsNoTracking().SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
+        var snapshot = await dbContext.InterviewSessions.Include(item => item.Resume).Include(item => item.JobDescription)
+            .SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
         if (snapshot.Status != PracticeValues.Starting) { MarkProcessed(job); await dbContext.SaveChangesAsync(cancellationToken); return; }
-        var generated = await aiProvider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.first-question", snapshot.Role, snapshot.Id), cancellationToken);
+        var profile = snapshot.Resume is null ? null : await EnsureResumeProfileAsync(snapshot.Resume, snapshot.Id, cancellationToken);
+        var context = resumeContextBuilder.BuildInterviewQuestionContext(
+            snapshot.Role, snapshot.Seniority, snapshot.JobDescription?.Content, profile);
+        var generated = await aiProvider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.first-question", context, snapshot.Id), cancellationToken);
         if (string.IsNullOrWhiteSpace(generated.Content) || generated.Content.Length > 2_000) throw InvalidAiOutput();
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
@@ -503,11 +591,14 @@ public sealed partial class PracticeService(
     private async Task BuildReportAsync(OutboxEvent job, CancellationToken cancellationToken)
     {
         var snapshot = await dbContext.InterviewSessions.AsNoTracking().Include(item => item.Questions).ThenInclude(question => question.Answer)
+            .Include(item => item.Resume).Include(item => item.JobDescription)
             .SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
         if (snapshot.Status == PracticeValues.Completed) { MarkProcessed(job); await dbContext.SaveChangesAsync(cancellationToken); return; }
         var transcript = string.Join("\n", snapshot.Questions.OrderBy(item => item.Sequence)
             .Select(item => $"Q: {item.Content}\nA: {item.Answer?.Content}"));
-        var output = await aiProvider.GenerateStructuredAsync<InterviewReportOutput>(Request("interview.report", Bound(transcript), snapshot.Id), cancellationToken);
+        var reportContext = resumeContextBuilder.BuildReportContext(
+            transcript, TryReadResumeProfile(snapshot.Resume?.StructuredProfile));
+        var output = await aiProvider.GenerateStructuredAsync<InterviewReportOutput>(Request("interview.report", reportContext, snapshot.Id), cancellationToken);
         ValidateScores(output.Scores);
         if (output.Strengths.Count == 0 || output.Gaps.Count == 0 || output.ActionPlan.Count == 0) throw InvalidAiOutput();
         var overall = WeightedScore(output.Scores);
@@ -700,14 +791,21 @@ public sealed partial class PracticeService(
     {
         var schema = purpose switch
         {
+            "resume.profile" => ProfileSchema,
             "resume.analysis" => AnalysisSchema,
             "interview.evaluate" => EvaluationSchema,
             "interview.report" => ReportSchema,
             "interview.first-question" or "interview.followup" => QuestionSchema,
             _ => EmptySchema
         };
-        var maxOutputTokens = purpose == "interview.report" ? 4_000 : 2_000;
-        return new(purpose, PromptVersion, ModelVersion, RubricVersion, SchemaVersion, Bound(input), schema, maxOutputTokens, correlationId.ToString("N"));
+        var isProfile = purpose == "resume.profile";
+        var maxOutputTokens = purpose == "interview.report" ? 4_000 : isProfile ? 3_000 : 2_000;
+        return new(purpose,
+            isProfile ? ProfilePromptVersion : PromptVersion,
+            isProfile ? ProfileModelVersion : ModelVersion,
+            RubricVersion,
+            isProfile ? ProfileSchemaVersion : SchemaVersion,
+            Bound(input), schema, maxOutputTokens, correlationId.ToString("N"));
     }
 
     private static string Bound(string? value) => string.IsNullOrEmpty(value) ? string.Empty : value[..Math.Min(value.Length, 20_000)];
@@ -729,6 +827,12 @@ public sealed partial class PracticeService(
         "Job {JobId} ({JobType}/{AggregateId}) failed with {ExceptionType} after {QueueLagSeconds} queue seconds in {DurationMs} ms")]
     private static partial void JobFailed(
         ILogger logger, Guid jobId, string jobType, Guid aggregateId, string exceptionType, double queueLagSeconds, double durationMs);
+
+    [LoggerMessage(LogLevel.Information,
+        "Resume {ResumeId} extracted with {PageCount} pages, {CharacterCount} chars, {WordCount} words, method {ExtractionMethod}, quality {QualityScore}, warnings {Warnings}")]
+    private static partial void ResumeExtractionMeasured(
+        ILogger logger, Guid resumeId, int pageCount, int characterCount, int wordCount,
+        string extractionMethod, double qualityScore, string warnings);
 
     private static ResumeView MapResume(ResumeRecord resume) => new(resume.Id, resume.StoredFile.FileName, resume.StoredFile.ContentType, resume.StoredFile.Size, resume.Status, resume.CreatedAt);
     private static JobDescriptionView MapJobDescription(JobDescription jd) => new(jd.Id, jd.Title, jd.Content, jd.CreatedAt);
