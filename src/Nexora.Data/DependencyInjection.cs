@@ -40,6 +40,7 @@ public static class DependencyInjection
             .Validate(options => options.RefreshTokenDays is >= 1 and <= 90, "RefreshTokenDays must be between 1 and 90.")
             .ValidateOnStart();
         services.AddScoped<IAuthService, IdentityAuthService>();
+        services.AddScoped<IAdminService, AdminService>();
         return services;
     }
 
@@ -55,7 +56,6 @@ public static class DependencyInjection
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IBillingService, BillingService>();
         services.AddScoped<IFeatureEntitlementService, FeatureEntitlementService>();
-        services.AddScoped<IAdminService, AdminService>();
         services.AddScoped<IScenarioService, ScenarioStarService>();
         services.AddScoped<IStarAttemptService, ScenarioStarService>();
         services.AddScoped<IProgressService, ScenarioStarService>();
