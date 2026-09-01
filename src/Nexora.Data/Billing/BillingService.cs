@@ -15,15 +15,22 @@ public sealed partial class BillingService(
     TimeProvider timeProvider,
     ILogger<BillingService> logger) : IBillingService
 {
-    public async Task<IReadOnlyCollection<PlanView>> GetPlansAsync(CancellationToken cancellationToken) =>
-        await dbContext.Plans.AsNoTracking().Where(plan => plan.IsActive).OrderBy(plan => plan.SortOrder)
-            .Select(plan => new PlanView(
-                plan.Id,
-                plan.Code,
-                plan.Name,
-                plan.Prices.Where(price => price.IsActive).OrderBy(price => price.AmountMinor)
-                    .Select(price => new PlanPriceView(price.Id, price.AmountMinor, price.Currency, price.DurationDays, price.InterviewQuota)).ToArray()))
-            .ToArrayAsync(cancellationToken);
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    private static int? Available(int? limit, int reserved, int consumed, int adjustment) =>
+        limit is null ? null : limit.Value + adjustment - reserved - consumed;
+    public async Task<IReadOnlyCollection<PlanView>> GetPlansAsync(CancellationToken cancellationToken)
+    {
+        var plans = await dbContext.Plans.AsNoTracking().Include(item => item.Prices).ThenInclude(item => item.Features).ThenInclude(item => item.FeatureDefinition)
+            .Where(plan => plan.IsActive).OrderBy(plan => plan.SortOrder).ToArrayAsync(cancellationToken);
+        return plans.Select(plan => new PlanView(
+            plan.Id, plan.Code, plan.Name, plan.Description ?? string.Empty, plan.Badge, plan.IsHighlighted,
+            plan.Prices.Where(price => price.IsActive).OrderBy(price => price.AmountMinor).Select(price => new PlanPriceView(
+                price.Id, price.AmountMinor, price.Currency, price.DurationDays, price.InterviewQuota,
+                price.Features.Select(feature => new PlanFeatureView(
+                    feature.FeatureDefinition.Code, feature.FeatureDefinition.Name, feature.IsEnabled, feature.Limit,
+                    feature.IsEnabled && feature.Limit is null)).ToArray())).ToArray())).ToArray();
+    }
 
     public async Task<CheckoutSession> CreateCheckoutAsync(
         Guid userId,
@@ -36,7 +43,7 @@ public sealed partial class BillingService(
         var existing = await FindCheckoutAsync(userId, key, fingerprint, cancellationToken);
         if (existing is not null) return await EnsureProviderCheckoutAsync(existing, cancellationToken);
 
-        var price = await dbContext.PlanPrices.Include(item => item.Plan)
+        var price = await dbContext.PlanPrices.Include(item => item.Plan).Include(item => item.Features).ThenInclude(item => item.FeatureDefinition)
             .SingleOrDefaultAsync(item => item.Id == planPriceId && item.IsActive && item.Plan.IsActive, cancellationToken)
             ?? throw new BusinessException("PLAN_PRICE_NOT_FOUND", "Gói hoặc mức giá không còn khả dụng.", BusinessErrorKind.NotFound);
         if (price.AmountMinor == 0 || price.DurationDays is null)
@@ -44,6 +51,8 @@ public sealed partial class BillingService(
         var now = timeProvider.GetUtcNow();
         var orderId = Guid.NewGuid();
         var providerTransactionId = paymentProvider.CreateProviderTransactionId(orderId);
+        var featuresSnapshot = price.Features.Select(feature => new PlanFeatureSnapshot(
+            feature.FeatureDefinition.Code, feature.IsEnabled, feature.Limit)).ToArray();
         var order = new Order
         {
             Id = orderId,
@@ -54,6 +63,7 @@ public sealed partial class BillingService(
             Currency = price.Currency,
             DurationDays = price.DurationDays,
             InterviewQuota = price.InterviewQuota,
+            FeaturesSnapshot = JsonSerializer.Serialize(featuresSnapshot, JsonOptions),
             Status = BillingValues.Processing,
             PaymentProvider = paymentProvider.ProviderName,
             ProviderTransactionId = providerTransactionId,
@@ -64,7 +74,7 @@ public sealed partial class BillingService(
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         existing = await FindCheckoutAsync(userId, key, fingerprint, cancellationToken);
-        if (existing is not null) return MapCheckout(existing);
+        if (existing is not null) return await EnsureProviderCheckoutAsync(existing, cancellationToken);
         dbContext.Orders.Add(order);
         dbContext.IdempotencyRecords.Add(new IdempotencyRecord
         {
@@ -191,8 +201,7 @@ public sealed partial class BillingService(
                 CreatedAt = now,
                 UpdatedAt = now
             };
-            dbContext.Subscriptions.Add(subscription);
-            dbContext.Entitlements.Add(new Entitlement
+            var entitlement = new Entitlement
             {
                 Id = Guid.NewGuid(),
                 UserId = order.UserId,
@@ -205,7 +214,10 @@ public sealed partial class BillingService(
                 CreatedAt = now,
                 UpdatedAt = now,
                 ConcurrencyToken = Guid.NewGuid()
-            });
+            };
+            dbContext.Subscriptions.Add(subscription);
+            dbContext.Entitlements.Add(entitlement);
+            await SnapshotPurchasedFeaturesAsync(order, entitlement, now, cancellationToken);
             dbContext.OutboxEvents.Add(CreateOutbox("EntitlementGranted", "order", order.Id, new { order.Id, order.UserId }, now));
         }
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -213,23 +225,59 @@ public sealed partial class BillingService(
         PaymentProcessed(logger, CorrelationId(), verified.ProviderEventId, order.Id, order.Status);
     }
 
+    private async Task SnapshotPurchasedFeaturesAsync(Order order, Entitlement entitlement, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        List<PlanFeatureSnapshot> snapshots;
+        try
+        {
+            snapshots = JsonSerializer.Deserialize<List<PlanFeatureSnapshot>>(order.FeaturesSnapshot, JsonOptions) ?? [];
+        }
+        catch (JsonException)
+        {
+            throw new BusinessException("PAYMENT_REFERENCE_MISMATCH", "Snapshot tính năng không hợp lệ.", BusinessErrorKind.Validation);
+        }
+        var featureDefs = await dbContext.FeatureDefinitions.AsNoTracking().Where(item => item.IsActive).ToArrayAsync(cancellationToken);
+        var featureDefMap = featureDefs.ToDictionary(item => item.Code, item => item.Id, StringComparer.OrdinalIgnoreCase);
+        foreach (var snapshot in snapshots)
+        {
+            if (!featureDefMap.TryGetValue(snapshot.Code, out var featureDefinitionId))
+                throw new BusinessException("FEATURE_NOT_FOUND", $"Feature {snapshot.Code} không tồn tại.", BusinessErrorKind.Validation);
+            dbContext.EntitlementFeatures.Add(new EntitlementFeature
+            {
+                Id = Guid.NewGuid(),
+                EntitlementId = entitlement.Id,
+                FeatureDefinitionId = featureDefinitionId,
+                FeatureCode = snapshot.Code,
+                IsEnabled = snapshot.Enabled,
+                Limit = snapshot.Limit,
+                CreatedAt = now,
+                UpdatedAt = now,
+                ConcurrencyToken = Guid.NewGuid()
+            });
+        }
+    }
+
     public async Task<BillingSummary> GetSummaryAsync(Guid userId, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
         var activeEntitlements = await dbContext.Entitlements.AsNoTracking()
             .Where(item => item.UserId == userId && item.Status == BillingValues.Active)
-            .Select(item => new EntitlementView(
-                item.Id,
-                item.PlanCodeSnapshot,
-                item.Status,
-                item.StartsAt,
-                item.EndsAt,
-                item.InterviewLimit,
-                item.Reserved,
-                item.Consumed,
-                item.Adjustment))
-            .ToArrayAsync(cancellationToken);
-        var entitlement = activeEntitlements.Where(item => item.StartsAt <= now && item.EndsAt > now)
+            .Select(item => new { item, features = item.FeatureEntitlements }).ToArrayAsync(cancellationToken);
+        var views = new List<EntitlementView>();
+        var featureDefNames = await dbContext.FeatureDefinitions.AsNoTracking().ToDictionaryAsync(item => item.Id, item => item.Name, cancellationToken);
+        foreach (var entry in activeEntitlements)
+        {
+            var interview = new EntitlementFeatureView(FeatureValues.Interview, "Phỏng vấn",
+                true, entry.item.InterviewLimit, entry.item.Reserved, entry.item.Consumed, entry.item.Adjustment,
+                Available(entry.item.InterviewLimit, entry.item.Reserved, entry.item.Consumed, entry.item.Adjustment),
+                entry.item.InterviewLimit is null);
+            var generic = entry.features.Select(ef => new EntitlementFeatureView(
+                ef.FeatureCode, featureDefNames.GetValueOrDefault(ef.FeatureDefinitionId, ef.FeatureCode), ef.IsEnabled, ef.Limit,
+                ef.Reserved, ef.Consumed, ef.Adjustment, Available(ef.Limit, ef.Reserved, ef.Consumed, ef.Adjustment), ef.IsEnabled && ef.Limit is null)).ToArray();
+            views.Add(new EntitlementView(entry.item.Id, entry.item.PlanCodeSnapshot, entry.item.Status, entry.item.StartsAt, entry.item.EndsAt,
+                entry.item.InterviewLimit, entry.item.Reserved, entry.item.Consumed, entry.item.Adjustment, [interview, .. generic]));
+        }
+        var entitlement = views.Where(item => item.StartsAt <= now && item.EndsAt > now)
             .OrderBy(item => item.EndsAt).FirstOrDefault();
         var orderRows = await dbContext.Orders.AsNoTracking().Where(order => order.UserId == userId)
             .Select(order => new OrderView(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt))

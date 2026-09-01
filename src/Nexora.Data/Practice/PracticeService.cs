@@ -24,6 +24,7 @@ public sealed partial class PracticeService(
     IResumeContextBuilder resumeContextBuilder,
     IAiProvider aiProvider,
     IBillingService billingService,
+    IFeatureEntitlementService featureEntitlementService,
     TimeProvider timeProvider,
     ILogger<PracticeService> logger) : IPracticeService, IPracticeJobProcessor
 {
@@ -184,6 +185,8 @@ public sealed partial class PracticeService(
         if (resume.Status != PracticeValues.Ready) throw Conflict("RESUME_NOT_READY", "CV chưa sẵn sàng để phân tích.");
         var jd = await dbContext.JobDescriptions.AsNoTracking().SingleOrDefaultAsync(item => item.Id == jobDescriptionId && item.UserId == userId, cancellationToken)
             ?? throw NotFound();
+        await featureEntitlementService.RequireEnabledAsync(userId, FeatureValues.CvAnalysis, cancellationToken);
+        var access = await featureEntitlementService.GetAsync(userId, FeatureValues.CvAnalysis, cancellationToken);
         var now = timeProvider.GetUtcNow();
         var analysis = new ResumeAnalysis
         {
@@ -200,6 +203,14 @@ public sealed partial class PracticeService(
             CreatedAt = now,
             UpdatedAt = now
         };
+        Guid? reservationId = null;
+        if (access.Limit is not null)
+        {
+            var reservation = await featureEntitlementService.ReserveAsync(userId, FeatureValues.CvAnalysis, analysis.Id.ToString("N"),
+                $"cv-analysis:{key}", cancellationToken);
+            reservationId = reservation.EventId;
+            analysis.UsageReservationId = reservationId;
+        }
         dbContext.AddRange(analysis, Idempotency(userId, "resume-analysis.create", key, fingerprint, analysis.Id, now),
             Outbox("ResumeAnalysisRequested", "resume_analysis", analysis.Id, now));
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -628,6 +639,8 @@ public sealed partial class PracticeService(
         analysis.CompletedAt = analysis.UpdatedAt = timeProvider.GetUtcNow();
         MarkProcessed(job);
         await dbContext.SaveChangesAsync(cancellationToken);
+        if (analysis.UsageReservationId.HasValue)
+            await featureEntitlementService.ConsumeAsync(analysis.UserId, analysis.UsageReservationId.Value, cancellationToken);
     }
 
     private async Task ActivateInterviewAsync(OutboxEvent job, CancellationToken cancellationToken)
@@ -744,6 +757,8 @@ public sealed partial class PracticeService(
             analysis.Status = PracticeValues.Failed;
             analysis.ErrorCode = "AI_PROCESSING_FAILED";
             analysis.UpdatedAt = current.ProcessedAt.Value;
+            if (analysis.UsageReservationId.HasValue)
+                await featureEntitlementService.VoidAsync(analysis.UserId, analysis.UsageReservationId.Value, cancellationToken);
         }
         else if (current.Type == "InterviewReportRequested")
         {

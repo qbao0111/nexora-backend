@@ -31,6 +31,15 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<InterviewAnswer> InterviewAnswers => Set<InterviewAnswer>();
     public DbSet<InterviewReport> InterviewReports => Set<InterviewReport>();
     public DbSet<DataPrivacyRequest> DataPrivacyRequests => Set<DataPrivacyRequest>();
+    public DbSet<FeatureDefinition> FeatureDefinitions => Set<FeatureDefinition>();
+    public DbSet<PlanPriceFeature> PlanPriceFeatures => Set<PlanPriceFeature>();
+    public DbSet<EntitlementFeature> EntitlementFeatures => Set<EntitlementFeature>();
+    public DbSet<FeatureUsageEvent> FeatureUsageEvents => Set<FeatureUsageEvent>();
+    public DbSet<AdminAuditEvent> AdminAuditEvents => Set<AdminAuditEvent>();
+    public DbSet<ScenarioCategory> ScenarioCategories => Set<ScenarioCategory>();
+    public DbSet<Scenario> Scenarios => Set<Scenario>();
+    public DbSet<ScenarioAttempt> ScenarioAttempts => Set<ScenarioAttempt>();
+    public DbSet<StarAttempt> StarAttempts => Set<StarAttempt>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -72,6 +81,130 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
         ConfigureBilling(builder);
         ConfigurePractice(builder);
         ConfigurePrivacy(builder);
+        ConfigureFeatureManagement(builder);
+        ConfigureScenarioStar(builder);
+    }
+
+    private static void ConfigureFeatureManagement(ModelBuilder builder)
+    {
+        builder.Entity<FeatureDefinition>(entity =>
+        {
+            entity.ToTable("feature_definitions");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => item.Code).IsUnique();
+            entity.Property(item => item.Code).HasMaxLength(40).IsRequired();
+            entity.Property(item => item.Name).HasMaxLength(120).IsRequired();
+            entity.Property(item => item.Description).HasMaxLength(500);
+            var createdAt = new DateTimeOffset(2026, 8, 25, 0, 0, 0, TimeSpan.Zero);
+            entity.HasData(
+                new FeatureDefinition { Id = Guid.Parse("20000000-0000-0000-0000-000000000001"), Code = "cv_analysis", Name = "Phân tích CV", Description = "Phân tích CV và Job Description", SortOrder = 0, IsActive = true, CreatedAt = createdAt, UpdatedAt = createdAt },
+                new FeatureDefinition { Id = Guid.Parse("20000000-0000-0000-0000-000000000002"), Code = "interview", Name = "Phỏng vấn", Description = "Luyện phỏng vấn mô phỏng", SortOrder = 1, IsActive = true, CreatedAt = createdAt, UpdatedAt = createdAt },
+                new FeatureDefinition { Id = Guid.Parse("20000000-0000-0000-0000-000000000003"), Code = "scenario", Name = "Tình huống", Description = "Luyện tình huống thực tế", SortOrder = 2, IsActive = true, CreatedAt = createdAt, UpdatedAt = createdAt },
+                new FeatureDefinition { Id = Guid.Parse("20000000-0000-0000-0000-000000000004"), Code = "star_builder", Name = "STAR Builder", Description = "Xây dựng câu trả lời STAR", SortOrder = 3, IsActive = true, CreatedAt = createdAt, UpdatedAt = createdAt },
+                new FeatureDefinition { Id = Guid.Parse("20000000-0000-0000-0000-000000000005"), Code = "advanced_report", Name = "Báo cáo nâng cao", Description = "Báo cáo chi tiết và phân tích sâu", SortOrder = 4, IsActive = true, CreatedAt = createdAt, UpdatedAt = createdAt },
+                new FeatureDefinition { Id = Guid.Parse("20000000-0000-0000-0000-000000000006"), Code = "progress_analytics", Name = "Phân tích tiến độ", Description = "Theo dõi tiến độ luyện tập", SortOrder = 5, IsActive = true, CreatedAt = createdAt, UpdatedAt = createdAt });
+        });
+        builder.Entity<EntitlementFeature>(entity =>
+        {
+            entity.ToTable("entitlement_features");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.EntitlementId, item.FeatureDefinitionId }).IsUnique();
+            entity.Property(item => item.FeatureCode).HasMaxLength(40).IsRequired();
+            entity.Property(item => item.ConcurrencyToken).IsConcurrencyToken();
+            entity.HasOne(item => item.Entitlement).WithMany().HasForeignKey(item => item.EntitlementId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(item => item.FeatureDefinition).WithMany().HasForeignKey(item => item.FeatureDefinitionId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<FeatureUsageEvent>(entity =>
+        {
+            entity.ToTable("feature_usage_events");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.UserId, item.Action, item.IdempotencyKey }).IsUnique();
+            entity.HasIndex(item => new { item.EntitlementFeatureId, item.Action, item.SourceId }).IsUnique();
+            entity.Property(item => item.FeatureCode).HasMaxLength(40).IsRequired();
+            entity.Property(item => item.Action).HasMaxLength(20).IsRequired();
+            entity.Property(item => item.SourceType).HasMaxLength(40).IsRequired();
+            entity.Property(item => item.SourceId).HasMaxLength(160).IsRequired();
+            entity.Property(item => item.IdempotencyKey).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Reason).HasMaxLength(500);
+            entity.HasOne(item => item.User).WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(item => item.EntitlementFeature).WithMany(ef => ef.UsageEvents).HasForeignKey(item => item.EntitlementFeatureId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<AdminAuditEvent>(entity =>
+        {
+            entity.ToTable("admin_audit_events");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => item.CreatedAt);
+            entity.Property(item => item.Action).HasMaxLength(80).IsRequired();
+            entity.Property(item => item.TargetType).HasMaxLength(40).IsRequired();
+            entity.Property(item => item.TargetId).HasMaxLength(80).IsRequired();
+            entity.Property(item => item.Reason).HasMaxLength(500).IsRequired();
+            entity.Property(item => item.SafeMetadataJson).HasColumnType("jsonb");
+            entity.HasOne(item => item.AdminUser).WithMany().HasForeignKey(item => item.AdminUserId).OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigureScenarioStar(ModelBuilder builder)
+    {
+        builder.Entity<ScenarioCategory>(entity =>
+        {
+            entity.ToTable("scenario_categories");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => item.Slug).IsUnique();
+            entity.Property(item => item.Slug).HasMaxLength(80).IsRequired();
+            entity.Property(item => item.Name).HasMaxLength(120).IsRequired();
+            entity.Property(item => item.Description).HasMaxLength(500);
+            var createdAt = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+            entity.HasData(
+                new ScenarioCategory { Id = Guid.Parse("40000000-0000-0000-0000-000000000001"), Slug = "banking", Name = "Ngân hàng", Description = "Tình huống ngành ngân hàng (demo)", SortOrder = 0, IsActive = true, CreatedAt = createdAt, UpdatedAt = createdAt },
+                new ScenarioCategory { Id = Guid.Parse("40000000-0000-0000-0000-000000000002"), Slug = "ecommerce", Name = "Thương mại điện tử", Description = "Tình huống ngành TMĐT (demo)", SortOrder = 1, IsActive = true, CreatedAt = createdAt, UpdatedAt = createdAt },
+                new ScenarioCategory { Id = Guid.Parse("40000000-0000-0000-0000-000000000003"), Slug = "logistics", Name = "Logistics", Description = "Tình huống ngành logistics (demo)", SortOrder = 2, IsActive = true, CreatedAt = createdAt, UpdatedAt = createdAt });
+        });
+        builder.Entity<Scenario>(entity =>
+        {
+            entity.ToTable("scenarios");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => item.Slug).IsUnique();
+            entity.HasIndex(item => new { item.CategoryId, item.Status });
+            entity.Property(item => item.Slug).HasMaxLength(120).IsRequired();
+            entity.Property(item => item.Title).HasMaxLength(200).IsRequired();
+            entity.Property(item => item.Summary).HasMaxLength(500).IsRequired();
+            entity.Property(item => item.Difficulty).HasMaxLength(20).IsRequired();
+            entity.Property(item => item.Competency).HasMaxLength(80).IsRequired();
+            entity.Property(item => item.Content).HasMaxLength(20_000).IsRequired();
+            entity.Property(item => item.Status).HasMaxLength(20).IsRequired();
+            entity.HasOne(item => item.Category).WithMany(cat => cat.Scenarios).HasForeignKey(item => item.CategoryId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<ScenarioAttempt>(entity =>
+        {
+            entity.ToTable("scenario_attempts");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.UserId, item.CreatedAt });
+            entity.HasIndex(item => new { item.ScenarioId, item.UserId });
+            entity.Property(item => item.Status).HasMaxLength(20).IsRequired();
+            entity.Property(item => item.Answer).HasMaxLength(12_000);
+            entity.Property(item => item.EvaluationJson).HasColumnType("jsonb");
+            entity.Property(item => item.ModelVersion).HasMaxLength(80);
+            entity.Property(item => item.PromptVersion).HasMaxLength(80);
+            entity.Property(item => item.SchemaVersion).HasMaxLength(80);
+            entity.Property(item => item.ErrorCode).HasMaxLength(80);
+            entity.HasOne(item => item.User).WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(item => item.Scenario).WithMany(s => s.Attempts).HasForeignKey(item => item.ScenarioId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<StarAttempt>(entity =>
+        {
+            entity.ToTable("star_attempts");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.UserId, item.CreatedAt });
+            entity.Property(item => item.Question).HasMaxLength(2_000).IsRequired();
+            entity.Property(item => item.Answer).HasMaxLength(12_000).IsRequired();
+            entity.Property(item => item.Status).HasMaxLength(20).IsRequired();
+            entity.Property(item => item.EvaluationJson).HasColumnType("jsonb");
+            entity.Property(item => item.ModelVersion).HasMaxLength(80);
+            entity.Property(item => item.PromptVersion).HasMaxLength(80);
+            entity.Property(item => item.SchemaVersion).HasMaxLength(80);
+            entity.Property(item => item.ErrorCode).HasMaxLength(80);
+            entity.HasOne(item => item.User).WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);
+        });
     }
 
     private static void ConfigureBilling(ModelBuilder builder)
@@ -83,12 +216,14 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.HasIndex(plan => plan.Code).IsUnique();
             entity.Property(plan => plan.Code).HasMaxLength(40).IsRequired();
             entity.Property(plan => plan.Name).HasMaxLength(120).IsRequired();
+            entity.Property(plan => plan.Description).HasMaxLength(500);
+            entity.Property(plan => plan.Badge).HasMaxLength(40);
             var createdAt = new DateTimeOffset(2026, 8, 25, 0, 0, 0, TimeSpan.Zero);
             entity.HasData(
-                new Plan { Id = Guid.Parse("00000000-0000-0000-0000-000000000001"), Code = "free", Name = "Free", SortOrder = 0, IsActive = true, CreatedAt = createdAt },
-                new Plan { Id = Guid.Parse("00000000-0000-0000-0000-000000000002"), Code = "basic", Name = "Basic", SortOrder = 1, IsActive = true, CreatedAt = createdAt },
-                new Plan { Id = Guid.Parse("00000000-0000-0000-0000-000000000003"), Code = "weekly", Name = "Weekly", SortOrder = 2, IsActive = true, CreatedAt = createdAt },
-                new Plan { Id = Guid.Parse("00000000-0000-0000-0000-000000000004"), Code = "pro", Name = "Pro", SortOrder = 3, IsActive = true, CreatedAt = createdAt });
+                new Plan { Id = Guid.Parse("00000000-0000-0000-0000-000000000001"), Code = "free", Name = "Free", Description = "Dùng thử cơ bản", Badge = null, IsHighlighted = false, SortOrder = 0, IsActive = true, CreatedAt = createdAt },
+                new Plan { Id = Guid.Parse("00000000-0000-0000-0000-000000000002"), Code = "basic", Name = "Basic", Description = "Luyện tập cơ bản", Badge = null, IsHighlighted = false, SortOrder = 1, IsActive = true, CreatedAt = createdAt },
+                new Plan { Id = Guid.Parse("00000000-0000-0000-0000-000000000003"), Code = "weekly", Name = "Weekly", Description = "Luyện tập trong tuần", Badge = "popular", IsHighlighted = true, SortOrder = 2, IsActive = true, CreatedAt = createdAt },
+                new Plan { Id = Guid.Parse("00000000-0000-0000-0000-000000000004"), Code = "pro", Name = "Pro", Description = "Trải nghiệm đầy đủ", Badge = null, IsHighlighted = false, SortOrder = 3, IsActive = true, CreatedAt = createdAt });
         });
         builder.Entity<PlanPrice>(entity =>
         {
@@ -105,6 +240,34 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
                 new PlanPrice { Id = Guid.Parse("10000000-0000-0000-0000-000000000003"), PlanId = Guid.Parse("00000000-0000-0000-0000-000000000003"), AmountMinor = 189_000, Currency = "VND", DurationDays = 14, InterviewQuota = 20, IsActive = true, CreatedAt = createdAt },
                 new PlanPrice { Id = Guid.Parse("10000000-0000-0000-0000-000000000004"), PlanId = Guid.Parse("00000000-0000-0000-0000-000000000004"), AmountMinor = 599_000, Currency = "VND", DurationDays = 90, InterviewQuota = null, IsActive = true, CreatedAt = createdAt });
         });
+        builder.Entity<PlanPriceFeature>(entity =>
+        {
+            entity.ToTable("plan_price_features");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.PlanPriceId, item.FeatureDefinitionId }).IsUnique();
+            entity.Property(item => item.Limit).HasDefaultValue(null);
+            entity.HasOne(item => item.PlanPrice).WithMany(price => price.Features).HasForeignKey(item => item.PlanPriceId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(item => item.FeatureDefinition).WithMany(fd => fd.PlanPriceFeatures).HasForeignKey(item => item.FeatureDefinitionId).OnDelete(DeleteBehavior.Restrict);
+            var featureCreatedAt = new DateTimeOffset(2026, 8, 25, 0, 0, 0, TimeSpan.Zero);
+            entity.HasData(
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000001"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000001"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000001"), IsEnabled = true, Limit = 1, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000002"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000001"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000002"), IsEnabled = true, Limit = 1, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000003"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000002"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000001"), IsEnabled = true, Limit = 3, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000004"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000002"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000002"), IsEnabled = true, Limit = 3, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000005"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000002"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000003"), IsEnabled = true, Limit = 3, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000006"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000002"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000004"), IsEnabled = true, Limit = 5, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000007"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000003"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000001"), IsEnabled = true, Limit = 5, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000008"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000003"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000002"), IsEnabled = true, Limit = 20, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000009"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000003"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000003"), IsEnabled = true, Limit = null, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000010"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000003"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000004"), IsEnabled = true, Limit = null, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000011"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000003"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000005"), IsEnabled = true, Limit = null, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000012"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000004"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000001"), IsEnabled = true, Limit = null, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000013"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000004"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000002"), IsEnabled = true, Limit = null, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000014"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000004"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000003"), IsEnabled = true, Limit = null, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000015"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000004"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000004"), IsEnabled = true, Limit = null, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000016"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000004"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000005"), IsEnabled = true, Limit = null, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt },
+                new PlanPriceFeature { Id = Guid.Parse("30000000-0000-0000-0000-000000000017"), PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000004"), FeatureDefinitionId = Guid.Parse("20000000-0000-0000-0000-000000000006"), IsEnabled = true, Limit = null, CreatedAt = featureCreatedAt, UpdatedAt = featureCreatedAt });
+        });
         builder.Entity<Order>(entity =>
         {
             entity.ToTable("orders");
@@ -117,6 +280,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.Property(order => order.PaymentProvider).HasMaxLength(40).IsRequired();
             entity.Property(order => order.ProviderTransactionId).HasMaxLength(160).IsRequired();
             entity.Property(order => order.CheckoutUrl).HasMaxLength(2048).IsRequired();
+            entity.Property(order => order.FeaturesSnapshot).HasColumnType("jsonb").IsRequired();
             entity.HasOne(order => order.User).WithMany().HasForeignKey(order => order.UserId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(order => order.PlanPrice).WithMany().HasForeignKey(order => order.PlanPriceId).OnDelete(DeleteBehavior.Restrict);
         });

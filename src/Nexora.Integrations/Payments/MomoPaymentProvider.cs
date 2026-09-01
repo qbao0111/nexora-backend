@@ -26,13 +26,14 @@ public sealed class MomoOptions
 public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOptions> options) : IPaymentProvider
 {
     private const string RequestType = "captureWallet";
+    private const string MomoProviderName = "momo";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         NumberHandling = JsonNumberHandling.AllowReadingFromString
     };
     private readonly MomoOptions _options = options.Value;
 
-    public string ProviderName => "momo";
+    public string ProviderName => MomoProviderName;
 
     public string CreateProviderTransactionId(Guid orderId) => ToMomoOrderId(orderId);
 
@@ -78,7 +79,10 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
             payload.Amount != request.AmountMinor)
             throw new BusinessException("PAYMENT_REFERENCE_MISMATCH", "Thông tin thanh toán MoMo không khớp order.", BusinessErrorKind.Validation);
 
-        return new PaymentCheckout(ProviderName, orderId, payload.PayUrl);
+        VerifyCreateResponseSignature(payload);
+        var payUrl = ValidatePayUrl(payload.PayUrl!);
+
+        return new PaymentCheckout(ProviderName, orderId, payUrl);
     }
 
     public Task<VerifiedPaymentEvent> VerifyWebhookAsync(string signature, string timestamp, ReadOnlyMemory<byte> body, CancellationToken cancellationToken)
@@ -95,7 +99,7 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
     public async Task<VerifiedPaymentEvent?> QueryPaymentAsync(PaymentOrderRequest request, CancellationToken cancellationToken)
     {
         ValidateRequest(request);
-        var momoRequestId = ToMomoRequestId(request.OrderId);
+        var momoRequestId = ToMomoQueryRequestId();
         var rawSignature = string.Join('&',
             $"accessKey={_options.AccessKey}",
             $"orderId={request.ProviderTransactionId}",
@@ -109,8 +113,25 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
             Sign(rawSignature, _options.SecretKey));
 
         using var response = await httpClient.PostAsJsonAsync("/v2/gateway/api/query", body, JsonOptions, cancellationToken);
-        var payload = await ReadAsync<MomoPaymentPayload>(response, cancellationToken);
-        return payload.ResultCode == 0 && VerifySignature(payload) ? ToVerifiedEvent(payload) : null;
+        var payload = await ReadAsync<MomoQueryResponse>(response, cancellationToken);
+        if (payload.ResultCode != 0 || payload.Amount != request.AmountMinor) return null;
+        if (!string.Equals(payload.PartnerCode, _options.PartnerCode, StringComparison.Ordinal) ||
+            !string.Equals(payload.OrderId, request.ProviderTransactionId, StringComparison.Ordinal) ||
+            !string.Equals(payload.RequestId, momoRequestId, StringComparison.Ordinal))
+            throw new BusinessException("PAYMENT_REFERENCE_MISMATCH", "Thông tin thanh toán MoMo không khớp order.", BusinessErrorKind.Validation);
+
+        var providerTransactionId = request.ProviderTransactionId;
+        var orderId = request.OrderId;
+        var paid = payload.ResultCode == 0;
+        var providerEventId = $"{ProviderName}:{providerTransactionId}:{payload.TransId?.ToString(CultureInfo.InvariantCulture) ?? "0"}:{payload.ResultCode.ToString(CultureInfo.InvariantCulture)}";
+        return new VerifiedPaymentEvent(
+            providerEventId,
+            orderId,
+            providerTransactionId,
+            payload.Amount,
+            "VND",
+            paid,
+            DateTimeOffset.FromUnixTimeMilliseconds(payload.ResponseTime));
     }
 
     public static string Sign(string rawData, string secretKey)
@@ -121,6 +142,7 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
 
     public static string ToMomoOrderId(Guid orderId) => $"nexora_{orderId:N}";
     public static string ToMomoRequestId(Guid orderId) => $"req_{orderId:N}";
+    public static string ToMomoQueryRequestId() => $"qry_{Guid.NewGuid():N}";
 
     private static async Task<T> ReadAsync<T>(HttpResponseMessage response, CancellationToken cancellationToken)
     {
@@ -147,6 +169,41 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
             throw new BusinessException("PAYMENT_AMOUNT_NOT_SUPPORTED", "Số tiền MoMo sandbox phải từ 1.000đ đến 50.000.000đ.", BusinessErrorKind.Validation);
         if (!string.Equals(request.ProviderTransactionId, ToMomoOrderId(request.OrderId), StringComparison.Ordinal))
             throw new BusinessException("PAYMENT_REFERENCE_MISMATCH", "Thông tin thanh toán MoMo không khớp order.", BusinessErrorKind.Validation);
+    }
+
+    private void VerifyCreateResponseSignature(MomoCreateResponse payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload.Signature) ||
+            string.IsNullOrWhiteSpace(payload.RequestId) ||
+            string.IsNullOrWhiteSpace(payload.OrderId) ||
+            payload.ResponseTime is null)
+            throw new BusinessException("PAYMENT_PROVIDER_INVALID_RESPONSE", "MoMo sandbox trả về dữ liệu không hợp lệ.", BusinessErrorKind.ExternalFailure);
+        var rawSignature = string.Join('&',
+            $"accessKey={_options.AccessKey}",
+            $"amount={payload.Amount.ToString(CultureInfo.InvariantCulture)}",
+            $"message={payload.Message}",
+            $"orderId={payload.OrderId}",
+            $"partnerCode={payload.PartnerCode}",
+            $"payUrl={payload.PayUrl ?? string.Empty}",
+            $"requestId={payload.RequestId}",
+            $"responseTime={payload.ResponseTime.Value.ToString(CultureInfo.InvariantCulture)}",
+            $"resultCode={payload.ResultCode.ToString(CultureInfo.InvariantCulture)}");
+        var expected = Encoding.UTF8.GetBytes(Sign(rawSignature, _options.SecretKey));
+        var supplied = Encoding.UTF8.GetBytes(payload.Signature.Trim().ToLowerInvariant());
+        if (supplied.Length != expected.Length || !CryptographicOperations.FixedTimeEquals(supplied, expected))
+            throw new BusinessException("PAYMENT_PROVIDER_INVALID_RESPONSE", "MoMo sandbox trả về dữ liệu không hợp lệ.", BusinessErrorKind.ExternalFailure);
+    }
+
+    private static string ValidatePayUrl(string payUrl)
+    {
+        if (!Uri.TryCreate(payUrl, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            throw new BusinessException("PAYMENT_CHECKOUT_FAILED", "Không thể tạo phiên thanh toán.", BusinessErrorKind.ExternalFailure);
+        var host = uri.Host.ToLowerInvariant();
+        var allowedHosts = new[] { "test-payment.momo.vn", "payment.momo.vn" };
+        if (!allowedHosts.Any(host.Equals))
+            throw new BusinessException("PAYMENT_CHECKOUT_FAILED", "Không thể tạo phiên thanh toán.", BusinessErrorKind.ExternalFailure);
+        return payUrl;
     }
 
     private bool VerifySignature(MomoPaymentPayload payload)
@@ -181,7 +238,7 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
             !string.Equals(payload.RequestId, ToMomoRequestId(orderId), StringComparison.Ordinal))
             throw InvalidPayload();
         return new VerifiedPaymentEvent(
-            $"momo:{payload.TransId.ToString(CultureInfo.InvariantCulture)}",
+            $"{MomoProviderName}:{payload.OrderId}:{payload.TransId.ToString(CultureInfo.InvariantCulture)}:{payload.ResultCode.ToString(CultureInfo.InvariantCulture)}",
             orderId,
             payload.OrderId,
             payload.Amount,
@@ -228,7 +285,21 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
         string Message,
         string? PayUrl,
         string? Deeplink,
-        string? QrCodeUrl);
+        string? QrCodeUrl,
+        long? ResponseTime,
+        string? Signature);
+
+    private sealed record MomoQueryResponse(
+        string PartnerCode,
+        string RequestId,
+        string OrderId,
+        long Amount,
+        string Message,
+        long? TransId,
+        string PayType,
+        int ResultCode,
+        long ResponseTime,
+        string? ExtraData);
 
     private sealed record MomoPaymentPayload(
         string PartnerCode,

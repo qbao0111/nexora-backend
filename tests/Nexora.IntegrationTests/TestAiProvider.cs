@@ -1,4 +1,5 @@
 using Nexora.Business.Ai;
+using Nexora.Business.Practice;
 
 namespace Nexora.IntegrationTests;
 
@@ -40,6 +41,26 @@ internal sealed class TestAiProvider : IAiProvider
                     ["result"],
                     ["Có hành động xử lý rõ"],
                     ["Kết thúc câu trả lời bằng kết quả và tác động cụ thể."]) : new StarEvaluation(false, null, null, null, null, null, [], [], [])),
+            var type when type == typeof(StarEvaluation) => new StarEvaluation(
+                true,
+                75,
+                new StarComponentEvaluation(80, true, "Có bối cảnh tình huống.", "Bối cảnh rõ."),
+                new StarComponentEvaluation(70, true, "Có nhiệm vụ cụ thể.", "Nhiệm vụ rõ."),
+                new StarComponentEvaluation(75, true, "Có hành động xử lý.", "Hành động cá nhân rõ."),
+                new StarComponentEvaluation(50, false, string.Empty, "Cần nêu kết quả cụ thể hơn."),
+                ["result"],
+                ["Có hành động xử lý rõ"],
+                ["Kết thúc câu trả lời bằng kết quả và tác động cụ thể."]),
+            var type when type == typeof(ScenarioEvaluationResult) => new ScenarioEvaluationResult(
+                72,
+                [
+                    new ScenarioDimensionEvaluation("problem_analysis", 80, "Có phân tích nguyên nhân.", "Phân tích tốt."),
+                    new ScenarioDimensionEvaluation("communication", 70, "Trình bày rõ ý.", "Cần cụ thể hơn.")
+                ],
+                ["Phân tích vấn đề rõ ràng"],
+                ["Thiếu phương án dự phòng"],
+                ["Đề xuất thêm phương án B"],
+                "Nên bổ sung kết quả và phương án dự phòng."),
             var type when type == typeof(InterviewReportOutput) => new InterviewReportOutput(
                 [
                     new RubricScore("correctness", 75, "Transcript cho thấy hướng giải quyết phù hợp."),
