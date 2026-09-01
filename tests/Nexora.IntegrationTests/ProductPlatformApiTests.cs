@@ -520,6 +520,345 @@ public sealed class ProductPlatformApiTests
         Assert.Equal(50000, updatedPrice.AmountMinor);
     }
 
+    [Fact]
+    public async Task AdminScenarioUpdatePreservesSlugAndUpdatesFields()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var admin = await MakeAdminAsync(factory, account.UserId);
+
+        using var adminClient = factory.CreateHttpsClient();
+        adminClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", admin.AccessToken);
+
+        using var catRes = await adminClient.GetAsync("/api/v1/admin/scenario-categories");
+        using var catDoc = JsonDocument.Parse(await catRes.Content.ReadAsStringAsync());
+        var categoryId = catDoc.RootElement.GetProperty("data")[0].GetProperty("id").GetGuid();
+
+        var origSlug = $"scenario-edit-{Guid.NewGuid():N}";
+        using var createRes = await adminClient.PostAsJsonAsync("/api/v1/admin/scenarios", new
+        {
+            slug = origSlug,
+            title = "Original Title",
+            summary = "Original summary",
+            categoryId,
+            difficulty = "easy",
+            competency = "teamwork",
+            estimatedMinutes = 10,
+            content = "Original content"
+        });
+        Assert.Equal(HttpStatusCode.Created, createRes.StatusCode);
+        using var createDoc = JsonDocument.Parse(await createRes.Content.ReadAsStringAsync());
+        var scenarioId = createDoc.RootElement.GetProperty("data").GetProperty("id").GetGuid();
+
+        using var updateRes = await adminClient.PatchAsJsonAsync($"/api/v1/admin/scenarios/{scenarioId}", new
+        {
+            title = "Updated Title",
+            summary = "Updated summary",
+            categoryId,
+            difficulty = "hard",
+            competency = "leadership",
+            estimatedMinutes = 25,
+            content = "Updated content for the scenario."
+        });
+        Assert.Equal(HttpStatusCode.OK, updateRes.StatusCode);
+        using var updateDoc = JsonDocument.Parse(await updateRes.Content.ReadAsStringAsync());
+        var data = updateDoc.RootElement.GetProperty("data");
+
+        Assert.Equal(origSlug, data.GetProperty("slug").GetString());
+        Assert.Equal("Updated Title", data.GetProperty("title").GetString());
+        Assert.Equal("Updated summary", data.GetProperty("summary").GetString());
+        Assert.Equal("hard", data.GetProperty("difficulty").GetString());
+        Assert.Equal("leadership", data.GetProperty("competency").GetString());
+        Assert.Equal(25, data.GetProperty("estimatedMinutes").GetInt32());
+        Assert.Equal("Updated content for the scenario.", data.GetProperty("content").GetString());
+    }
+
+    [Fact]
+    public async Task ScenarioSubmitSameKeySameAnswerReplaysDifferentAnswerConflicts()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedFeatureEntitlementAsync(factory, account.UserId, FeatureValues.Scenario, 5);
+        var scenario = await SeedPublishedScenarioAsync(factory);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var attemptId = await CreateDraftAttemptAsync(client, scenario.Id);
+        var key = $"submit-{Guid.NewGuid():N}";
+
+        using var req1 = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/scenario-attempts/{attemptId}/submit")
+        {
+            Content = JsonContent.Create(new { answer = "Initial Answer A" })
+        };
+        req1.Headers.Add("Idempotency-Key", key);
+        using var res1 = await client.SendAsync(req1);
+        Assert.Equal(HttpStatusCode.Accepted, res1.StatusCode);
+
+        using var req2 = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/scenario-attempts/{attemptId}/submit")
+        {
+            Content = JsonContent.Create(new { answer = "Initial Answer A" })
+        };
+        req2.Headers.Add("Idempotency-Key", key);
+        using var res2 = await client.SendAsync(req2);
+        Assert.Equal(HttpStatusCode.Accepted, res2.StatusCode);
+
+        using var req3 = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/scenario-attempts/{attemptId}/submit")
+        {
+            Content = JsonContent.Create(new { answer = "Different Answer B" })
+        };
+        req3.Headers.Add("Idempotency-Key", key);
+        using var res3 = await client.SendAsync(req3);
+        Assert.Equal(HttpStatusCode.Conflict, res3.StatusCode);
+    }
+
+    [Fact]
+    public async Task ScenarioConcurrentSubmitOnlyOneWinsAndNoDoubleQuotaReservation()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedFeatureEntitlementAsync(factory, account.UserId, FeatureValues.Scenario, 2);
+        var scenario = await SeedPublishedScenarioAsync(factory);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var attemptId = await CreateDraftAttemptAsync(client, scenario.Id);
+
+        using var client1 = factory.CreateHttpsClient();
+        client1.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        using var client2 = factory.CreateHttpsClient();
+        client2.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var task1 = Task.Run(async () =>
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/scenario-attempts/{attemptId}/submit")
+            {
+                Content = JsonContent.Create(new { answer = "Concurrent answer 1" })
+            };
+            req.Headers.Add("Idempotency-Key", $"key-concurrent-{Guid.NewGuid():N}");
+            return await client1.SendAsync(req);
+        });
+
+        var task2 = Task.Run(async () =>
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/scenario-attempts/{attemptId}/submit")
+            {
+                Content = JsonContent.Create(new { answer = "Concurrent answer 2" })
+            };
+            req.Headers.Add("Idempotency-Key", $"key-concurrent-{Guid.NewGuid():N}");
+            return await client2.SendAsync(req);
+        });
+
+        var responses = await Task.WhenAll(task1, task2);
+        var successCount = responses.Count(r => r.StatusCode == HttpStatusCode.Accepted);
+        var conflictCount = responses.Count(r => r.StatusCode == HttpStatusCode.Conflict);
+
+        Assert.Equal(1, successCount);
+        Assert.Equal(1, conflictCount);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var outboxCount = await db.OutboxEvents.CountAsync(item => item.AggregateId == attemptId);
+        Assert.Equal(1, outboxCount);
+
+        var ef = await db.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(
+            item => item.Entitlement.UserId == account.UserId && item.FeatureCode == FeatureValues.Scenario);
+        Assert.Equal(1, ef.Reserved);
+    }
+
+    [Fact]
+    public async Task StarConcurrentSameKeyCreatesOneAttemptAndOneReservation()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedFeatureEntitlementAsync(factory, account.UserId, FeatureValues.StarBuilder, 5);
+
+        var key = $"star-concurrent-{Guid.NewGuid():N}";
+        using var client1 = factory.CreateHttpsClient();
+        client1.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        using var client2 = factory.CreateHttpsClient();
+        client2.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var task1 = Task.Run(async () =>
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/v1/star-attempts")
+            {
+                Content = JsonContent.Create(new { question = "STAR question", answer = "STAR answer" })
+            };
+            req.Headers.Add("Idempotency-Key", key);
+            return await client1.SendAsync(req);
+        });
+
+        var task2 = Task.Run(async () =>
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/v1/star-attempts")
+            {
+                Content = JsonContent.Create(new { question = "STAR question", answer = "STAR answer" })
+            };
+            req.Headers.Add("Idempotency-Key", key);
+            return await client2.SendAsync(req);
+        });
+
+        var responses = await Task.WhenAll(task1, task2);
+        Assert.Equal(HttpStatusCode.Created, responses[0].StatusCode);
+        Assert.Equal(HttpStatusCode.Created, responses[1].StatusCode);
+
+        using var doc1 = JsonDocument.Parse(await responses[0].Content.ReadAsStringAsync());
+        using var doc2 = JsonDocument.Parse(await responses[1].Content.ReadAsStringAsync());
+        var id1 = doc1.RootElement.GetProperty("data").GetProperty("id").GetGuid();
+        var id2 = doc2.RootElement.GetProperty("data").GetProperty("id").GetGuid();
+        Assert.Equal(id1, id2);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var totalAttempts = await db.StarAttempts.CountAsync(item => item.UserId == account.UserId);
+        Assert.Equal(1, totalAttempts);
+
+        var ef = await db.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(
+            item => item.Entitlement.UserId == account.UserId && item.FeatureCode == FeatureValues.StarBuilder);
+        Assert.Equal(1, ef.Reserved);
+    }
+
+    [Fact]
+    public async Task CvAnalysisConcurrentSameKeyCreatesOneAnalysisAndOneReservation()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedFeatureEntitlementAsync(factory, account.UserId, FeatureValues.CvAnalysis, 5);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var storedFile = new Nexora.Data.Practice.StoredFile
+        {
+            Id = Guid.NewGuid(), UserId = account.UserId, StorageKey = "files/test.pdf", FileName = "test.pdf",
+            ContentType = "application/pdf", Size = 100, Checksum = "hash", CreatedAt = now
+        };
+        var resume = new Nexora.Data.Practice.ResumeRecord
+        {
+            Id = Guid.NewGuid(), UserId = account.UserId, StoredFileId = storedFile.Id, StoredFile = storedFile,
+            Status = PracticeValues.Ready, ExtractedText = "Experienced C# engineer with ASP.NET Core and PostgreSQL skills.",
+            StructuredProfile = "{\"summary\":\"Experienced C# engineer\",\"skills\":[\"C#\",\"PostgreSQL\"],\"experiences\":[],\"education\":[],\"projects\":[],\"certifications\":[],\"languages\":[]}",
+            ProfileModelVersion = "test-gemini-model",
+            ProfilePromptVersion = "resume-profile-v1",
+            ProfileSchemaVersion = "resume-profile-v1",
+            Version = 1, CreatedAt = now, UpdatedAt = now
+        };
+        var jd = new Nexora.Data.Practice.JobDescription
+        {
+            Id = Guid.NewGuid(), UserId = account.UserId, Title = "Backend Dev", Content = "Requirements: C#, ASP.NET Core, PostgreSQL",
+            Version = 1, CreatedAt = now, UpdatedAt = now
+        };
+        db.AddRange(storedFile, resume, jd);
+        await db.SaveChangesAsync();
+
+        var key = $"cv-concurrent-{Guid.NewGuid():N}";
+        using var client1 = factory.CreateHttpsClient();
+        client1.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        using var client2 = factory.CreateHttpsClient();
+        client2.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var task1 = Task.Run(async () =>
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+            {
+                Content = JsonContent.Create(new { resumeId = resume.Id, jobDescriptionId = jd.Id })
+            };
+            req.Headers.Add("Idempotency-Key", key);
+            return await client1.SendAsync(req);
+        });
+
+        var task2 = Task.Run(async () =>
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+            {
+                Content = JsonContent.Create(new { resumeId = resume.Id, jobDescriptionId = jd.Id })
+            };
+            req.Headers.Add("Idempotency-Key", key);
+            return await client2.SendAsync(req);
+        });
+
+        var responses = await Task.WhenAll(task1, task2);
+        Assert.Equal(HttpStatusCode.Created, responses[0].StatusCode);
+        Assert.Equal(HttpStatusCode.Created, responses[1].StatusCode);
+
+        using var doc1 = JsonDocument.Parse(await responses[0].Content.ReadAsStringAsync());
+        using var doc2 = JsonDocument.Parse(await responses[1].Content.ReadAsStringAsync());
+        var id1 = doc1.RootElement.GetProperty("data").GetProperty("id").GetGuid();
+        var id2 = doc2.RootElement.GetProperty("data").GetProperty("id").GetGuid();
+        Assert.Equal(id1, id2);
+
+        using var scope2 = factory.Services.CreateScope();
+        var db2 = scope2.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var totalAnalyses = await db2.ResumeAnalyses.CountAsync(item => item.UserId == account.UserId);
+        Assert.Equal(1, totalAnalyses);
+
+        var ef = await db2.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(
+            item => item.Entitlement.UserId == account.UserId && item.FeatureCode == FeatureValues.CvAnalysis);
+        Assert.Equal(1, ef.Reserved);
+    }
+
+    [Fact]
+    public async Task CheckoutConcurrentSameKeyRecoversWinnerWithoutRollbackCommit()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var price = await db.PlanPrices.FirstAsync(p => p.IsActive && p.AmountMinor > 0);
+
+        var key = $"checkout-concurrent-{Guid.NewGuid():N}";
+        using var client1 = factory.CreateHttpsClient();
+        client1.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        using var client2 = factory.CreateHttpsClient();
+        client2.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var task1 = Task.Run(async () =>
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/v1/checkout-sessions")
+            {
+                Content = JsonContent.Create(new { planPriceId = price.Id })
+            };
+            req.Headers.Add("Idempotency-Key", key);
+            return await client1.SendAsync(req);
+        });
+
+        var task2 = Task.Run(async () =>
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/v1/checkout-sessions")
+            {
+                Content = JsonContent.Create(new { planPriceId = price.Id })
+            };
+            req.Headers.Add("Idempotency-Key", key);
+            return await client2.SendAsync(req);
+        });
+
+        var responses = await Task.WhenAll(task1, task2);
+        Assert.Equal(HttpStatusCode.Created, responses[0].StatusCode);
+        Assert.Equal(HttpStatusCode.Created, responses[1].StatusCode);
+
+        using var doc1 = JsonDocument.Parse(await responses[0].Content.ReadAsStringAsync());
+        using var doc2 = JsonDocument.Parse(await responses[1].Content.ReadAsStringAsync());
+        var orderId1 = doc1.RootElement.GetProperty("data").GetProperty("orderId").GetGuid();
+        var orderId2 = doc2.RootElement.GetProperty("data").GetProperty("orderId").GetGuid();
+        Assert.Equal(orderId1, orderId2);
+
+        using var scope2 = factory.Services.CreateScope();
+        var db2 = scope2.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var orderCount = await db2.Orders.CountAsync(item => item.UserId == account.UserId);
+        Assert.Equal(1, orderCount);
+    }
+
     private static async Task<Guid> CreateDraftAttemptAsync(HttpClient client, Guid scenarioId)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/scenario-attempts")

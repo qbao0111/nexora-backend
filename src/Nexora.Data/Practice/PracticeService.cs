@@ -211,27 +211,48 @@ public sealed partial class PracticeService(
         Guid? reservationId = null;
         if (access.Limit is not null)
         {
-            var reservation = await featureEntitlementService.ReserveAsync(userId, FeatureValues.CvAnalysis, analysis.Id.ToString("N"),
-                $"cv-analysis:{key}", cancellationToken);
-            reservationId = reservation.EventId;
-            analysis.UsageReservationId = reservationId;
+            try
+            {
+                var reservation = await featureEntitlementService.ReserveAsync(userId, FeatureValues.CvAnalysis, analysis.Id.ToString("N"),
+                    $"cv-analysis:{key}", cancellationToken);
+                reservationId = reservation.EventId;
+                analysis.UsageReservationId = reservationId;
+            }
+            catch (BusinessException ex) when (ex.Code == "IDEMPOTENCY_CONFLICT")
+            {
+                if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
+                dbContext.ChangeTracker.Clear();
+                for (var i = 0; i < 10; i++)
+                {
+                    prior = await FindIdempotentAsync(userId, "resume-analysis.create", key, fingerprint, cancellationToken);
+                    if (prior is not null) break;
+                    await Task.Delay(25, cancellationToken);
+                }
+                if (prior is not null) return await GetResumeAnalysisAsync(userId, prior.ResourceId, cancellationToken);
+                throw;
+            }
         }
         dbContext.AddRange(analysis, Idempotency(userId, "resume-analysis.create", key, fingerprint, analysis.Id, now),
             Outbox("ResumeAnalysisRequested", "resume_analysis", analysis.Id, now));
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(transaction, cancellationToken);
+            return MapAnalysis(analysis);
         }
         catch (DbUpdateException)
         {
             if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
             dbContext.ChangeTracker.Clear();
-            prior = await FindIdempotentAsync(userId, "resume-analysis.create", key, fingerprint, cancellationToken);
+            for (var i = 0; i < 10; i++)
+            {
+                prior = await FindIdempotentAsync(userId, "resume-analysis.create", key, fingerprint, cancellationToken);
+                if (prior is not null) break;
+                await Task.Delay(25, cancellationToken);
+            }
             if (prior is not null) return await GetResumeAnalysisAsync(userId, prior.ResourceId, cancellationToken);
             throw;
         }
-        await CommitAsync(transaction, cancellationToken);
-        return MapAnalysis(analysis);
     }
 
     public async Task<ResumeAnalysisView> GetResumeAnalysisAsync(Guid userId, Guid analysisId, CancellationToken cancellationToken)

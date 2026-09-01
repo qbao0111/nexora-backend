@@ -75,7 +75,7 @@ public sealed partial class AdminService(
 
     public async Task<ScenarioAdminView> CreateScenarioAsync(Guid adminUserId, ScenarioAdminWrite write, CancellationToken cancellationToken)
     {
-        ValidateScenario(write);
+        ValidateScenarioCreate(write);
         if (await dbContext.Scenarios.AnyAsync(item => item.Slug == write.Slug.Trim(), cancellationToken))
             throw new BusinessException("SCENARIO_SLUG_EXISTS", "Slug scenario đã tồn tại.", BusinessErrorKind.Conflict);
         if (!await dbContext.ScenarioCategories.AnyAsync(item => item.Id == write.CategoryId && item.IsActive, cancellationToken))
@@ -103,20 +103,20 @@ public sealed partial class AdminService(
         return MapScenario(scenario);
     }
 
-    public async Task<ScenarioAdminView> UpdateScenarioAsync(Guid adminUserId, Guid scenarioId, ScenarioAdminWrite write, CancellationToken cancellationToken)
+    public async Task<ScenarioAdminView> UpdateScenarioAsync(Guid adminUserId, Guid scenarioId, ScenarioAdminUpdate update, CancellationToken cancellationToken)
     {
-        ValidateScenario(write);
+        ValidateScenarioUpdate(update);
         var scenario = await dbContext.Scenarios.SingleOrDefaultAsync(item => item.Id == scenarioId, cancellationToken)
             ?? throw new BusinessException("SCENARIO_NOT_FOUND", "Không tìm thấy scenario.", BusinessErrorKind.NotFound);
-        if (!await dbContext.ScenarioCategories.AnyAsync(item => item.Id == write.CategoryId && item.IsActive, cancellationToken))
+        if (!await dbContext.ScenarioCategories.AnyAsync(item => item.Id == update.CategoryId && item.IsActive, cancellationToken))
             throw new BusinessException("SCENARIO_CATEGORY_NOT_FOUND", "Category không hợp lệ.", BusinessErrorKind.Validation);
-        scenario.Title = write.Title.Trim();
-        scenario.Summary = write.Summary.Trim();
-        scenario.CategoryId = write.CategoryId;
-        scenario.Difficulty = write.Difficulty.Trim();
-        scenario.Competency = write.Competency.Trim();
-        scenario.EstimatedMinutes = write.EstimatedMinutes;
-        scenario.Content = write.Content.Trim();
+        scenario.Title = update.Title.Trim();
+        scenario.Summary = update.Summary.Trim();
+        scenario.CategoryId = update.CategoryId;
+        scenario.Difficulty = update.Difficulty.Trim();
+        scenario.Competency = update.Competency.Trim();
+        scenario.EstimatedMinutes = update.EstimatedMinutes;
+        scenario.Content = update.Content.Trim();
         scenario.UpdatedAt = timeProvider.GetUtcNow();
         await AuditAsync(adminUserId, "scenario.update", "scenario", scenarioId.ToString("N"), $"Updated scenario {scenario.Slug}", cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -140,15 +140,25 @@ public sealed partial class AdminService(
         return MapScenario(scenario);
     }
 
-    private static void ValidateScenario(ScenarioAdminWrite write)
+    private static void ValidateScenarioCreate(ScenarioAdminWrite write)
     {
         if (string.IsNullOrWhiteSpace(write.Slug) || write.Slug.Trim().Length > 120) throw Validation("Slug không hợp lệ.");
-        if (string.IsNullOrWhiteSpace(write.Title) || write.Title.Trim().Length > 200) throw Validation("Title không hợp lệ.");
-        if (string.IsNullOrWhiteSpace(write.Summary) || write.Summary.Trim().Length > 500) throw Validation("Summary không hợp lệ.");
-        if (write.Difficulty is not ("easy" or "medium" or "hard")) throw Validation("Difficulty không hợp lệ.");
-        if (write.Competency.Length is 0 or > 80) throw Validation("Competency không hợp lệ.");
-        if (write.EstimatedMinutes is < 1 or > 600) throw Validation("EstimatedMinutes không hợp lệ.");
-        if (string.IsNullOrWhiteSpace(write.Content) || write.Content.Trim().Length > 20_000) throw Validation("Content không hợp lệ.");
+        ValidateScenarioCommon(write.Title, write.Summary, write.Difficulty, write.Competency, write.EstimatedMinutes, write.Content);
+    }
+
+    private static void ValidateScenarioUpdate(ScenarioAdminUpdate update)
+    {
+        ValidateScenarioCommon(update.Title, update.Summary, update.Difficulty, update.Competency, update.EstimatedMinutes, update.Content);
+    }
+
+    private static void ValidateScenarioCommon(string title, string summary, string difficulty, string competency, int estimatedMinutes, string content)
+    {
+        if (string.IsNullOrWhiteSpace(title) || title.Trim().Length > 200) throw Validation("Title không hợp lệ.");
+        if (string.IsNullOrWhiteSpace(summary) || summary.Trim().Length > 500) throw Validation("Summary không hợp lệ.");
+        if (difficulty is not ("easy" or "medium" or "hard")) throw Validation("Difficulty không hợp lệ.");
+        if (competency.Length is 0 or > 80) throw Validation("Competency không hợp lệ.");
+        if (estimatedMinutes is < 1 or > 600) throw Validation("EstimatedMinutes không hợp lệ.");
+        if (string.IsNullOrWhiteSpace(content) || content.Trim().Length > 20_000) throw Validation("Content không hợp lệ.");
     }
 
     private static ScenarioAdminView MapScenario(Scenario scenario) =>

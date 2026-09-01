@@ -81,7 +81,7 @@ public interface IAdminService
     Task<ScenarioCategoryView> UpdateCategoryAsync(Guid adminUserId, Guid categoryId, string name, string? description, bool isActive, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<ScenarioAdminView>> GetAdminScenariosAsync(CancellationToken cancellationToken);
     Task<ScenarioAdminView> CreateScenarioAsync(Guid adminUserId, ScenarioAdminWrite write, CancellationToken cancellationToken);
-    Task<ScenarioAdminView> UpdateScenarioAsync(Guid adminUserId, Guid scenarioId, ScenarioAdminWrite write, CancellationToken cancellationToken);
+    Task<ScenarioAdminView> UpdateScenarioAsync(Guid adminUserId, Guid scenarioId, ScenarioAdminUpdate update, CancellationToken cancellationToken);
     Task<ScenarioAdminView> SetScenarioStatusAsync(Guid adminUserId, Guid scenarioId, string status, CancellationToken cancellationToken);
 }
 
@@ -101,6 +101,15 @@ public sealed record ScenarioAdminView(
 
 public sealed record ScenarioAdminWrite(
     string Slug,
+    string Title,
+    string Summary,
+    Guid CategoryId,
+    string Difficulty,
+    string Competency,
+    int EstimatedMinutes,
+    string Content);
+
+public sealed record ScenarioAdminUpdate(
     string Title,
     string Summary,
     Guid CategoryId,
