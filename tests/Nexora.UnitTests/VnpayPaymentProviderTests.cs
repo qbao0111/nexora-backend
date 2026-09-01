@@ -1,10 +1,14 @@
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Nexora.Business.Billing;
 using Nexora.Business.Common;
+using Nexora.Integrations;
 using Nexora.Integrations.Payments;
 
 namespace Nexora.UnitTests;
@@ -20,6 +24,8 @@ public sealed class VnpayPaymentProviderTests
         HashSecret = "secret",
         ReturnUrl = "http://localhost:3000/payment/return"
     };
+    private const string ExpectedPayHashData = "vnp_Amount=4900000&vnp_Command=pay&vnp_CreateDate=20260902080203&vnp_CurrCode=VND&vnp_ExpireDate=20260902081703&vnp_IpAddr=203.0.113.10&vnp_Locale=vn&vnp_OrderInfo=Nexora order nx11111111222233334444555555555555&vnp_OrderType=other&vnp_ReturnUrl=http://localhost:3000/payment/return&vnp_TmnCode=DEMOV210&vnp_TxnRef=nx11111111222233334444555555555555&vnp_Version=2.1.0";
+    private const string ExpectedPayHash = "f55dd2a8b0ba50b218119f73c32d730077d643088557546eb815f8c584d1632a192dcdde4f5f5c8ea3dcbb901ed09f2e2b0e124d94b0c63ef9877210d230194b";
 
     [Fact]
     public void HmacSha512UsesDeterministicLowercaseHexVector()
@@ -30,7 +36,7 @@ public sealed class VnpayPaymentProviderTests
     }
 
     [Fact]
-    public async Task CreateCheckoutBuildsSignedCanonicalSandboxPaymentUrl()
+    public async Task CreateCheckoutUsesRawPayHashAndEncodedTransportQuery()
     {
         var provider = NewProvider();
         var txnRef = VnpayPaymentProvider.ToVnpayTxnRef(OrderId);
@@ -50,10 +56,13 @@ public sealed class VnpayPaymentProviderTests
         Assert.Equal("203.0.113.10", query["vnp_IpAddr"]);
         Assert.Equal(txnRef, query["vnp_TxnRef"]);
         Assert.Equal("2.1.0", query["vnp_Version"]);
-        var hashInput = VnpayPaymentProvider.BuildCanonicalQuery(query
+        Assert.Equal(ExpectedPayHashData, VnpayPaymentProvider.BuildHashData(query
             .Where(item => item.Key != "vnp_SecureHash")
-            .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal));
-        Assert.Equal(VnpayPaymentProvider.SignSha512(hashInput, TestOptions.HashSecret), query["vnp_SecureHash"]);
+            .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal)));
+        Assert.Equal(ExpectedPayHash, query["vnp_SecureHash"]);
+        Assert.Equal(ExpectedPayHash, TestSignSha512(ExpectedPayHashData, TestOptions.HashSecret));
+        Assert.Contains("vnp_OrderInfo=Nexora+order+nx11111111222233334444555555555555", checkout.CheckoutUrl, StringComparison.Ordinal);
+        Assert.Contains("vnp_ReturnUrl=http%3A%2F%2Flocalhost%3A3000%2Fpayment%2Freturn", checkout.CheckoutUrl, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -102,12 +111,18 @@ public sealed class VnpayPaymentProviderTests
         var ev = await provider.VerifyWebhookAsync(new PaymentCallbackRequest("GET", query, EmptyHeaders(), ReadOnlyMemory<byte>.Empty), CancellationToken.None);
 
         Assert.True(ev.IsPaid);
+        Assert.True(ev.IsFinal);
         Assert.Equal(OrderId, ev.OrderId);
         Assert.Equal(189_000, ev.AmountMinor);
         Assert.Equal($"vnpay:{ev.ProviderTransactionId}:987654:00:00", ev.ProviderEventId);
 
         var notPaid = await provider.VerifyWebhookAsync(new PaymentCallbackRequest("GET", SignedIpn("00", "02"), EmptyHeaders(), ReadOnlyMemory<byte>.Empty), CancellationToken.None);
         Assert.False(notPaid.IsPaid);
+        Assert.True(notPaid.IsFinal);
+
+        var pending = await provider.VerifyWebhookAsync(new PaymentCallbackRequest("GET", SignedIpn("00", "01"), EmptyHeaders(), ReadOnlyMemory<byte>.Empty), CancellationToken.None);
+        Assert.False(pending.IsPaid);
+        Assert.False(pending.IsFinal);
     }
 
     [Fact]
@@ -154,7 +169,7 @@ public sealed class VnpayPaymentProviderTests
             root.GetProperty("vnp_CreateDate").GetString(),
             "127.0.0.1",
             $"Nexora order {txnRef}");
-        Assert.Equal(VnpayPaymentProvider.SignSha512(expectedRaw, TestOptions.HashSecret), root.GetProperty("vnp_SecureHash").GetString());
+        Assert.Equal(TestSignSha512(expectedRaw, TestOptions.HashSecret), root.GetProperty("vnp_SecureHash").GetString());
     }
 
     [Fact]
@@ -168,6 +183,7 @@ public sealed class VnpayPaymentProviderTests
         var failedEvent = await failed.QueryPaymentAsync(new PaymentOrderRequest(OrderId, 189_000, "VND", txnRef, CreatedAt, null), CancellationToken.None);
         Assert.NotNull(failedEvent);
         Assert.False(failedEvent.IsPaid);
+        Assert.True(failedEvent.IsFinal);
 
         var notFound = NewProvider(handler: new TestHandler(HttpStatusCode.OK, SignedQueryResponse(txnRef, responseCode: "91", transactionStatus: "01")));
         Assert.Null(await notFound.QueryPaymentAsync(new PaymentOrderRequest(OrderId, 189_000, "VND", txnRef, CreatedAt, null), CancellationToken.None));
@@ -178,6 +194,47 @@ public sealed class VnpayPaymentProviderTests
         var exception = await Assert.ThrowsAsync<BusinessException>(() =>
             invalid.QueryPaymentAsync(new PaymentOrderRequest(OrderId, 189_000, "VND", txnRef, CreatedAt, null), CancellationToken.None));
         Assert.Equal("PAYMENT_PROVIDER_INVALID_RESPONSE", exception.Code);
+    }
+
+    [Theory]
+    [InlineData("02")]
+    [InlineData("03")]
+    [InlineData("08")]
+    [InlineData("97")]
+    [InlineData("99")]
+    [InlineData("77")]
+    public async Task QueryDrProtocolFailuresDoNotMasqueradeAsPending(string responseCode)
+    {
+        var txnRef = VnpayPaymentProvider.ToVnpayTxnRef(OrderId);
+        var provider = NewProvider(handler: new TestHandler(HttpStatusCode.OK, SignedQueryResponse(txnRef, responseCode: responseCode)));
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() =>
+            provider.QueryPaymentAsync(new PaymentOrderRequest(OrderId, 189_000, "VND", txnRef, CreatedAt, null), CancellationToken.None));
+
+        Assert.Equal("PAYMENT_PROVIDER_QUERY_FAILED", exception.Code);
+        Assert.Equal(BusinessErrorKind.ExternalFailure, exception.Kind);
+    }
+
+    [Theory]
+    [InlineData("SHORT")]
+    [InlineData("DEMOV21!")]
+    [InlineData(" DEMOV21")]
+    [InlineData("DEMOV210 ")]
+    public void InvalidVnpayTmnCodeFailsConfigurationValidation(string tmnCode)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Features:Ai"] = "false",
+            ["Billing:Payment:Provider"] = "vnpay",
+            ["Billing:Vnpay:Environment"] = "Sandbox",
+            ["Billing:Vnpay:TmnCode"] = tmnCode,
+            ["Billing:Vnpay:HashSecret"] = "secret",
+            ["Billing:Vnpay:ReturnUrl"] = "http://localhost:3000/payment/return"
+        }).Build();
+        var services = new ServiceCollection().AddIntegrations(configuration);
+        using var serviceProvider = services.BuildServiceProvider();
+
+        Assert.Throws<OptionsValidationException>(() => serviceProvider.GetRequiredService<IOptions<VnpayOptions>>().Value);
     }
 
     private static VnpayPaymentProvider NewProvider(VnpayOptions? options = null, HttpMessageHandler? handler = null) =>
@@ -203,9 +260,19 @@ public sealed class VnpayPaymentProviderTests
     }
 
     private static string SignQuery(IReadOnlyDictionary<string, string> query) =>
-        VnpayPaymentProvider.SignSha512(VnpayPaymentProvider.BuildCanonicalQuery(query
-            .Where(item => item.Key is not "vnp_SecureHash" and not "vnp_SecureHashType")
-            .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal)), TestOptions.HashSecret);
+        TestSignSha512(BuildTestHashData(query), TestOptions.HashSecret);
+
+    private static string BuildTestHashData(IReadOnlyDictionary<string, string> query) =>
+        string.Join('&', query
+            .Where(item => item.Key is not "vnp_SecureHash" and not "vnp_SecureHashType" && !string.IsNullOrEmpty(item.Value))
+            .OrderBy(item => item.Key, StringComparer.Ordinal)
+            .Select(item => $"{item.Key}={item.Value}"));
+
+    private static string TestSignSha512(string rawData, string secret)
+    {
+        using var hmac = new HMACSHA512(Encoding.UTF8.GetBytes(secret));
+        return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(rawData))).ToLowerInvariant();
+    }
 
     private static string SignedQueryResponse(string txnRef, string responseCode = "00", string transactionStatus = "00")
     {
@@ -243,7 +310,7 @@ public sealed class VnpayPaymentProviderTests
             values["vnp_OrderInfo"],
             string.Empty,
             string.Empty);
-        values["vnp_SecureHash"] = VnpayPaymentProvider.SignSha512(raw, TestOptions.HashSecret);
+        values["vnp_SecureHash"] = TestSignSha512(raw, TestOptions.HashSecret);
         return JsonSerializer.Serialize(values);
     }
 

@@ -290,6 +290,11 @@ public sealed partial class BillingService(
             await SnapshotPurchasedFeaturesAsync(order, entitlement, now, cancellationToken);
             dbContext.OutboxEvents.Add(CreateOutbox("EntitlementGranted", "order", order.Id, new { order.Id, order.UserId }, now));
         }
+        else if (!verified.IsPaid && verified.IsFinal && order.Status == BillingValues.Pending)
+        {
+            order.Status = BillingValues.Failed;
+            order.UpdatedAt = now;
+        }
         await dbContext.SaveChangesAsync(cancellationToken);
         await CommitAsync(transaction, cancellationToken);
         PaymentProcessed(logger, CorrelationId(), verified.ProviderEventId, order.Id, order.Status);

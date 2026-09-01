@@ -61,9 +61,9 @@ public sealed class VnpayPaymentProvider(HttpClient httpClient, IOptions<VnpayOp
             ["vnp_TxnRef"] = request.ProviderTransactionId,
             ["vnp_Version"] = Version
         };
-        var hashData = BuildCanonicalQuery(parameters);
+        var hashData = BuildHashData(parameters);
         parameters["vnp_SecureHash"] = SignSha512(hashData, _options.HashSecret);
-        var checkoutUrl = $"{_options.PaymentUrl}?{BuildCanonicalQuery(parameters)}";
+        var checkoutUrl = $"{_options.PaymentUrl}?{BuildQueryString(parameters)}";
         return Task.FromResult(new PaymentCheckout(ProviderName, request.ProviderTransactionId, checkoutUrl));
     }
 
@@ -115,14 +115,17 @@ public sealed class VnpayPaymentProvider(HttpClient httpClient, IOptions<VnpayOp
         var payload = await response.Content.ReadFromJsonAsync<VnpayQueryResponse>(JsonOptions, cancellationToken)
             ?? throw InvalidResponse();
         VerifyQueryResponseSignature(payload);
-        if (payload.ResponseCode == "91") return null;
-        if (!string.Equals(payload.TmnCode, _options.TmnCode, StringComparison.Ordinal) ||
+        if (!string.Equals(payload.Command, "querydr", StringComparison.Ordinal) ||
+            !string.Equals(payload.TmnCode, _options.TmnCode, StringComparison.Ordinal) ||
             !string.Equals(payload.TxnRef, request.ProviderTransactionId, StringComparison.Ordinal))
             throw new BusinessException("PAYMENT_REFERENCE_MISMATCH", "Thông tin thanh toán không khớp order.", BusinessErrorKind.Validation);
+        if (payload.ResponseCode == "91") return null;
+        if (!string.Equals(payload.ResponseCode, "00", StringComparison.Ordinal)) throw QueryFailed();
+        if (string.IsNullOrWhiteSpace(payload.TransactionStatus)) throw InvalidResponse();
         var amountMinor = FromVnpayAmount(payload.Amount);
         if (amountMinor != request.AmountMinor)
             throw new BusinessException("PAYMENT_AMOUNT_MISMATCH", "Số tiền thanh toán không khớp order.", BusinessErrorKind.Validation);
-        if (payload.ResponseCode != "00" || payload.TransactionStatus == "01") return null;
+        if (payload.TransactionStatus == "01") return null;
         return ToVerifiedEvent(
             payload.TxnRef,
             amountMinor,
@@ -159,12 +162,23 @@ public sealed class VnpayPaymentProvider(HttpClient httpClient, IOptions<VnpayOp
         return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(rawData))).ToLowerInvariant();
     }
 
-    public static string BuildCanonicalQuery(IReadOnlyDictionary<string, string> parameters) =>
-        string.Join('&', parameters.OrderBy(item => item.Key, StringComparer.Ordinal)
+    public static string BuildHashData(IReadOnlyDictionary<string, string> parameters) =>
+        string.Join('&', parameters
+            .Where(item => !string.IsNullOrEmpty(item.Value))
+            .OrderBy(item => item.Key, StringComparer.Ordinal)
+            .Select(item => $"{item.Key}={item.Value}"));
+
+    public static string BuildQueryString(IReadOnlyDictionary<string, string> parameters) =>
+        string.Join('&', parameters
+            .Where(item => !string.IsNullOrEmpty(item.Value))
+            .OrderBy(item => item.Key, StringComparer.Ordinal)
             .Select(item => $"{Encode(item.Key)}={Encode(item.Value)}"));
 
     public static string FormatVnpayDate(DateTimeOffset value) =>
         value.ToUniversalTime().ToOffset(VietnamOffset).ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
+
+    public static bool IsValidTmnCode(string? value) =>
+        value is { Length: 8 } && value.All(char.IsLetterOrDigit);
 
     private void VerifyQuerySignature(IReadOnlyDictionary<string, string> parameters)
     {
@@ -172,9 +186,10 @@ public sealed class VnpayPaymentProvider(HttpClient httpClient, IOptions<VnpayOp
             throw InvalidWebhook();
         var signed = parameters
             .Where(item => item.Key.StartsWith("vnp_", StringComparison.Ordinal) &&
-                item.Key is not "vnp_SecureHash" and not "vnp_SecureHashType")
+                item.Key is not "vnp_SecureHash" and not "vnp_SecureHashType" &&
+                !string.IsNullOrEmpty(item.Value))
             .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
-        var expected = SignSha512(BuildCanonicalQuery(signed), _options.HashSecret);
+        var expected = SignSha512(BuildHashData(signed), _options.HashSecret);
         if (!FixedEquals(secureHash, expected)) throw InvalidWebhook();
     }
 
@@ -204,13 +219,16 @@ public sealed class VnpayPaymentProvider(HttpClient httpClient, IOptions<VnpayOp
     {
         if (!TryParseVnpayTxnRef(txnRef, out var orderId)) throw InvalidPayload();
         var occurredAt = TryParsePayDate(payDate, out var parsed) ? parsed : receivedAt;
+        var isPaid = responseCode == "00" && transactionStatus == "00";
+        var isFinal = isPaid || responseCode != "00" || transactionStatus != "01";
         return new VerifiedPaymentEvent(
             $"{Provider}:{txnRef}:{transactionNo}:{responseCode}:{transactionStatus}",
             orderId,
             txnRef,
             amountMinor,
             "VND",
-            responseCode == "00" && transactionStatus == "00",
+            isPaid,
+            isFinal,
             occurredAt);
     }
 
@@ -309,6 +327,9 @@ public sealed class VnpayPaymentProvider(HttpClient httpClient, IOptions<VnpayOp
 
     private static BusinessException InvalidResponse() =>
         new("PAYMENT_PROVIDER_INVALID_RESPONSE", "VNPAY sandbox trả về dữ liệu không hợp lệ.", BusinessErrorKind.ExternalFailure);
+
+    private static BusinessException QueryFailed() =>
+        new("PAYMENT_PROVIDER_QUERY_FAILED", "Không thể tra cứu trạng thái giao dịch VNPAY.", BusinessErrorKind.ExternalFailure);
 
     private sealed record VnpayQueryRequest(
         [property: JsonPropertyName("vnp_RequestId")] string RequestId,

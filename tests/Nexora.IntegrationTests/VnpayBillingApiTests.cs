@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -132,7 +133,13 @@ public sealed class VnpayBillingApiTests : IDisposable
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Equal(1, await db.PaymentEvents.CountAsync(item => item.OrderId == checkout.OrderId));
         Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId).ToListAsync());
-        Assert.Equal(BillingValues.Pending, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
+        Assert.Empty(await db.Subscriptions.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
+        Assert.Equal(BillingValues.Failed, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
+
+        using var duplicate = await client.GetAsync(SignedIpnPath(checkout.OrderId, checkout.AmountMinor, responseCode: "00", transactionStatus: "02"));
+        await AssertRspAsync(duplicate, "02", "Order already confirmed");
+        Assert.Equal(1, await db.PaymentEvents.CountAsync(item => item.OrderId == checkout.OrderId));
+        Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId).ToListAsync());
     }
 
     [Fact]
@@ -158,6 +165,53 @@ public sealed class VnpayBillingApiTests : IDisposable
         Assert.Equal(1, await db.PaymentEvents.CountAsync(item => item.OrderId == checkout.OrderId));
         Assert.Equal(1, await db.Subscriptions.CountAsync(item => item.OrderId == checkout.OrderId));
         Assert.Equal(1, await db.Entitlements.CountAsync(item => item.UserId == account.UserId));
+    }
+
+    [Fact]
+    public async Task RefreshCheckoutMarksQueryDrFailedTransactionWithoutEntitlement()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var price = await SeedPlanPriceAsync(interviewQuota: 2);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var checkout = await CreateCheckoutAsync(client, price.Id, "vnpay-querydr-failed");
+        _queryDrHandler.Configure("00", "02");
+
+        using var response = await client.PostAsync($"/api/v1/checkout-sessions/{checkout.OrderId}/refresh", null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(BillingValues.Failed, json.RootElement.GetProperty("data").GetProperty("status").GetString());
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(1, await db.PaymentEvents.CountAsync(item => item.OrderId == checkout.OrderId));
+        Assert.Equal(BillingValues.Failed, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
+        Assert.Empty(await db.Subscriptions.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
+        Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId).ToListAsync());
+    }
+
+    [Theory]
+    [InlineData("97")]
+    [InlineData("08")]
+    public async Task RefreshCheckoutReturnsSafeQueryDrProtocolFailure(string responseCode)
+    {
+        using var client = _factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var price = await SeedPlanPriceAsync(interviewQuota: 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var checkout = await CreateCheckoutAsync(client, price.Id, $"vnpay-querydr-error-{responseCode}");
+        _queryDrHandler.Configure(responseCode, "01");
+
+        using var response = await client.PostAsync($"/api/v1/checkout-sessions/{checkout.OrderId}/refresh", null);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("PAYMENT_PROVIDER_QUERY_FAILED", json.RootElement.GetProperty("error").GetProperty("code").GetString());
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(BillingValues.Pending, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
+        Assert.Empty(await db.PaymentEvents.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
+        Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId).ToListAsync());
     }
 
     private async Task<PlanPrice> SeedPlanPriceAsync(int interviewQuota)
@@ -224,8 +278,8 @@ public sealed class VnpayBillingApiTests : IDisposable
             ["vnp_TransactionStatus"] = transactionStatus,
             ["vnp_TxnRef"] = txnRef
         };
-        query["vnp_SecureHash"] = VnpayPaymentProvider.SignSha512(VnpayPaymentProvider.BuildCanonicalQuery(query), HashSecret);
-        return $"/api/v1/webhooks/payments/vnpay?{VnpayPaymentProvider.BuildCanonicalQuery(query)}";
+        query["vnp_SecureHash"] = TestSignSha512(BuildTestHashData(query), HashSecret);
+        return $"/api/v1/webhooks/payments/vnpay?{BuildTestQueryString(query)}";
     }
 
     private static async Task AssertRspAsync(HttpResponseMessage response, string code, string message)
@@ -239,11 +293,37 @@ public sealed class VnpayBillingApiTests : IDisposable
     private sealed record Account(Guid UserId, string AccessToken);
     private sealed record CheckoutTestResponse(Guid OrderId, long AmountMinor);
 
+    private static string BuildTestHashData(IReadOnlyDictionary<string, string> query) =>
+        string.Join('&', query
+            .Where(item => !string.IsNullOrEmpty(item.Value))
+            .OrderBy(item => item.Key, StringComparer.Ordinal)
+            .Select(item => $"{item.Key}={item.Value}"));
+
+    private static string BuildTestQueryString(IReadOnlyDictionary<string, string> query) =>
+        string.Join('&', query
+            .Where(item => !string.IsNullOrEmpty(item.Value))
+            .OrderBy(item => item.Key, StringComparer.Ordinal)
+            .Select(item => $"{WebUtility.UrlEncode(item.Key)}={WebUtility.UrlEncode(item.Value)}"));
+
+    private static string TestSignSha512(string rawData, string secret)
+    {
+        using var hmac = new HMACSHA512(Encoding.UTF8.GetBytes(secret));
+        return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(rawData))).ToLowerInvariant();
+    }
+
     private sealed class QueryDrHandler : HttpMessageHandler
     {
         public int RequestCount { get; private set; }
         public string? LastTxnRef { get; private set; }
         public bool LastRequestHadValidSignature { get; private set; }
+        private string ResponseCode { get; set; } = "00";
+        private string TransactionStatus { get; set; } = "00";
+
+        public void Configure(string responseCode, string transactionStatus)
+        {
+            ResponseCode = responseCode;
+            TransactionStatus = transactionStatus;
+        }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -269,7 +349,7 @@ public sealed class VnpayBillingApiTests : IDisposable
 
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(SignedQueryResponse(LastTxnRef!), Encoding.UTF8, "application/json")
+                Content = new StringContent(SignedQueryResponse(LastTxnRef!, ResponseCode, TransactionStatus), Encoding.UTF8, "application/json")
             };
         }
     }
@@ -310,7 +390,7 @@ public sealed class VnpayBillingApiTests : IDisposable
             values["vnp_OrderInfo"],
             string.Empty,
             string.Empty);
-        values["vnp_SecureHash"] = VnpayPaymentProvider.SignSha512(raw, HashSecret);
+        values["vnp_SecureHash"] = TestSignSha512(raw, HashSecret);
         return JsonSerializer.Serialize(values);
     }
 }

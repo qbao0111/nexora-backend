@@ -275,3 +275,10 @@ This log records completed implementation milestones and verification evidence. 
 - VNPAY checkout builds a signed sandbox payment URL locally with deterministic `nx{OrderId:N}` transaction references, VND amount ×100 conversion, GMT+7 timestamps and HMAC-SHA512 signatures.
 - Added VNPAY GET IPN handling with provider-protocol JSON responses, checksum/TmnCode/reference/amount validation, duplicate handling and the shared PaymentEvent → Subscription → Entitlement fulfillment path. Checkout refresh uses VNPAY QueryDr reconciliation.
 - DEC-02 remains unresolved; this is internal sandbox support only and does not enable production VNPAY.
+
+## 2026-09-02 — VNPAY protocol correctness patch
+
+- Separated raw sorted PAY/IPN hash data from URL-encoded transport query strings and added the official fixed HMAC-SHA512 regression vector.
+- QueryDr now validates correlation before response-code handling, fails closed with `PAYMENT_PROVIDER_QUERY_FAILED` for protocol errors, and distinguishes pending (`00/01`) from terminal failed statuses.
+- Added provider-neutral `IsFinal` and `BillingValues.Failed`; verified failed callbacks close orders without granting entitlements while duplicate callbacks remain idempotent.
+- Tightened VNPAY `TmnCode` startup validation and added independent unit/integration coverage for signatures, failed/pending flows and QueryDr errors. No migration or package was added.

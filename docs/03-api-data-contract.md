@@ -228,6 +228,8 @@ Interview: canonical tại 08-data-model.md
 
 Chỉ `active` nhận official answer. Completion xảy ra đúng một lần; report generation idempotent; optimistic concurrency/versioning chống transition/answer trùng. Terminal interview states không đổi trừ administrative/recovery process explicit và audited.
 
+Với VNPAY IPN, `RspCode: "00"` xác nhận Nexora đã xử lý callback hợp lệ, không phải xác nhận khách hàng thanh toán thành công. Chỉ `vnp_ResponseCode=00` và `vnp_TransactionStatus=00` mới chuyển order sang `fulfilled`; `vnp_ResponseCode=00` với transaction status `01` giữ `pending`; các trạng thái thất bại cuối cùng chuyển sang `failed` và không tạo entitlement. IPN lặp lại của event đã ghi nhận trả `RspCode: "02"`. Order `failed` là terminal và refresh không gọi QueryDr nữa.
+
 ## Phân quyền
 
 - Người dùng chỉ truy vấn record có `record.user_id = authenticatedUser.id`.

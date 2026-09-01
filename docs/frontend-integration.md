@@ -99,7 +99,7 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
    }
    ```
 
-   If Development uses `Billing:Payment:Provider=vnpay`, redirect the browser to `checkoutUrl`, then poll `GET /checkout-sessions/{orderId}` after the user returns from VNPAY. The VNPAY return URL is browser navigation only; it never grants entitlement. VNPAY IPN is a server-side `GET /webhooks/payments/vnpay` configured in the VNPAY sandbox merchant portal. If IPN is delayed, call `POST /checkout-sessions/{orderId}/refresh` with Bearer auth to reconcile the pending order through VNPAY QueryDr. If Development uses `fake`, the owner can still complete the fake webhook helper; the browser never receives the fake webhook secret. After payment completion, refetch `/me`.
+   If Development uses `Billing:Payment:Provider=vnpay`, redirect the browser to `checkoutUrl`, then poll `GET /checkout-sessions/{orderId}` after the user returns from VNPAY. The status is `processing`, `pending`, `fulfilled` or terminal `failed`; a failed order must not be retried or refreshed—start a new checkout intent. The VNPAY return URL is browser navigation only; it never grants entitlement. VNPAY IPN is a server-side `GET /webhooks/payments/vnpay` configured in the VNPAY sandbox merchant portal. If IPN is delayed, call `POST /checkout-sessions/{orderId}/refresh` with Bearer auth to reconcile the pending order through VNPAY QueryDr. If Development uses `fake`, the owner can still complete the fake webhook helper; the browser never receives the fake webhook secret. After payment completion, refetch `/me`.
 
 2. `POST /interviews` (`201`, Bearer + idempotency key):
 

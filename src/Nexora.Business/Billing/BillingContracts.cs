@@ -6,6 +6,7 @@ public static class BillingValues
     public const string Processing = "processing";
     public const string Processed = "processed";
     public const string Fulfilled = "fulfilled";
+    public const string Failed = "failed";
     public const string Active = "active";
     public const string Reserve = "reserve";
     public const string Consume = "consume";
@@ -83,7 +84,15 @@ public interface IBillingService
 
 public sealed record PaymentOrderRequest(Guid OrderId, long AmountMinor, string Currency, string ProviderTransactionId, DateTimeOffset CreatedAt, string? IpAddress);
 public sealed record PaymentCheckout(string Provider, string ProviderTransactionId, string CheckoutUrl);
-public sealed record VerifiedPaymentEvent(string ProviderEventId, Guid OrderId, string ProviderTransactionId, long AmountMinor, string Currency, bool IsPaid, DateTimeOffset OccurredAt);
+public sealed record VerifiedPaymentEvent(
+    string ProviderEventId,
+    Guid OrderId,
+    string ProviderTransactionId,
+    long AmountMinor,
+    string Currency,
+    bool IsPaid,
+    bool IsFinal,
+    DateTimeOffset OccurredAt);
 public sealed record PaymentCallbackRequest(string Method, IReadOnlyDictionary<string, string> QueryParameters, IReadOnlyDictionary<string, string> Headers, ReadOnlyMemory<byte> Body);
 public sealed record PaymentWebhookProcessResult(Guid OrderId, string OrderStatus, bool WasDuplicate, bool WasAlreadyFinal);
 

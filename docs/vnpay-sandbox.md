@@ -62,6 +62,8 @@ POST /api/v1/checkout-sessions/{orderId}/refresh
 
 This uses VNPAY QueryDr to reconcile the pending order. The original order create date is used as `vnp_TransactionDate`.
 
+Checkout status is terminal when it reaches `fulfilled` or `failed`; a failed order is not queried again and the user must start a new checkout intent. A correctly authenticated VNPAY IPN that reports a failed transaction still receives protocol `RspCode: "00"` (the IPN was processed), while the local order becomes `failed` and no entitlement is granted. Re-delivery of the same event returns `RspCode: "02"`.
+
 ## Safety notes
 
 - Only `Billing:Vnpay:Environment=Sandbox` is supported in this code path.

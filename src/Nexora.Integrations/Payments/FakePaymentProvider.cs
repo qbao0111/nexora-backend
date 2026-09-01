@@ -52,8 +52,10 @@ public sealed class FakePaymentProvider(IOptions<FakePaymentOptions> options, Ti
         try { payload = JsonSerializer.Deserialize<FakeWebhookPayload>(body.Span, JsonOptions); }
         catch (JsonException) { throw InvalidPayload(); }
         if (payload is null || payload.OrderId == Guid.Empty || string.IsNullOrWhiteSpace(payload.EventId) ||
-            string.IsNullOrWhiteSpace(payload.TransactionId) || payload.OccurredAt == default)
+            string.IsNullOrWhiteSpace(payload.TransactionId) || string.IsNullOrWhiteSpace(payload.Status) || payload.OccurredAt == default)
             throw InvalidPayload();
+
+        var status = payload.Status.Trim();
 
         return Task.FromResult(new VerifiedPaymentEvent(
             payload.EventId.Trim(),
@@ -61,7 +63,8 @@ public sealed class FakePaymentProvider(IOptions<FakePaymentOptions> options, Ti
             payload.TransactionId.Trim(),
             payload.AmountMinor,
             payload.Currency.Trim().ToUpperInvariant(),
-            string.Equals(payload.Status, "paid", StringComparison.OrdinalIgnoreCase),
+            string.Equals(status, "paid", StringComparison.OrdinalIgnoreCase),
+            !string.Equals(status, "pending", StringComparison.OrdinalIgnoreCase),
             payload.OccurredAt));
     }
 

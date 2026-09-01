@@ -55,10 +55,10 @@ public static class DependencyInjection
                 string.Equals(options.Environment, "Sandbox", StringComparison.OrdinalIgnoreCase),
                 "Only Billing:Vnpay:Environment=Sandbox is supported before DEC-02 production payment approval.")
             .Validate(options => !string.Equals(paymentProvider, "vnpay", StringComparison.OrdinalIgnoreCase) ||
-                (!string.IsNullOrWhiteSpace(options.TmnCode) &&
+                (VnpayPaymentProvider.IsValidTmnCode(options.TmnCode) &&
                  !string.IsNullOrWhiteSpace(options.HashSecret) &&
                  Uri.TryCreate(options.ReturnUrl, UriKind.Absolute, out _)),
-                "VNPAY sandbox configuration is required when Billing:Payment:Provider=vnpay.")
+                "VNPAY sandbox TmnCode (exactly 8 alphanumeric characters), HashSecret and absolute ReturnUrl are required when Billing:Payment:Provider=vnpay.")
             .Validate(options => !string.Equals(paymentProvider, "vnpay", StringComparison.OrdinalIgnoreCase) ||
                 IsExpectedVnpayUrl(options.PaymentUrl, "/paymentv2/vpcpay.html"),
                 "Billing:Vnpay:PaymentUrl must be the VNPAY sandbox payment endpoint.")
