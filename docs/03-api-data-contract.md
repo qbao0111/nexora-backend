@@ -19,6 +19,8 @@
 | POST | `/me/deletion-requests` | Yêu cầu xoá bất đồng bộ; bắt buộc `Idempotency-Key`, revoke session ngay và trả `202`. |
 | GET | `/plans` | Gói, giá, quyền lợi từ server. |
 | POST | `/checkout-sessions` | Tạo order/URL thanh toán. |
+| GET | `/checkout-sessions/:id` | Đọc trạng thái checkout của owner. |
+| POST | `/checkout-sessions/:id/refresh` | Reconcile checkout pending từ provider sandbox khi IPN chậm. |
 | POST | `/webhooks/payments/:provider` | Nhận webhook đã verify chữ ký. |
 | POST | `/uploads/presign` | Cấp signed URL upload CV/avatar. |
 | POST | `/resumes` | Ghi metadata file sau upload. |
@@ -211,7 +213,7 @@ Report có thêm `starSummary` khi có ít nhất một answer STAR-applicable:
 ## State machines
 
 ```text
-Order: pending -> paid -> fulfilled
+Order: processing -> pending -> paid -> fulfilled
        pending -> expired | failed
        paid | fulfilled -> refunded (theo DEC-02/BR-07)
 Resume: uploaded -> extracting -> ready | failed | deleted

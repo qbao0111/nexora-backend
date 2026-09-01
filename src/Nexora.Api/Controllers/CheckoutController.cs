@@ -18,4 +18,29 @@ public sealed class CheckoutController(IBillingService billingService) : Control
         return StatusCode(201, new ApiResponse<CheckoutResponse>(new CheckoutResponse(
             checkout.OrderId, checkout.Status, checkout.AmountMinor, checkout.Currency, checkout.Provider, checkout.CheckoutUrl)));
     }
+
+    [HttpGet("{orderId:guid}")]
+    public async Task<ActionResult<ApiResponse<CheckoutStatusResponse>>> Get(Guid orderId, CancellationToken cancellationToken)
+    {
+        var checkout = await billingService.GetCheckoutAsync(User.GetRequiredUserId(), orderId, cancellationToken);
+        return Ok(new ApiResponse<CheckoutStatusResponse>(Map(checkout)));
+    }
+
+    [HttpPost("{orderId:guid}/refresh"), EnableRateLimiting(RateLimitPolicies.Checkout)]
+    public async Task<ActionResult<ApiResponse<CheckoutStatusResponse>>> Refresh(Guid orderId, CancellationToken cancellationToken)
+    {
+        var checkout = await billingService.RefreshCheckoutAsync(User.GetRequiredUserId(), orderId, cancellationToken);
+        return Ok(new ApiResponse<CheckoutStatusResponse>(Map(checkout)));
+    }
+
+    private static CheckoutStatusResponse Map(CheckoutStatus checkout) => new(
+        checkout.OrderId,
+        checkout.PlanCode,
+        checkout.AmountMinor,
+        checkout.Currency,
+        checkout.Provider,
+        checkout.Status,
+        checkout.CheckoutUrl,
+        checkout.CreatedAt,
+        checkout.UpdatedAt);
 }

@@ -75,7 +75,7 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
 
         var webhook = await CreateWebhookAsync(checkout.OrderId, "evt-t04");
         var deliveries = await Task.WhenAll(SendWebhookAsync(client, webhook), SendWebhookAsync(client, webhook));
-        Assert.All(deliveries, delivery => Assert.Equal(HttpStatusCode.OK, delivery.StatusCode));
+        Assert.All(deliveries, delivery => Assert.Equal(HttpStatusCode.NoContent, delivery.StatusCode));
         foreach (var delivery in deliveries) delivery.Dispose();
 
         using var scope = _factory.Services.CreateScope();
@@ -113,6 +113,45 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
     }
 
     [Fact]
+    public async Task PaymentReferenceMismatchDoesNotGrantEntitlement()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var price = await SeedPlanPriceAsync(interviewQuota: 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var checkout = await CreateCheckoutAsync(client, price.Id, "checkout-mismatch");
+        var webhook = await CreateWebhookAsync(checkout.OrderId, "evt-mismatch", amountDelta: 1);
+
+        using var response = await SendWebhookAsync(client, webhook);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Empty(await db.PaymentEvents.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
+        Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task CheckoutStatusIsOwnerScoped()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client);
+        var price = await SeedPlanPriceAsync(interviewQuota: 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.AccessToken);
+        var checkout = await CreateCheckoutAsync(client, price.Id, "checkout-owner");
+
+        using (var status = await client.GetAsync($"/api/v1/checkout-sessions/{checkout.OrderId}"))
+        {
+            Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+        }
+
+        var other = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", other.AccessToken);
+        using var forbidden = await client.GetAsync($"/api/v1/checkout-sessions/{checkout.OrderId}");
+        Assert.Equal(HttpStatusCode.NotFound, forbidden.StatusCode);
+    }
+
+    [Fact]
     public async Task ConcurrentQuotaReserveAllowsOneAndLedgerTransitionsRemainImmutableT03()
     {
         using var client = _factory.CreateHttpsClient();
@@ -120,7 +159,7 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
         var price = await SeedPlanPriceAsync(interviewQuota: 1);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
         var checkout = await CreateCheckoutAsync(client, price.Id, "checkout-t03");
-        Assert.Equal(HttpStatusCode.OK, (await SendWebhookAsync(client, await CreateWebhookAsync(checkout.OrderId, "evt-t03"))).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await SendWebhookAsync(client, await CreateWebhookAsync(checkout.OrderId, "evt-t03"))).StatusCode);
 
         var reservations = await Task.WhenAll(
             TryReserveAsync(account.UserId, "session-a", "reserve-a"),
@@ -186,7 +225,7 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
         return new CheckoutTestResponse(data.GetProperty("orderId").GetGuid(), data.GetProperty("amountMinor").GetInt64());
     }
 
-    private async Task<Webhook> CreateWebhookAsync(Guid orderId, string eventId)
+    private async Task<Webhook> CreateWebhookAsync(Guid orderId, string eventId, long amountDelta = 0)
     {
         using var scope = _factory.Services.CreateScope();
         var order = await scope.ServiceProvider.GetRequiredService<NexoraDbContext>().Orders.AsNoTracking().SingleAsync(item => item.Id == orderId);
@@ -195,6 +234,8 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
             eventId,
             orderId,
             transactionId = order.ProviderTransactionId,
+            amountMinor = order.AmountMinor + amountDelta,
+            currency = order.Currency,
             status = "paid",
             occurredAt = DateTimeOffset.UtcNow
         }, JsonOptions);

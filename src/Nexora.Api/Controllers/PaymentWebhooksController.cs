@@ -12,7 +12,7 @@ public sealed class PaymentWebhooksController(IBillingService billingService) : 
     private const int MaximumPayloadBytes = 64 * 1024;
 
     [AllowAnonymous, HttpPost]
-    public async Task<ActionResult<ApiResponse<object>>> Receive(string provider, CancellationToken cancellationToken)
+    public async Task<IActionResult> Receive(string provider, CancellationToken cancellationToken)
     {
         if (Request.ContentLength > MaximumPayloadBytes)
             throw new BusinessException("WEBHOOK_PAYLOAD_TOO_LARGE", "Webhook thanh toán quá lớn.", BusinessErrorKind.Validation);
@@ -20,12 +20,12 @@ public sealed class PaymentWebhooksController(IBillingService billingService) : 
         await Request.Body.CopyToAsync(buffer, cancellationToken);
         if (buffer.Length > MaximumPayloadBytes)
             throw new BusinessException("WEBHOOK_PAYLOAD_TOO_LARGE", "Webhook thanh toán quá lớn.", BusinessErrorKind.Validation);
-        var status = await billingService.ProcessPaymentWebhookAsync(
+        await billingService.ProcessPaymentWebhookAsync(
             provider,
             Request.Headers["X-Payment-Signature"].ToString(),
             Request.Headers["X-Payment-Timestamp"].ToString(),
             buffer.ToArray(),
             cancellationToken);
-        return Ok(new ApiResponse<object>(new { status }));
+        return NoContent();
     }
 }
