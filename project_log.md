@@ -278,7 +278,12 @@ This log records completed implementation milestones and verification evidence. 
 
 ## 2026-09-02 — VNPAY protocol correctness patch
 
-- Separated raw sorted PAY/IPN hash data from URL-encoded transport query strings and added the official fixed HMAC-SHA512 regression vector.
+- Separated PAY/IPN checksum data from transport query construction and added the official fixed HMAC-SHA512 regression vector.
 - QueryDr now validates correlation before response-code handling, fails closed with `PAYMENT_PROVIDER_QUERY_FAILED` for protocol errors, and distinguishes pending (`00/01`) from terminal failed statuses.
 - Added provider-neutral `IsFinal` and `BillingValues.Failed`; verified failed callbacks close orders without granting entitlements while duplicate callbacks remain idempotent.
 - Tightened VNPAY `TmnCode` startup validation and added independent unit/integration coverage for signatures, failed/pending flows and QueryDr errors. No migration or package was added.
+
+## 2026-09-02 — VNPAY 2.1 checksum compatibility follow-up
+
+- Aligned PAY/IPN HMACSHA512 canonicalization with the current VNPAY 2.1.0 online migration guidance: sorted non-empty key/value pairs use application/x-www-form-urlencoded-compatible encoding before signing.
+- Updated the PAY regression vector and independent test helpers; QueryDr remains pipe-signed and unchanged.

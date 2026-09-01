@@ -24,8 +24,8 @@ public sealed class VnpayPaymentProviderTests
         HashSecret = "secret",
         ReturnUrl = "http://localhost:3000/payment/return"
     };
-    private const string ExpectedPayHashData = "vnp_Amount=4900000&vnp_Command=pay&vnp_CreateDate=20260902080203&vnp_CurrCode=VND&vnp_ExpireDate=20260902081703&vnp_IpAddr=203.0.113.10&vnp_Locale=vn&vnp_OrderInfo=Nexora order nx11111111222233334444555555555555&vnp_OrderType=other&vnp_ReturnUrl=http://localhost:3000/payment/return&vnp_TmnCode=DEMOV210&vnp_TxnRef=nx11111111222233334444555555555555&vnp_Version=2.1.0";
-    private const string ExpectedPayHash = "f55dd2a8b0ba50b218119f73c32d730077d643088557546eb815f8c584d1632a192dcdde4f5f5c8ea3dcbb901ed09f2e2b0e124d94b0c63ef9877210d230194b";
+    private const string ExpectedPayHashData = "vnp_Amount=4900000&vnp_Command=pay&vnp_CreateDate=20260902080203&vnp_CurrCode=VND&vnp_ExpireDate=20260902081703&vnp_IpAddr=203.0.113.10&vnp_Locale=vn&vnp_OrderInfo=Nexora+order+nx11111111222233334444555555555555&vnp_OrderType=other&vnp_ReturnUrl=http%3A%2F%2Flocalhost%3A3000%2Fpayment%2Freturn&vnp_TmnCode=DEMOV210&vnp_TxnRef=nx11111111222233334444555555555555&vnp_Version=2.1.0";
+    private const string ExpectedPayHash = "8330e87f7221e5c77f1714dd04e256a89605876ec35cec3708e252d5e2f55719c2b581f68ad7c41b8fed81796b86ecbaa4c98473bf6c68ad85377cf053b32e6b";
 
     [Fact]
     public void HmacSha512UsesDeterministicLowercaseHexVector()
@@ -36,7 +36,7 @@ public sealed class VnpayPaymentProviderTests
     }
 
     [Fact]
-    public async Task CreateCheckoutUsesRawPayHashAndEncodedTransportQuery()
+    public async Task CreateCheckoutUsesEncodedPayHashAndEncodedTransportQuery()
     {
         var provider = NewProvider();
         var txnRef = VnpayPaymentProvider.ToVnpayTxnRef(OrderId);
@@ -63,6 +63,9 @@ public sealed class VnpayPaymentProviderTests
         Assert.Equal(ExpectedPayHash, TestSignSha512(ExpectedPayHashData, TestOptions.HashSecret));
         Assert.Contains("vnp_OrderInfo=Nexora+order+nx11111111222233334444555555555555", checkout.CheckoutUrl, StringComparison.Ordinal);
         Assert.Contains("vnp_ReturnUrl=http%3A%2F%2Flocalhost%3A3000%2Fpayment%2Freturn", checkout.CheckoutUrl, StringComparison.Ordinal);
+        Assert.Equal("Nexora+order+nx11111111222233334444555555555555", WebUtility.UrlEncode("Nexora order nx11111111222233334444555555555555"));
+        Assert.Equal("http%3A%2F%2Flocalhost%3A3000%2Fpayment%2Freturn", WebUtility.UrlEncode("http://localhost:3000/payment/return"));
+        Assert.Equal("A%2BB", WebUtility.UrlEncode("A+B"));
     }
 
     [Fact]
@@ -220,6 +223,7 @@ public sealed class VnpayPaymentProviderTests
     [InlineData("DEMOV21!")]
     [InlineData(" DEMOV21")]
     [InlineData("DEMOV210 ")]
+    [InlineData("\uFF21\uFF22\uFF23\uFF11\uFF12\uFF13\uFF14\uFF15")]
     public void InvalidVnpayTmnCodeFailsConfigurationValidation(string tmnCode)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -266,7 +270,7 @@ public sealed class VnpayPaymentProviderTests
         string.Join('&', query
             .Where(item => item.Key is not "vnp_SecureHash" and not "vnp_SecureHashType" && !string.IsNullOrEmpty(item.Value))
             .OrderBy(item => item.Key, StringComparer.Ordinal)
-            .Select(item => $"{item.Key}={item.Value}"));
+            .Select(item => $"{WebUtility.UrlEncode(item.Key)}={WebUtility.UrlEncode(item.Value)}"));
 
     private static string TestSignSha512(string rawData, string secret)
     {

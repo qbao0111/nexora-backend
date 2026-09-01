@@ -295,9 +295,9 @@ public sealed class VnpayBillingApiTests : IDisposable
 
     private static string BuildTestHashData(IReadOnlyDictionary<string, string> query) =>
         string.Join('&', query
-            .Where(item => !string.IsNullOrEmpty(item.Value))
+            .Where(item => item.Key is not "vnp_SecureHash" and not "vnp_SecureHashType" && !string.IsNullOrEmpty(item.Value))
             .OrderBy(item => item.Key, StringComparer.Ordinal)
-            .Select(item => $"{item.Key}={item.Value}"));
+            .Select(item => $"{WebUtility.UrlEncode(item.Key)}={WebUtility.UrlEncode(item.Value)}"));
 
     private static string BuildTestQueryString(IReadOnlyDictionary<string, string> query) =>
         string.Join('&', query

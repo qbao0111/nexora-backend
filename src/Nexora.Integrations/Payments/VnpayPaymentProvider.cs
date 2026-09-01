@@ -163,22 +163,22 @@ public sealed class VnpayPaymentProvider(HttpClient httpClient, IOptions<VnpayOp
     }
 
     public static string BuildHashData(IReadOnlyDictionary<string, string> parameters) =>
-        string.Join('&', parameters
-            .Where(item => !string.IsNullOrEmpty(item.Value))
-            .OrderBy(item => item.Key, StringComparer.Ordinal)
-            .Select(item => $"{item.Key}={item.Value}"));
+        BuildEncodedParameterString(parameters);
 
     public static string BuildQueryString(IReadOnlyDictionary<string, string> parameters) =>
-        string.Join('&', parameters
-            .Where(item => !string.IsNullOrEmpty(item.Value))
-            .OrderBy(item => item.Key, StringComparer.Ordinal)
-            .Select(item => $"{Encode(item.Key)}={Encode(item.Value)}"));
+        BuildEncodedParameterString(parameters);
 
     public static string FormatVnpayDate(DateTimeOffset value) =>
         value.ToUniversalTime().ToOffset(VietnamOffset).ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
 
     public static bool IsValidTmnCode(string? value) =>
-        value is { Length: 8 } && value.All(char.IsLetterOrDigit);
+        value is { Length: 8 } && value.All(IsAsciiAlphaNumeric);
+
+    private static string BuildEncodedParameterString(IReadOnlyDictionary<string, string> parameters) =>
+        string.Join('&', parameters
+            .Where(item => !string.IsNullOrEmpty(item.Value))
+            .OrderBy(item => item.Key, StringComparer.Ordinal)
+            .Select(item => $"{Encode(item.Key)}={Encode(item.Value)}"));
 
     private void VerifyQuerySignature(IReadOnlyDictionary<string, string> parameters)
     {
@@ -316,6 +316,11 @@ public sealed class VnpayPaymentProvider(HttpClient httpClient, IOptions<VnpayOp
         var expectedBytes = Encoding.UTF8.GetBytes(expected);
         return suppliedBytes.Length == expectedBytes.Length && CryptographicOperations.FixedTimeEquals(suppliedBytes, expectedBytes);
     }
+
+    private static bool IsAsciiAlphaNumeric(char value) =>
+        value is >= 'A' and <= 'Z' ||
+        value is >= 'a' and <= 'z' ||
+        value is >= '0' and <= '9';
 
     private static string Encode(string value) => WebUtility.UrlEncode(value) ?? string.Empty;
 
