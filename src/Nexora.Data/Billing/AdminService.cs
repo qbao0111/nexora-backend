@@ -242,13 +242,30 @@ public sealed partial class AdminService(
         if (interviewQuota < 0) throw Validation("Interview quota không hợp lệ.");
 
         var hasOrders = await dbContext.Orders.AnyAsync(item => item.PlanPriceId == priceId, cancellationToken);
-        price.AmountMinor = amountMinor;
-        price.Currency = currency.Trim().ToUpperInvariant();
-        price.DurationDays = durationDays;
-        price.InterviewQuota = interviewQuota;
-        if (!hasOrders) price.IsActive = isActive;
+        if (hasOrders)
+        {
+            var normalizedCurrency = currency.Trim().ToUpperInvariant();
+            if (price.AmountMinor != amountMinor ||
+                !string.Equals(price.Currency, normalizedCurrency, StringComparison.OrdinalIgnoreCase) ||
+                price.DurationDays != durationDays ||
+                price.InterviewQuota != interviewQuota)
+            {
+                throw new BusinessException("PLAN_PRICE_COMMERCIAL_FIELDS_IMMUTABLE",
+                    "Mức giá đã có đơn hàng lịch sử không được sửa đổi giá, thời hạn hoặc lượt phỏng vấn. Vui lòng tạo mức giá mới.",
+                    BusinessErrorKind.Conflict);
+            }
+        }
+        else
+        {
+            price.AmountMinor = amountMinor;
+            price.Currency = currency.Trim().ToUpperInvariant();
+            price.DurationDays = durationDays;
+            price.InterviewQuota = interviewQuota;
+        }
+
+        price.IsActive = isActive;
         await AuditAsync(adminUserId, "plan.price.update", "plan_price", priceId.ToString("N"),
-            $"Updated price to {amountMinor} {currency} for plan {price.Plan.Code}", cancellationToken);
+            $"Updated price to {price.AmountMinor} {price.Currency}, active={isActive} for plan {price.Plan.Code}", cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         return MapPlan(price.Plan, price.Plan.Prices.OrderBy(p => p.AmountMinor));
     }
@@ -264,6 +281,10 @@ public sealed partial class AdminService(
 
         foreach (var feature in features)
         {
+            if (string.Equals(feature.FeatureCode, FeatureValues.Interview, StringComparison.OrdinalIgnoreCase))
+                throw new BusinessException("INTERVIEW_FEATURE_IMMUTABLE",
+                    "Lượt phỏng vấn được quản lý qua InterviewQuota của mức giá, không cấu hình qua feature matrix.",
+                    BusinessErrorKind.Validation);
             if (!featureDefMap.TryGetValue(feature.FeatureCode, out var fdId))
                 throw new BusinessException("FEATURE_NOT_FOUND", $"Feature code {feature.FeatureCode} không hợp lệ.", BusinessErrorKind.Validation);
             if (feature.Limit < 0) throw Validation("Limit không được âm.");
@@ -352,7 +373,7 @@ public sealed partial class AdminService(
             featureList.Add(interview);
             var generic = await dbContext.EntitlementFeatures.AsNoTracking().Include(item => item.FeatureDefinition)
                 .Where(item => item.EntitlementId == entitlement.Id).ToArrayAsync(cancellationToken);
-            foreach (var ef in generic)
+            foreach (var ef in generic.Where(item => !string.Equals(item.FeatureCode, FeatureValues.Interview, StringComparison.OrdinalIgnoreCase)))
             {
                 featureList.Add(new EntitlementFeatureView(ef.FeatureCode, ef.FeatureDefinition.Name, ef.IsEnabled, ef.Limit,
                     ef.Reserved, ef.Consumed, ef.Adjustment, Available(ef.Limit, ef.Reserved, ef.Consumed, ef.Adjustment), ef.IsEnabled && ef.Limit is null));
@@ -494,7 +515,7 @@ public sealed partial class AdminService(
 
     private async Task SnapshotPlanFeaturesAsync(Guid entitlementId, ICollection<PlanPriceFeature> priceFeatures, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        foreach (var pf in priceFeatures)
+        foreach (var pf in priceFeatures.Where(pf => !string.Equals(pf.FeatureDefinition.Code, FeatureValues.Interview, StringComparison.OrdinalIgnoreCase)))
         {
             dbContext.EntitlementFeatures.Add(new EntitlementFeature
             {
@@ -539,9 +560,18 @@ public sealed partial class AdminService(
             plan.SortOrder, plan.IsActive, plan.CreatedAt,
             prices.Select(price => MapPrice(price, price.Features)).ToArray());
 
-    private static AdminPlanPriceView MapPrice(PlanPrice price, ICollection<PlanPriceFeature> features) =>
-        new(price.Id, price.AmountMinor, price.Currency, price.DurationDays, price.InterviewQuota, price.IsActive,
-            features.Select(f => new AdminPlanFeatureView(f.FeatureDefinitionId, f.FeatureDefinition.Code, f.FeatureDefinition.Name, f.IsEnabled, f.Limit, f.IsEnabled && f.Limit is null)).ToArray());
+    private static AdminPlanPriceView MapPrice(PlanPrice price, ICollection<PlanPriceFeature> features)
+    {
+        var list = new List<AdminPlanFeatureView>();
+        var interviewDef = features.FirstOrDefault(f => string.Equals(f.FeatureDefinition.Code, FeatureValues.Interview, StringComparison.OrdinalIgnoreCase))?.FeatureDefinition;
+        var interviewId = interviewDef?.Id ?? Guid.Empty;
+        list.Add(new AdminPlanFeatureView(interviewId, FeatureValues.Interview, "Phỏng vấn", true, price.InterviewQuota, price.InterviewQuota is null));
+        foreach (var f in features.Where(f => !string.Equals(f.FeatureDefinition.Code, FeatureValues.Interview, StringComparison.OrdinalIgnoreCase)))
+        {
+            list.Add(new AdminPlanFeatureView(f.FeatureDefinitionId, f.FeatureDefinition.Code, f.FeatureDefinition.Name, f.IsEnabled, f.Limit, f.IsEnabled && f.Limit is null));
+        }
+        return new(price.Id, price.AmountMinor, price.Currency, price.DurationDays, price.InterviewQuota, price.IsActive, list.ToArray());
+    }
 
     private static int? Available(int? limit, int reserved, int consumed, int adjustment) =>
         limit is null ? null : limit.Value + adjustment - reserved - consumed;

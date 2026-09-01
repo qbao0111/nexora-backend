@@ -25,11 +25,18 @@ public sealed partial class BillingService(
             .Where(plan => plan.IsActive).OrderBy(plan => plan.SortOrder).ToArrayAsync(cancellationToken);
         return plans.Select(plan => new PlanView(
             plan.Id, plan.Code, plan.Name, plan.Description ?? string.Empty, plan.Badge, plan.IsHighlighted,
-            plan.Prices.Where(price => price.IsActive).OrderBy(price => price.AmountMinor).Select(price => new PlanPriceView(
-                price.Id, price.AmountMinor, price.Currency, price.DurationDays, price.InterviewQuota,
-                price.Features.Select(feature => new PlanFeatureView(
-                    feature.FeatureDefinition.Code, feature.FeatureDefinition.Name, feature.IsEnabled, feature.Limit,
-                    feature.IsEnabled && feature.Limit is null)).ToArray())).ToArray())).ToArray();
+            plan.Prices.Where(price => price.IsActive).OrderBy(price => price.AmountMinor).Select(price =>
+            {
+                var featureList = new List<PlanFeatureView>
+                {
+                    new(FeatureValues.Interview, "Phỏng vấn", true, price.InterviewQuota, price.InterviewQuota is null)
+                };
+                foreach (var f in price.Features.Where(f => !string.Equals(f.FeatureDefinition.Code, FeatureValues.Interview, StringComparison.OrdinalIgnoreCase)))
+                {
+                    featureList.Add(new PlanFeatureView(f.FeatureDefinition.Code, f.FeatureDefinition.Name, f.IsEnabled, f.Limit, f.IsEnabled && f.Limit is null));
+                }
+                return new PlanPriceView(price.Id, price.AmountMinor, price.Currency, price.DurationDays, price.InterviewQuota, featureList.ToArray());
+            }).ToArray())).ToArray();
     }
 
     public async Task<CheckoutSession> CreateCheckoutAsync(
@@ -51,8 +58,10 @@ public sealed partial class BillingService(
         var now = timeProvider.GetUtcNow();
         var orderId = Guid.NewGuid();
         var providerTransactionId = paymentProvider.CreateProviderTransactionId(orderId);
-        var featuresSnapshot = price.Features.Select(feature => new PlanFeatureSnapshot(
-            feature.FeatureDefinition.Code, feature.IsEnabled, feature.Limit)).ToArray();
+        var featuresSnapshot = price.Features
+            .Where(feature => !string.Equals(feature.FeatureDefinition.Code, FeatureValues.Interview, StringComparison.OrdinalIgnoreCase))
+            .Select(feature => new PlanFeatureSnapshot(
+                feature.FeatureDefinition.Code, feature.IsEnabled, feature.Limit)).ToArray();
         var order = new Order
         {
             Id = orderId,
@@ -72,35 +81,45 @@ public sealed partial class BillingService(
             UpdatedAt = now
         };
 
-        await using var transaction = await BeginTransactionAsync(cancellationToken);
-        existing = await FindCheckoutAsync(userId, key, fingerprint, cancellationToken);
-        if (existing is not null) return await EnsureProviderCheckoutAsync(existing, cancellationToken);
-        dbContext.Orders.Add(order);
-        dbContext.IdempotencyRecords.Add(new IdempotencyRecord
+        Order targetOrder;
+        await using (var transaction = await BeginTransactionAsync(cancellationToken))
         {
-            Id = Guid.NewGuid(),
-            ActorId = userId,
-            Operation = "checkout.create",
-            Key = key,
-            RequestFingerprint = fingerprint,
-            ResourceId = order.Id,
-            CreatedAt = now
-        });
-        dbContext.OutboxEvents.Add(CreateOutbox("CheckoutCreated", "order", order.Id, new { order.Id, order.UserId }, now));
-        try
-        {
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateException)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            dbContext.ChangeTracker.Clear();
             existing = await FindCheckoutAsync(userId, key, fingerprint, cancellationToken);
-            if (existing is not null) return await EnsureProviderCheckoutAsync(existing, cancellationToken);
-            throw;
+            if (existing is not null)
+            {
+                targetOrder = existing;
+            }
+            else
+            {
+                dbContext.Orders.Add(order);
+                dbContext.IdempotencyRecords.Add(new IdempotencyRecord
+                {
+                    Id = Guid.NewGuid(),
+                    ActorId = userId,
+                    Operation = "checkout.create",
+                    Key = key,
+                    RequestFingerprint = fingerprint,
+                    ResourceId = order.Id,
+                    CreatedAt = now
+                });
+                dbContext.OutboxEvents.Add(CreateOutbox("CheckoutCreated", "order", order.Id, new { order.Id, order.UserId }, now));
+                try
+                {
+                    await dbContext.SaveChangesAsync(cancellationToken);
+                    targetOrder = order;
+                }
+                catch (DbUpdateException)
+                {
+                    if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
+                    var reloaded = await FindCheckoutAsync(userId, key, fingerprint, cancellationToken);
+                    if (reloaded is null) throw;
+                    targetOrder = reloaded;
+                }
+                await CommitAsync(transaction, cancellationToken);
+            }
         }
-        await transaction.CommitAsync(cancellationToken);
-        return await EnsureProviderCheckoutAsync(order, cancellationToken);
+
+        return await EnsureProviderCheckoutAsync(targetOrder, cancellationToken);
     }
 
     public async Task<CheckoutStatus> GetCheckoutAsync(Guid userId, Guid orderId, CancellationToken cancellationToken)
@@ -221,7 +240,7 @@ public sealed partial class BillingService(
             dbContext.OutboxEvents.Add(CreateOutbox("EntitlementGranted", "order", order.Id, new { order.Id, order.UserId }, now));
         }
         await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
         PaymentProcessed(logger, CorrelationId(), verified.ProviderEventId, order.Id, order.Status);
     }
 
@@ -238,7 +257,7 @@ public sealed partial class BillingService(
         }
         var featureDefs = await dbContext.FeatureDefinitions.AsNoTracking().Where(item => item.IsActive).ToArrayAsync(cancellationToken);
         var featureDefMap = featureDefs.ToDictionary(item => item.Code, item => item.Id, StringComparer.OrdinalIgnoreCase);
-        foreach (var snapshot in snapshots)
+        foreach (var snapshot in snapshots.Where(s => !string.Equals(s.Code, FeatureValues.Interview, StringComparison.OrdinalIgnoreCase)))
         {
             if (!featureDefMap.TryGetValue(snapshot.Code, out var featureDefinitionId))
                 throw new BusinessException("FEATURE_NOT_FOUND", $"Feature {snapshot.Code} không tồn tại.", BusinessErrorKind.Validation);
@@ -271,9 +290,11 @@ public sealed partial class BillingService(
                 true, entry.item.InterviewLimit, entry.item.Reserved, entry.item.Consumed, entry.item.Adjustment,
                 Available(entry.item.InterviewLimit, entry.item.Reserved, entry.item.Consumed, entry.item.Adjustment),
                 entry.item.InterviewLimit is null);
-            var generic = entry.features.Select(ef => new EntitlementFeatureView(
-                ef.FeatureCode, featureDefNames.GetValueOrDefault(ef.FeatureDefinitionId, ef.FeatureCode), ef.IsEnabled, ef.Limit,
-                ef.Reserved, ef.Consumed, ef.Adjustment, Available(ef.Limit, ef.Reserved, ef.Consumed, ef.Adjustment), ef.IsEnabled && ef.Limit is null)).ToArray();
+            var generic = entry.features
+                .Where(ef => !string.Equals(ef.FeatureCode, FeatureValues.Interview, StringComparison.OrdinalIgnoreCase))
+                .Select(ef => new EntitlementFeatureView(
+                    ef.FeatureCode, featureDefNames.GetValueOrDefault(ef.FeatureDefinitionId, ef.FeatureCode), ef.IsEnabled, ef.Limit,
+                    ef.Reserved, ef.Consumed, ef.Adjustment, Available(ef.Limit, ef.Reserved, ef.Consumed, ef.Adjustment), ef.IsEnabled && ef.Limit is null)).ToArray();
             views.Add(new EntitlementView(entry.item.Id, entry.item.PlanCodeSnapshot, entry.item.Status, entry.item.StartsAt, entry.item.EndsAt,
                 entry.item.InterviewLimit, entry.item.Reserved, entry.item.Consumed, entry.item.Adjustment, [interview, .. generic]));
         }
@@ -322,7 +343,7 @@ public sealed partial class BillingService(
         entitlement.ConcurrencyToken = Guid.NewGuid();
         dbContext.UsageEvents.Add(usage);
         await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
         return new UsageReservation(usage.Id, entitlement.Id, Available(entitlement));
     }
 
@@ -382,7 +403,7 @@ public sealed partial class BillingService(
             CreatedAt = now
         });
         await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
     }
 
     private async Task CompleteReservationAsync(Guid userId, Guid reservationEventId, string action, CancellationToken cancellationToken)
@@ -430,7 +451,7 @@ public sealed partial class BillingService(
             CreatedAt = now
         });
         await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
     }
 
     private async Task<Order?> FindCheckoutAsync(Guid userId, string key, string fingerprint, CancellationToken cancellationToken)
@@ -514,8 +535,17 @@ public sealed partial class BillingService(
         return await dbContext.Orders.SingleOrDefaultAsync(order => order.Id == orderId, cancellationToken);
     }
 
-    private Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
-        dbContext.Database.BeginTransactionAsync(dbContext.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
+    private async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is not null) return null;
+        return await dbContext.Database.BeginTransactionAsync(dbContext.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
+    }
+
+    private static async Task CommitAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction, CancellationToken cancellationToken)
+    {
+        if (transaction is null) return;
+        await transaction.CommitAsync(cancellationToken);
+    }
 
     private static int? Available(Entitlement entitlement) =>
         entitlement.InterviewLimit is null ? null : entitlement.InterviewLimit.Value + entitlement.Adjustment - entitlement.Reserved - entitlement.Consumed;
