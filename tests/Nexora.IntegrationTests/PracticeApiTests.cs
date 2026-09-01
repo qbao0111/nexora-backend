@@ -84,6 +84,11 @@ public sealed class PracticeApiTests
         Assert.Equal(PracticeValues.Active, active.GetProperty("status").GetString());
         var firstQuestion = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
         var firstAnswer = await AnswerAsync(client, interviewId, firstQuestion, "Tôi phân tích nguyên nhân, phối hợp đội và giảm 30% lỗi.", "answer-one");
+        var firstStar = firstAnswer.GetProperty("answer").GetProperty("evaluation").GetProperty("star");
+        Assert.True(firstStar.GetProperty("applicable").GetBoolean());
+        Assert.Equal(68, firstStar.GetProperty("overallScore").GetInt32());
+        Assert.False(firstStar.GetProperty("result").GetProperty("detected").GetBoolean());
+        Assert.Contains(firstStar.GetProperty("missingElements").EnumerateArray(), item => item.GetString() == "result");
         var secondQuestion = firstAnswer.GetProperty("nextQuestion").GetProperty("id").GetGuid();
 
         var refreshed = await GetInterviewAsync(client, interviewId);
@@ -106,6 +111,10 @@ public sealed class PracticeApiTests
         Assert.NotEmpty(report.GetProperty("strengths").EnumerateArray());
         Assert.NotEmpty(report.GetProperty("gaps").EnumerateArray());
         Assert.NotEmpty(report.GetProperty("actionPlan").EnumerateArray());
+        var starSummary = report.GetProperty("starSummary");
+        Assert.Equal(2, starSummary.GetProperty("applicableAnswers").GetInt32());
+        Assert.Equal("result", starSummary.GetProperty("weakestComponent").GetString());
+        Assert.Contains(starSummary.GetProperty("coachingPriorities").EnumerateArray(), item => item.GetString()!.Contains("kết quả", StringComparison.OrdinalIgnoreCase));
         Assert.Contains("coaching", report.GetProperty("disclaimer").GetString(), StringComparison.OrdinalIgnoreCase);
 
         using var dashboardResponse = await client.GetAsync("/api/v1/dashboard");
@@ -125,6 +134,26 @@ public sealed class PracticeApiTests
         otherClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", other.AccessToken);
         Assert.Equal(HttpStatusCode.NotFound, (await otherClient.GetAsync($"/api/v1/interviews/{interviewId}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await otherClient.GetAsync($"/api/v1/interviews/{interviewId}/report")).StatusCode);
+    }
+
+    [Fact]
+    public async Task TechnicalAnswerKeepsStarInapplicable()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "technical-start", "technical");
+        await ProcessJobsAsync(factory);
+
+        var active = await GetInterviewAsync(client, interviewId);
+        var firstQuestion = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        var answer = await AnswerAsync(client, interviewId, firstQuestion, "Dependency injection passes dependencies from outside instead of constructing them inside the class.", "technical-answer");
+        var star = answer.GetProperty("answer").GetProperty("evaluation").GetProperty("star");
+        Assert.False(star.GetProperty("applicable").GetBoolean());
+        Assert.False(star.TryGetProperty("situation", out var situation) && situation.ValueKind != JsonValueKind.Null);
     }
 
     [Fact]
@@ -167,11 +196,11 @@ public sealed class PracticeApiTests
         Assert.Equal(1, await finalDb.InterviewReports.CountAsync(item => item.InterviewSessionId == interviewId));
     }
 
-    private static async Task<Guid> StartInterviewAsync(HttpClient client, string key)
+    private static async Task<Guid> StartInterviewAsync(HttpClient client, string key, string interviewType = "behavioral")
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/interviews")
         {
-            Content = JsonContent.Create(new { role = "Business Analyst", seniority = "junior", interviewType = "behavioral", difficulty = "medium" })
+            Content = JsonContent.Create(new { role = "Business Analyst", seniority = "junior", interviewType, difficulty = "medium" })
         };
         request.Headers.Add("Idempotency-Key", key);
         using var response = await client.SendAsync(request);

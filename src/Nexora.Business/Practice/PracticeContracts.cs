@@ -1,3 +1,5 @@
+using Nexora.Business.Ai;
+
 namespace Nexora.Business.Practice;
 
 public static class PracticeValues
@@ -133,8 +135,9 @@ public interface IResumeContextBuilder
 {
     string BuildProfileExtractionContext(string rawExtractedText);
     string BuildResumeAnalysisContext(ResumeProfile profile, string jobDescription);
-    string BuildInterviewQuestionContext(string role, string seniority, string? jobDescription, ResumeProfile? profile);
-    string BuildAnswerEvaluationContext(string question, string answer, ResumeProfile? profile);
+    string BuildInterviewQuestionContext(string role, string seniority, string interviewType, string difficulty, string? jobDescription, ResumeProfile? profile);
+    string BuildAnswerEvaluationContext(string role, string seniority, string interviewType, string? jobDescription, string question, string answer, ResumeProfile? profile);
+    string BuildFollowupQuestionContext(string role, string seniority, string interviewType, string? jobDescription, string question, string answer, StarEvaluation? star, ResumeProfile? profile);
     string BuildReportContext(string transcript, ResumeProfile? profile);
 }
 
@@ -181,7 +184,17 @@ public sealed record InterviewView(
     DateTimeOffset UpdatedAt);
 
 public sealed record AnswerResult(AnswerView Answer, QuestionView? NextQuestion, bool IsComplete);
-public sealed record ReportView(Guid Id, Guid InterviewId, int OverallScore, object Rubric, object Strengths, object Gaps, object ActionPlan, string Disclaimer, DateTimeOffset CreatedAt);
+public sealed record ReportView(
+    Guid Id,
+    Guid InterviewId,
+    int OverallScore,
+    object Rubric,
+    object Strengths,
+    object Gaps,
+    object ActionPlan,
+    string Disclaimer,
+    DateTimeOffset CreatedAt,
+    object? StarSummary = null);
 public sealed record DashboardView(object? Billing, IReadOnlyCollection<InterviewSummary> Interviews, IReadOnlyCollection<ReportSummary> Reports);
 public sealed record InterviewSummary(Guid Id, string Role, string Status, DateTimeOffset UpdatedAt);
 public sealed record ReportSummary(Guid Id, Guid InterviewId, int OverallScore, DateTimeOffset CreatedAt);

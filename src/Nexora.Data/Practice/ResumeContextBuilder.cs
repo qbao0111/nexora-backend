@@ -1,4 +1,5 @@
 using System.Text;
+using Nexora.Business.Ai;
 using Nexora.Business.Practice;
 
 namespace Nexora.Data.Practice;
@@ -23,21 +24,47 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
     }
 
     public string BuildInterviewQuestionContext(
-        string role, string seniority, string? jobDescription, ResumeProfile? profile)
+        string role, string seniority, string interviewType, string difficulty, string? jobDescription, ResumeProfile? profile)
     {
         var builder = new StringBuilder();
         Append(builder, "role", role, 160);
         Append(builder, "seniority", seniority, 80);
+        Append(builder, "interview-type", interviewType, 80);
+        Append(builder, "difficulty", difficulty, 80);
         Append(builder, "job-description", jobDescription, 5_000);
         if (profile is not null) AppendProfile(builder, profile, includeDetails: false);
         return Bound(builder.ToString(), InterviewContextLimit);
     }
 
-    public string BuildAnswerEvaluationContext(string question, string answer, ResumeProfile? profile)
+    public string BuildAnswerEvaluationContext(
+        string role, string seniority, string interviewType, string? jobDescription, string question, string answer, ResumeProfile? profile)
     {
         var builder = new StringBuilder();
+        Append(builder, "role", role, 160);
+        Append(builder, "seniority", seniority, 80);
+        Append(builder, "interview-type", interviewType, 80);
+        Append(builder, "job-description", jobDescription, 3_000);
         Append(builder, "question", question, 2_000);
         Append(builder, "answer", answer, 12_000);
+        if (profile is not null) AppendProfile(builder, profile, includeDetails: false);
+        return Bound(builder.ToString(), AnswerContextLimit);
+    }
+
+    public string BuildFollowupQuestionContext(
+        string role, string seniority, string interviewType, string? jobDescription, string question, string answer, StarEvaluation? star, ResumeProfile? profile)
+    {
+        var builder = new StringBuilder();
+        Append(builder, "role", role, 160);
+        Append(builder, "seniority", seniority, 80);
+        Append(builder, "interview-type", interviewType, 80);
+        Append(builder, "job-description", jobDescription, 3_000);
+        Append(builder, "previous-question", question, 2_000);
+        Append(builder, "previous-answer", answer, 8_000);
+        if (star?.Applicable == true)
+        {
+            Append(builder, "star-missing-elements", string.Join("; ", star.MissingElements ?? []), 300);
+            Append(builder, "star-coaching-tips", string.Join("; ", star.CoachingTips ?? []), 500);
+        }
         if (profile is not null) AppendProfile(builder, profile, includeDetails: false);
         return Bound(builder.ToString(), AnswerContextLimit);
     }

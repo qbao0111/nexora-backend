@@ -29,10 +29,10 @@ public sealed partial class PracticeService(
 {
     private const string DevelopmentResumeAnalysisOperation = "development-resume-analysis.create";
     private const string PromptVersion = "phase3-v1";
-    private const string SchemaVersion = "phase3-v1";
+    private const string SchemaVersion = "phase3-star-v2";
     private const string ProfilePromptVersion = "resume-profile-v1";
     private const string ProfileSchemaVersion = "resume-profile-v1";
-    private const string RubricVersion = "interview-rubric-v1";
+    private const string RubricVersion = "interview-rubric-star-v2";
     private const string Disclaimer = "Điểm số chỉ là ước lượng phục vụ coaching, không phải đánh giá tuyển dụng.";
     private const string ResumeExtractionFailureMessage = "Không thể đọc nội dung CV. Vui lòng thử lại với file PDF hoặc DOCX rõ hơn.";
     private static readonly JsonDocument EmptySchema = JsonDocument.Parse("{}");
@@ -40,8 +40,9 @@ public sealed partial class PracticeService(
     private static readonly JsonDocument QuestionSchema = JsonDocument.Parse("""{"type":"object","properties":{"content":{"type":"string"}},"required":["content"]}""");
     private static readonly JsonDocument AnalysisSchema = JsonDocument.Parse("""{"type":"object","properties":{"strengths":{"type":"array","items":{"type":"string"}},"gaps":{"type":"array","items":{"type":"string"}},"recommendations":{"type":"array","items":{"type":"string"}}},"required":["strengths","gaps","recommendations"]}""");
     private static readonly JsonDocument ProfileSchema = JsonDocument.Parse("""{"type":"object","properties":{"summary":{"type":"string"},"skills":{"type":"array","items":{"type":"string"}},"experiences":{"type":"array","items":{"type":"object","properties":{"company":{"type":"string"},"role":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},"highlights":{"type":"array","items":{"type":"string"}}},"required":["company","role","start","end","highlights"]}},"education":{"type":"array","items":{"type":"object","properties":{"institution":{"type":"string"},"degree":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},"details":{"type":"array","items":{"type":"string"}}},"required":["institution","degree","start","end","details"]}},"projects":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"technologies":{"type":"array","items":{"type":"string"}},"highlights":{"type":"array","items":{"type":"string"}}},"required":["name","role","technologies","highlights"]}},"certifications":{"type":"array","items":{"type":"string"}},"languages":{"type":"array","items":{"type":"string"}}},"required":["summary","skills","experiences","education","projects","certifications","languages"]}""");
-    private static readonly JsonDocument EvaluationSchema = JsonDocument.Parse("""{"type":"object","properties":{"scores":{"type":"array","items":{"type":"object","properties":{"criterion":{"type":"string"},"score":{"type":"integer"},"evidence":{"type":"string"}},"required":["criterion","score","evidence"]}},"feedback":{"type":"string"}},"required":["scores","feedback"]}""");
+    private static readonly JsonDocument EvaluationSchema = JsonDocument.Parse("""{"type":"object","properties":{"scores":{"type":"array","items":{"type":"object","properties":{"criterion":{"type":"string"},"score":{"type":"integer"},"evidence":{"type":"string"}},"required":["criterion","score","evidence"]}},"feedback":{"type":"string"},"star":{"type":"object","properties":{"applicable":{"type":"boolean"},"overallScore":{"type":"integer"},"situation":{"type":"object","properties":{"score":{"type":"integer"},"detected":{"type":"boolean"},"evidence":{"type":"string"},"feedback":{"type":"string"}},"required":["score","detected","evidence","feedback"]},"task":{"type":"object","properties":{"score":{"type":"integer"},"detected":{"type":"boolean"},"evidence":{"type":"string"},"feedback":{"type":"string"}},"required":["score","detected","evidence","feedback"]},"action":{"type":"object","properties":{"score":{"type":"integer"},"detected":{"type":"boolean"},"evidence":{"type":"string"},"feedback":{"type":"string"}},"required":["score","detected","evidence","feedback"]},"result":{"type":"object","properties":{"score":{"type":"integer"},"detected":{"type":"boolean"},"evidence":{"type":"string"},"feedback":{"type":"string"}},"required":["score","detected","evidence","feedback"]},"missingElements":{"type":"array","items":{"type":"string"}},"strengths":{"type":"array","items":{"type":"string"}},"coachingTips":{"type":"array","items":{"type":"string"}}},"required":["applicable"]}},"required":["scores","feedback","star"]}""");
     private static readonly JsonDocument ReportSchema = JsonDocument.Parse("""{"type":"object","properties":{"scores":{"type":"array","items":{"type":"object","properties":{"criterion":{"type":"string"},"score":{"type":"integer"},"evidence":{"type":"string"}},"required":["criterion","score","evidence"]}},"strengths":{"type":"array","items":{"type":"string"}},"gaps":{"type":"array","items":{"type":"string"}},"actionPlan":{"type":"array","items":{"type":"string"}}},"required":["scores","strengths","gaps","actionPlan"]}""");
+    private static readonly string[] BehavioralQuestionSignals = ["tell me about", "describe a situation", "kể về", "một lần", "tình huống", "deadline", "conflict", "xung đột"];
 
     private string CurrentModelVersion => string.IsNullOrWhiteSpace(aiProvider.ModelVersion)
         ? throw new InvalidOperationException("The configured AI provider must expose a model version.")
@@ -300,13 +301,20 @@ public sealed partial class PracticeService(
 
         AnswerEvaluation evaluation;
         GeneratedQuestion? generated = null;
+        var profile = TryReadResumeProfile(snapshot.Resume?.StructuredProfile);
         var answerContext = resumeContextBuilder.BuildAnswerEvaluationContext(
-            question.Content, content.Trim(), TryReadResumeProfile(snapshot.Resume?.StructuredProfile));
+            snapshot.Role, snapshot.Seniority, snapshot.InterviewType, snapshot.JobDescription?.Content, question.Content, content.Trim(), profile);
         try
         {
             evaluation = await aiProvider.GenerateStructuredAsync<AnswerEvaluation>(Request("interview.evaluate", answerContext, interviewId), cancellationToken);
+            evaluation = evaluation with { Star = ValidateAndNormalizeStar(evaluation.Star, snapshot.InterviewType, question.Content) };
             if (snapshot.Questions.Count < 2)
-                generated = await aiProvider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.followup", answerContext, interviewId), cancellationToken);
+            {
+                var followupContext = resumeContextBuilder.BuildFollowupQuestionContext(
+                    snapshot.Role, snapshot.Seniority, snapshot.InterviewType, snapshot.JobDescription?.Content,
+                    question.Content, content.Trim(), evaluation.Star, profile);
+                generated = await aiProvider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.followup", followupContext, interviewId), cancellationToken);
+            }
         }
         catch (AiProviderException exception)
         {
@@ -390,8 +398,9 @@ public sealed partial class PracticeService(
     public async Task<ReportView> GetReportAsync(Guid userId, Guid interviewId, CancellationToken cancellationToken)
     {
         var report = await dbContext.InterviewReports.AsNoTracking()
+            .Include(item => item.InterviewSession).ThenInclude(item => item.Answers)
             .SingleOrDefaultAsync(item => item.InterviewSessionId == interviewId && item.UserId == userId, cancellationToken) ?? throw NotFound();
-        return MapReport(report);
+        return MapReport(report, report.InterviewSession.Answers);
     }
 
     public async Task<DashboardView> GetDashboardAsync(Guid userId, CancellationToken cancellationToken)
@@ -628,7 +637,7 @@ public sealed partial class PracticeService(
         if (snapshot.Status != PracticeValues.Starting) { MarkProcessed(job); await dbContext.SaveChangesAsync(cancellationToken); return; }
         var profile = snapshot.Resume is null ? null : await EnsureResumeProfileAsync(snapshot.Resume, snapshot.Id, cancellationToken);
         var context = resumeContextBuilder.BuildInterviewQuestionContext(
-            snapshot.Role, snapshot.Seniority, snapshot.JobDescription?.Content, profile);
+            snapshot.Role, snapshot.Seniority, snapshot.InterviewType, snapshot.Difficulty, snapshot.JobDescription?.Content, profile);
         var generated = await aiProvider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.first-question", context, snapshot.Id), cancellationToken);
         if (string.IsNullOrWhiteSpace(generated.Content) || generated.Content.Length > 2_000) throw InvalidAiOutput();
 
@@ -850,6 +859,104 @@ public sealed partial class PracticeService(
             scores.Any(item => item.Score is < 0 or > 100 || string.IsNullOrWhiteSpace(item.Evidence))) throw InvalidAiOutput();
     }
 
+    private static StarEvaluation ValidateAndNormalizeStar(StarEvaluation? star, string interviewType, string question)
+    {
+        if (star is null) throw InvalidAiOutput();
+        if (!star.Applicable)
+            return star with
+            {
+                OverallScore = null,
+                Situation = null,
+                Task = null,
+                Action = null,
+                Result = null,
+                MissingElements = [],
+                Strengths = [],
+                CoachingTips = star.CoachingTips?.Take(3).Where(NotBlank).Select(Trim).ToArray() ?? []
+            };
+
+        var behavioral = string.Equals(interviewType.Trim(), "behavioral", StringComparison.OrdinalIgnoreCase) || LooksBehavioralQuestion(question);
+        var situation = ValidateStarComponent(star.Situation);
+        var task = ValidateStarComponent(star.Task);
+        var action = ValidateStarComponent(star.Action);
+        var result = ValidateStarComponent(star.Result);
+        if (!behavioral) throw InvalidAiOutput();
+
+        var missing = new[] { ("situation", situation), ("task", task), ("action", action), ("result", result) }
+            .Where(item => !item.Item2.Detected || item.Item2.Score < 60)
+            .Select(item => item.Item1)
+            .Concat(star.MissingElements ?? [])
+            .Where(value => value is "situation" or "task" or "action" or "result")
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        return star with
+        {
+            OverallScore = WeightedStarScore(situation, task, action, result),
+            Situation = situation,
+            Task = task,
+            Action = action,
+            Result = result,
+            MissingElements = missing,
+            Strengths = star.Strengths?.Where(NotBlank).Select(Trim).Take(3).ToArray() ?? [],
+            CoachingTips = star.CoachingTips?.Where(NotBlank).Select(Trim).Take(3).ToArray() ?? []
+        };
+    }
+
+    private static StarComponentEvaluation ValidateStarComponent(StarComponentEvaluation? component)
+    {
+        if (component is null || component.Score is < 0 or > 100 || string.IsNullOrWhiteSpace(component.Feedback)) throw InvalidAiOutput();
+        if (component.Detected && string.IsNullOrWhiteSpace(component.Evidence)) throw InvalidAiOutput();
+        return component with { Evidence = Trim(component.Evidence), Feedback = Trim(component.Feedback) };
+    }
+
+    private static bool LooksBehavioralQuestion(string question)
+    {
+        var normalized = question.ToLowerInvariant();
+        return BehavioralQuestionSignals.Any(normalized.Contains);
+    }
+
+    private static int WeightedStarScore(StarComponentEvaluation situation, StarComponentEvaluation task, StarComponentEvaluation action, StarComponentEvaluation result) =>
+        (int)Math.Round(situation.Score * .20 + task.Score * .20 + action.Score * .35 + result.Score * .25);
+
+    private static StarReportSummary? BuildStarSummary(IEnumerable<InterviewAnswer> answers)
+    {
+        var stars = answers.Select(answer =>
+            {
+                try { return JsonSerializer.Deserialize<AnswerEvaluation>(answer.Evaluation, JsonOptions)?.Star; }
+                catch (JsonException) { return null; }
+            })
+            .Where(star => star?.Applicable == true && star.Situation is not null && star.Task is not null && star.Action is not null && star.Result is not null)
+            .Cast<StarEvaluation>()
+            .ToArray();
+        if (stars.Length == 0) return null;
+
+        var situation = Average(stars.Select(star => star.Situation!.Score));
+        var task = Average(stars.Select(star => star.Task!.Score));
+        var action = Average(stars.Select(star => star.Action!.Score));
+        var result = Average(stars.Select(star => star.Result!.Score));
+        var components = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["situation"] = situation,
+            ["task"] = task,
+            ["action"] = action,
+            ["result"] = result
+        };
+
+        return new StarReportSummary(
+            stars.Length,
+            Average(stars.Select(star => star.OverallScore ?? WeightedStarScore(star.Situation!, star.Task!, star.Action!, star.Result!))),
+            new StarComponentAverages(situation, task, action, result),
+            components.MaxBy(item => item.Value).Key,
+            components.MinBy(item => item.Value).Key,
+            stars.SelectMany(star => star.MissingElements ?? []).Where(NotBlank).Select(Trim).Distinct(StringComparer.Ordinal).Take(3).ToArray(),
+            stars.SelectMany(star => star.CoachingTips ?? []).Where(NotBlank).Select(Trim).Take(3).ToArray());
+    }
+
+    private static int Average(IEnumerable<int> values) => (int)Math.Round(values.Average());
+    private static bool NotBlank(string? value) => !string.IsNullOrWhiteSpace(value);
+    private static string Trim(string value) => value.Trim();
+
     private static int WeightedScore(IReadOnlyCollection<RubricScore> scores)
     {
         var values = scores.ToDictionary(item => item.Criterion, item => item.Score, StringComparer.Ordinal);
@@ -931,8 +1038,9 @@ public sealed partial class PracticeService(
             questions.OrderBy(item => item.Sequence).Select(MapQuestion).ToArray(), answers.OrderBy(item => item.CreatedAt).Select(MapAnswer).ToArray(), session.CreatedAt, session.UpdatedAt);
     private static QuestionView MapQuestion(InterviewQuestion question) => new(question.Id, question.Sequence, question.Content, question.CreatedAt);
     private static AnswerView MapAnswer(InterviewAnswer answer) => new(answer.Id, answer.QuestionId, answer.Content, answer.DurationSeconds, ParseJson(answer.Evaluation), answer.CreatedAt);
-    private static ReportView MapReport(InterviewReport report) => new(report.Id, report.InterviewSessionId, report.OverallScore,
-        ParseJson(report.Rubric) ?? default(JsonElement), ParseJson(report.Strengths) ?? default(JsonElement), ParseJson(report.Gaps) ?? default(JsonElement), ParseJson(report.ActionPlan) ?? default(JsonElement), report.Disclaimer, report.CreatedAt);
+    private static ReportView MapReport(InterviewReport report, IEnumerable<InterviewAnswer>? answers = null) => new(report.Id, report.InterviewSessionId, report.OverallScore,
+        ParseJson(report.Rubric) ?? default(JsonElement), ParseJson(report.Strengths) ?? default(JsonElement), ParseJson(report.Gaps) ?? default(JsonElement),
+        ParseJson(report.ActionPlan) ?? default(JsonElement), report.Disclaimer, report.CreatedAt, BuildStarSummary(answers ?? []));
     private static JsonElement? ParseJson(string? value) => value is null ? null : JsonSerializer.Deserialize<JsonElement>(value);
 
     private static BusinessException Validation(string message, string code = "VALIDATION_ERROR") => new(code, message, BusinessErrorKind.Validation);
