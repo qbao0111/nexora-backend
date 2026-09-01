@@ -99,7 +99,7 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
    }
    ```
 
-   If Development uses `Billing:Payment:Provider=momo`, redirect the browser to `checkoutUrl`, then poll `GET /checkout-sessions/{orderId}` after the user returns. If IPN is delayed, call `POST /checkout-sessions/{orderId}/refresh` with Bearer auth to reconcile the pending order from MoMo sandbox. If Development uses `fake`, the owner can still complete the fake webhook helper; the browser never receives the fake webhook secret. After payment completion, refetch `/me`.
+   If Development uses `Billing:Payment:Provider=momo`, redirect the browser to `checkoutUrl`, then poll `GET /checkout-sessions/{orderId}` after the user returns. The backend may be configured with MoMo `captureWallet` for QR/Test App checkout or `payWithCC` for browser-based sandbox card checkout; the frontend flow is unchanged. If IPN is delayed, call `POST /checkout-sessions/{orderId}/refresh` with Bearer auth to reconcile the pending order from MoMo sandbox. If Development uses `fake`, the owner can still complete the fake webhook helper; the browser never receives the fake webhook secret. After payment completion, refetch `/me`.
 
 2. `POST /interviews` (`201`, Bearer + idempotency key):
 

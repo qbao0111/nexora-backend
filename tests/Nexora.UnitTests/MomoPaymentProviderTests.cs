@@ -81,7 +81,7 @@ public sealed class MomoPaymentProviderTests
         const string payUrl = "https://test-payment.momo.vn/v2/gateway/pay?s=123";
         const long responseTime = 1700000000000;
 
-        var rawSig = $"accessKey=access&amount={amount}&message=Success&orderId={providerTxId}&partnerCode=MOMO&payUrl={payUrl}&requestId={requestId}&responseTime={responseTime}&resultCode=0";
+        var rawSig = $"accessKey=access&amount={amount}&orderId={providerTxId}&partnerCode=MOMO&payUrl={payUrl}&requestId={requestId}&responseTime={responseTime}&resultCode=0";
         var signature = MomoPaymentProvider.Sign(rawSig, "secret");
 
         var responseJson = JsonSerializer.Serialize(new
@@ -107,6 +107,104 @@ public sealed class MomoPaymentProviderTests
         Assert.Equal("momo", checkout.Provider);
         Assert.Equal(providerTxId, checkout.ProviderTransactionId);
         Assert.Equal(payUrl, checkout.CheckoutUrl);
+    }
+
+    [Fact]
+    public async Task CreateCheckoutWithoutResponseSignatureStillAcceptsValidMoMoSandboxResponse()
+    {
+        var orderId = Guid.NewGuid();
+        var providerTxId = MomoPaymentProvider.ToMomoOrderId(orderId);
+        var requestId = MomoPaymentProvider.ToMomoRequestId(orderId);
+        const long amount = 49000;
+        const string payUrl = "https://test-payment.momo.vn/v2/gateway/pay?s=123";
+
+        var responseJson = JsonSerializer.Serialize(new
+        {
+            partnerCode = "MOMO",
+            requestId,
+            orderId = providerTxId,
+            amount,
+            resultCode = 0,
+            message = "Success",
+            payUrl,
+            responseTime = 1700000000000L
+        });
+
+        var handler = new TestHttpMessageHandler(HttpStatusCode.OK, responseJson);
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://test-payment.momo.vn") };
+        var provider = new MomoPaymentProvider(httpClient, Options.Create(TestOptions));
+
+        var checkout = await provider.CreateCheckoutAsync(
+            new PaymentOrderRequest(orderId, amount, "VND", providerTxId), CancellationToken.None);
+
+        Assert.Equal(payUrl, checkout.CheckoutUrl);
+    }
+
+    [Fact]
+    public async Task PayWithCreditCardCreateCheckoutSendsUserInfoAndCreditCardRequestType()
+    {
+        var orderId = Guid.NewGuid();
+        var providerTxId = MomoPaymentProvider.ToMomoOrderId(orderId);
+        var requestId = MomoPaymentProvider.ToMomoRequestId(orderId);
+        const long amount = 189000;
+        const string payUrl = "https://test-payment.momo.vn/v2/gateway/pay?t=card";
+        var responseJson = JsonSerializer.Serialize(new
+        {
+            partnerCode = "MOMO",
+            requestId,
+            orderId = providerTxId,
+            amount,
+            resultCode = 0,
+            message = "Success",
+            payUrl,
+            responseTime = 1700000000000L
+        });
+        string? createBody = null;
+        var handler = new TestHttpMessageHandler(HttpStatusCode.OK, responseJson, body => createBody = body);
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://test-payment.momo.vn") };
+        var options = new MomoOptions
+        {
+            PartnerCode = TestOptions.PartnerCode,
+            AccessKey = TestOptions.AccessKey,
+            SecretKey = TestOptions.SecretKey,
+            RedirectUrl = TestOptions.RedirectUrl,
+            IpnUrl = TestOptions.IpnUrl,
+            RequestType = MomoRequestTypes.PayWithCreditCard,
+            TestCustomerEmail = "qb@example.test"
+        };
+        var provider = new MomoPaymentProvider(httpClient, Options.Create(options));
+
+        var checkout = await provider.CreateCheckoutAsync(
+            new PaymentOrderRequest(orderId, amount, "VND", providerTxId), CancellationToken.None);
+
+        Assert.Equal(payUrl, checkout.CheckoutUrl);
+        Assert.NotNull(createBody);
+        using var document = JsonDocument.Parse(createBody);
+        var root = document.RootElement;
+        Assert.Equal("payWithCC", root.GetProperty("requestType").GetString());
+        Assert.Equal("qb@example.test", root.GetProperty("userInfo").GetProperty("email").GetString());
+        var rawSig = $"accessKey=access&amount={amount}&extraData=&ipnUrl=https://api.test/api/v1/webhooks/payments/momo&orderId={providerTxId}&orderInfo=Nexora VND {amount}&partnerCode=MOMO&redirectUrl=https://frontend.test/payment-return&requestId={requestId}&requestType=payWithCC";
+        Assert.Equal(MomoPaymentProvider.Sign(rawSig, "secret"), root.GetProperty("signature").GetString());
+    }
+
+    [Fact]
+    public async Task ProviderAccessDeniedResponseReturnsClearPaymentError()
+    {
+        var orderId = Guid.NewGuid();
+        var providerTxId = MomoPaymentProvider.ToMomoOrderId(orderId);
+        var responseJson = JsonSerializer.Serialize(new
+        {
+            resultCode = 11,
+            message = "Quyền truy cập bị từ chối. Vui lòng liên hệ MoMo để biết thêm chi tiết."
+        });
+        var handler = new TestHttpMessageHandler(HttpStatusCode.BadRequest, responseJson);
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://test-payment.momo.vn") };
+        var provider = new MomoPaymentProvider(httpClient, Options.Create(TestOptions));
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() =>
+            provider.CreateCheckoutAsync(new PaymentOrderRequest(orderId, 49000, "VND", providerTxId), CancellationToken.None));
+
+        Assert.Equal("PAYMENT_PROVIDER_ACCESS_DENIED", exception.Code);
     }
 
     [Fact]
@@ -150,7 +248,7 @@ public sealed class MomoPaymentProviderTests
         const string payUrl = "https://evil-phishing.com/pay";
         const long responseTime = 1700000000000;
 
-        var rawSig = $"accessKey=access&amount={amount}&message=Success&orderId={providerTxId}&partnerCode=MOMO&payUrl={payUrl}&requestId={requestId}&responseTime={responseTime}&resultCode=0";
+        var rawSig = $"accessKey=access&amount={amount}&orderId={providerTxId}&partnerCode=MOMO&payUrl={payUrl}&requestId={requestId}&responseTime={responseTime}&resultCode=0";
         var signature = MomoPaymentProvider.Sign(rawSig, "secret");
 
         var responseJson = JsonSerializer.Serialize(new
@@ -185,7 +283,7 @@ public sealed class MomoPaymentProviderTests
         const string payUrl = "https://payment.momo.vn/v2/gateway/pay?s=123";
         const long responseTime = 1700000000000;
 
-        var rawSig = $"accessKey=access&amount={amount}&message=Success&orderId={providerTxId}&partnerCode=MOMO&payUrl={payUrl}&requestId={requestId}&responseTime={responseTime}&resultCode=0";
+        var rawSig = $"accessKey=access&amount={amount}&orderId={providerTxId}&partnerCode=MOMO&payUrl={payUrl}&requestId={requestId}&responseTime={responseTime}&resultCode=0";
         var signature = MomoPaymentProvider.Sign(rawSig, "secret");
 
         var responseJson = JsonSerializer.Serialize(new
@@ -247,15 +345,17 @@ public sealed class MomoPaymentProviderTests
         Assert.Equal($"momo:{providerTxId}:{transId}:0", ev.ProviderEventId);
     }
 
-    private sealed class TestHttpMessageHandler(HttpStatusCode statusCode, string content) : HttpMessageHandler
+    private sealed class TestHttpMessageHandler(HttpStatusCode statusCode, string content, Action<string>? captureBody = null) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (captureBody is not null && request.Content is not null)
+                captureBody(await request.Content.ReadAsStringAsync(cancellationToken));
             var response = new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent(content, Encoding.UTF8, "application/json")
             };
-            return Task.FromResult(response);
+            return response;
         }
     }
 

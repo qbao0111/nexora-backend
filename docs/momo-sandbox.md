@@ -16,6 +16,19 @@ dotnet user-secrets set "Billing:MoMo:RedirectUrl" "http://localhost:3000/paymen
 dotnet user-secrets set "Billing:MoMo:IpnUrl" "PUBLIC_TUNNEL_URL/api/v1/webhooks/payments/momo" --project src/Nexora.Api
 ```
 
+The default MoMo request type is `captureWallet`, which shows the QR wallet page and requires the MoMo Test App. For desktop-only sandbox testing with MoMo test cards, switch the checkout request type to credit card:
+
+```powershell
+dotnet user-secrets set "Billing:MoMo:RequestType" "payWithCC" --project src/Nexora.Api
+dotnet user-secrets set "Billing:MoMo:TestCustomerEmail" "qb@example.test" --project src/Nexora.Api
+```
+
+To switch back to the QR wallet page:
+
+```powershell
+dotnet user-secrets set "Billing:MoMo:RequestType" "captureWallet" --project src/Nexora.Api
+```
+
 `Nexora.Api` and `Nexora.Worker` share the `Nexora.LocalDevelopment` user-secrets id. Restart both after changing secrets.
 
 ## Local flow
@@ -24,7 +37,7 @@ dotnet user-secrets set "Billing:MoMo:IpnUrl" "PUBLIC_TUNNEL_URL/api/v1/webhooks
 2. Login from the frontend.
 3. `GET /api/v1/plans`.
 4. `POST /api/v1/checkout-sessions` with a server-owned paid `planPriceId` and an `Idempotency-Key`.
-5. Redirect the browser to `data.checkoutUrl`.
+5. Redirect the browser to `data.checkoutUrl`. `captureWallet` shows a QR page for MoMo Test App; `payWithCC` shows the MoMo sandbox card form.
 6. MoMo calls `POST /api/v1/webhooks/payments/momo` through the configured public tunnel URL.
 7. Frontend polls `GET /api/v1/checkout-sessions/{orderId}` and refetches `/me` when status becomes `fulfilled`.
 8. If IPN is delayed during manual testing, call `POST /api/v1/checkout-sessions/{orderId}/refresh` to query MoMo sandbox and reconcile the same order.
@@ -32,6 +45,7 @@ dotnet user-secrets set "Billing:MoMo:IpnUrl" "PUBLIC_TUNNEL_URL/api/v1/webhooks
 ## Safety notes
 
 - Only `Billing:MoMo:Environment=Sandbox` is supported in this code path.
+- `Billing:MoMo:RequestType` supports `captureWallet` and `payWithCC` for sandbox testing.
 - Production still fails closed for payment before DEC-02.
 - Amount/currency come from the server-owned plan price. The frontend must never submit price or quota.
 - The webhook returns `204 No Content` for processed/duplicate valid deliveries.
