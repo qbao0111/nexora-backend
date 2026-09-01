@@ -82,7 +82,8 @@ public sealed partial class BillingService(
         };
 
         Order targetOrder;
-        await using (var transaction = await BeginTransactionAsync(cancellationToken))
+        var transaction = await BeginTransactionAsync(cancellationToken);
+        if (transaction is null)
         {
             existing = await FindCheckoutAsync(userId, key, fingerprint, cancellationToken);
             if (existing is not null)
@@ -110,12 +111,60 @@ public sealed partial class BillingService(
                 }
                 catch (DbUpdateException)
                 {
-                    if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
+                    dbContext.ChangeTracker.Clear();
                     var reloaded = await FindCheckoutAsync(userId, key, fingerprint, cancellationToken);
                     if (reloaded is null) throw;
                     targetOrder = reloaded;
                 }
-                await CommitAsync(transaction, cancellationToken);
+            }
+        }
+        else
+        {
+            var rolledBack = false;
+            DbUpdateException? capturedConflict = null;
+            await using (transaction)
+            {
+                existing = await FindCheckoutAsync(userId, key, fingerprint, cancellationToken);
+                if (existing is not null)
+                {
+                    targetOrder = existing;
+                }
+                else
+                {
+                    dbContext.Orders.Add(order);
+                    dbContext.IdempotencyRecords.Add(new IdempotencyRecord
+                    {
+                        Id = Guid.NewGuid(),
+                        ActorId = userId,
+                        Operation = "checkout.create",
+                        Key = key,
+                        RequestFingerprint = fingerprint,
+                        ResourceId = order.Id,
+                        CreatedAt = now
+                    });
+                    dbContext.OutboxEvents.Add(CreateOutbox("CheckoutCreated", "order", order.Id, new { order.Id, order.UserId }, now));
+                    try
+                    {
+                        await dbContext.SaveChangesAsync(cancellationToken);
+                        await transaction.CommitAsync(cancellationToken);
+                        targetOrder = order;
+                    }
+                    catch (DbUpdateException ex)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        rolledBack = true;
+                        capturedConflict = ex;
+                        targetOrder = null!;
+                    }
+                }
+            }
+
+            if (rolledBack)
+            {
+                dbContext.ChangeTracker.Clear();
+                var reloaded = await FindCheckoutAsync(userId, key, fingerprint, cancellationToken);
+                if (reloaded is null) throw (Exception?)capturedConflict ?? new InvalidOperationException("Checkout record missing after conflict.");
+                targetOrder = reloaded;
             }
         }
 

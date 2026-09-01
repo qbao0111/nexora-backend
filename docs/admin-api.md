@@ -63,7 +63,7 @@ All administrative operations require administrative privileges. Mutation endpoi
 - **Response 201:** Returns created `AdminPlanView`.
 
 ### 1.3 Update Plan
-`PUT /api/v1/admin/plans/{planId}`
+`PATCH /api/v1/admin/plans/{id}`
 - **Request Body:**
   ```json
   {
@@ -77,7 +77,7 @@ All administrative operations require administrative privileges. Mutation endpoi
 - **Response 200:** Returns updated `AdminPlanView`.
 
 ### 1.4 Add Plan Price
-`POST /api/v1/admin/plans/{planId}/prices`
+`POST /api/v1/admin/plans/{id}/prices`
 - **Request Body:**
   ```json
   {
@@ -89,18 +89,23 @@ All administrative operations require administrative privileges. Mutation endpoi
   ```
 - **Response 201:** Returns created `AdminPlanPriceView`.
 
-### 1.5 Update Plan Price Status
-`PUT /api/v1/admin/plans/{planId}/prices/{priceId}`
+### 1.5 Update Plan Price
+`PATCH /api/v1/admin/plan-prices/{priceId}`
 - **Request Body:**
   ```json
   {
+    "amountMinor": 299000,
+    "currency": "VND",
+    "durationDays": 30,
+    "interviewQuota": 10,
     "isActive": false
   }
   ```
-- **Response 200:** Returns updated `AdminPlanPriceView`.
+- **Response 200:** Returns updated `AdminPlanView`.
+- **Note:** Prices with historical orders can be deactivated (`isActive = false`), but their commercial fields (`amountMinor`, `currency`, `durationDays`, `interviewQuota`) are immutable.
 
 ### 1.6 Update Price Feature Matrix
-`PUT /api/v1/admin/plans/{planId}/prices/{priceId}/features`
+`PUT /api/v1/admin/plan-prices/{priceId}/features`
 - Configures feature limits for this price tier.
 - **Request Body:**
   ```json
@@ -118,24 +123,30 @@ All administrative operations require administrative privileges. Mutation endpoi
   - `enabled: false`: Feature disabled for this price tier.
   - `enabled: true, limit: N`: Feature limited to `N` uses.
   - `enabled: true, limit: null`: Feature unlimited.
+  - Generic updates targeting `interview` are rejected (`INTERVIEW_FEATURE_IMMUTABLE`); interview quota is set on the plan price.
 - **Snapshot invariant:** Modifying plan price features updates future checkouts and grants; existing active user entitlements retain their purchase snapshot.
+
+### 1.7 List Feature Definitions
+`GET /api/v1/admin/feature-definitions`
+- Lists all platform feature definitions (`id`, `code`, `name`, `description`, `isActive`, `sortOrder`).
+- **Response 200:** Returns list of feature definitions.
 
 ---
 
 ## 2. Scenario Library Management
 
 ### 2.1 Category Management
-- `GET /api/v1/admin/categories` — List all scenario categories.
-- `POST /api/v1/admin/categories` — Create category (`slug`, `name`, `description`, `sortOrder`).
-- `PUT /api/v1/admin/categories/{categoryId}` — Update category.
+- `GET /api/v1/admin/scenario-categories` — List all scenario categories.
+- `POST /api/v1/admin/scenario-categories` — Create category (`slug`, `name`, `description`).
+- `PATCH /api/v1/admin/scenario-categories/{id}` — Update category (`name`, `description`, `isActive`).
 
 ### 2.2 Scenario Management
-- `GET /api/v1/admin/scenarios` — List scenarios with filters (`query`, `categoryId`, `difficulty`, `competency`, `status`, `page`, `pageSize`). Supports seeing `draft`, `published`, and `archived` states.
-- `POST /api/v1/admin/scenarios` — Create scenario (`slug`, `title`, `summary`, `categoryId`, `difficulty`, `competency`, `estimatedMinutes`, `content`, `sortOrder`). Initial status: `draft`.
-- `GET /api/v1/admin/scenarios/{scenarioId}` — Get scenario detail including content.
-- `PUT /api/v1/admin/scenarios/{scenarioId}` — Update scenario attributes and body.
-- `POST /api/v1/admin/scenarios/{scenarioId}/publish` — Transition scenario to `published` (sets `publishedAt`).
-- `POST /api/v1/admin/scenarios/{scenarioId}/archive` — Transition scenario to `archived`.
+- `GET /api/v1/admin/scenarios` — List scenarios with filters (`query`, `categoryId`, `difficulty`, `competency`, `status`). Supports seeing `draft`, `published`, and `archived` states.
+- `POST /api/v1/admin/scenarios` — Create scenario (`slug`, `title`, `summary`, `categoryId`, `difficulty`, `competency`, `estimatedMinutes`, `content`). Slug is required and validated. Initial status: `draft`.
+- `GET /api/v1/admin/scenarios/{id}` — Get scenario detail including content.
+- `PATCH /api/v1/admin/scenarios/{id}` — Update scenario mutable attributes (`title`, `summary`, `categoryId`, `difficulty`, `competency`, `estimatedMinutes`, `content`). Slug remains unchanged and does not need to be supplied.
+- `POST /api/v1/admin/scenarios/{id}/publish` — Transition scenario to `published` (sets `publishedAt`).
+- `POST /api/v1/admin/scenarios/{id}/archive` — Transition scenario to `archived`.
 
 ---
 

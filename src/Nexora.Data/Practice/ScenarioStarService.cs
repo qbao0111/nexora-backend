@@ -131,6 +131,9 @@ public sealed partial class ScenarioStarService(
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(transaction, cancellationToken);
+            attempt.Scenario = scenario;
+            return MapScenarioAttempt(attempt);
         }
         catch (DbUpdateException)
         {
@@ -146,16 +149,13 @@ public sealed partial class ScenarioStarService(
             }
             throw;
         }
-        await CommitAsync(transaction, cancellationToken);
-        attempt.Scenario = scenario;
-        return MapScenarioAttempt(attempt);
     }
 
     public async Task<ScenarioAttemptView> SubmitAttemptAsync(Guid userId, Guid attemptId, string answer, string idempotencyKey, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(answer) || answer.Trim().Length > 12_000) throw Validation("Câu trả lời không hợp lệ.");
         var key = RequireKey(idempotencyKey);
-        var fingerprint = attemptId.ToString("N");
+        var fingerprint = Fingerprint(attemptId, answer.Trim());
 
         var prior = await dbContext.IdempotencyRecords.AsNoTracking().SingleOrDefaultAsync(
             item => item.ActorId == userId && item.Operation == "scenario-attempt.submit" && item.Key == key, cancellationToken);
@@ -165,12 +165,6 @@ public sealed partial class ScenarioStarService(
                 throw new BusinessException("IDEMPOTENCY_CONFLICT", "Idempotency-Key đã được dùng với dữ liệu khác.", BusinessErrorKind.Conflict);
             return await GetAttemptAsync(userId, attemptId, cancellationToken);
         }
-
-        var attempt = await dbContext.ScenarioAttempts.Include(item => item.Scenario)
-            .SingleOrDefaultAsync(item => item.Id == attemptId && item.UserId == userId, cancellationToken)
-            ?? throw new BusinessException("SCENARIO_ATTEMPT_NOT_FOUND", "Không tìm thấy bài làm.", BusinessErrorKind.NotFound);
-        if (attempt.Status != PracticeFeatureValues.Draft)
-            throw new BusinessException("SCENARIO_ATTEMPT_INVALID_STATE", "Bài làm không ở trạng thái hợp lệ.", BusinessErrorKind.Conflict);
 
         await featureEntitlementService.RequireEnabledAsync(userId, FeatureValues.Scenario, cancellationToken);
         var access = await featureEntitlementService.GetAsync(userId, FeatureValues.Scenario, cancellationToken);
@@ -184,6 +178,13 @@ public sealed partial class ScenarioStarService(
                 throw new BusinessException("IDEMPOTENCY_CONFLICT", "Idempotency-Key đã được dùng với dữ liệu khác.", BusinessErrorKind.Conflict);
             return await GetAttemptAsync(userId, attemptId, cancellationToken);
         }
+
+        var attempt = await FindScenarioAttemptForUpdateAsync(attemptId, cancellationToken)
+            ?? throw new BusinessException("SCENARIO_ATTEMPT_NOT_FOUND", "Không tìm thấy bài làm.", BusinessErrorKind.NotFound);
+        if (attempt.UserId != userId)
+            throw new BusinessException("SCENARIO_ATTEMPT_NOT_FOUND", "Không tìm thấy bài làm.", BusinessErrorKind.NotFound);
+        if (attempt.Status != PracticeFeatureValues.Draft)
+            throw new BusinessException("SCENARIO_ATTEMPT_INVALID_STATE", "Bài làm không ở trạng thái hợp lệ.", BusinessErrorKind.Conflict);
 
         Guid? reservationId = null;
         if (access.Limit is not null)
@@ -218,9 +219,26 @@ public sealed partial class ScenarioStarService(
             ResourceId = attempt.Id,
             CreatedAt = now
         });
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await CommitAsync(transaction, cancellationToken);
-        return MapScenarioAttempt(attempt);
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(transaction, cancellationToken);
+            return MapScenarioAttempt(attempt);
+        }
+        catch (DbUpdateException)
+        {
+            if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
+            dbContext.ChangeTracker.Clear();
+            prior = await dbContext.IdempotencyRecords.AsNoTracking().SingleOrDefaultAsync(
+                item => item.ActorId == userId && item.Operation == "scenario-attempt.submit" && item.Key == key, cancellationToken);
+            if (prior is not null)
+            {
+                if (!string.Equals(prior.RequestFingerprint, fingerprint, StringComparison.Ordinal))
+                    throw new BusinessException("IDEMPOTENCY_CONFLICT", "Idempotency-Key đã được dùng với dữ liệu khác.", BusinessErrorKind.Conflict);
+                return await GetAttemptAsync(userId, attemptId, cancellationToken);
+            }
+            throw;
+        }
     }
 
     public async Task<ScenarioAttemptView> GetAttemptAsync(Guid userId, Guid attemptId, CancellationToken cancellationToken)
@@ -258,7 +276,6 @@ public sealed partial class ScenarioStarService(
         var access = await featureEntitlementService.GetAsync(userId, FeatureValues.StarBuilder, cancellationToken);
 
         var attemptId = Guid.NewGuid();
-
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         prior = await dbContext.IdempotencyRecords.AsNoTracking().SingleOrDefaultAsync(
             item => item.ActorId == userId && item.Operation == "star-attempt.create" && item.Key == key, cancellationToken);
@@ -272,9 +289,31 @@ public sealed partial class ScenarioStarService(
         Guid? reservationId = null;
         if (access.Limit is not null)
         {
-            var reservation = await featureEntitlementService.ReserveAsync(userId, FeatureValues.StarBuilder, attemptId.ToString("N"),
-                $"star:create:{key}", cancellationToken);
-            reservationId = reservation.EventId;
+            try
+            {
+                var reservation = await featureEntitlementService.ReserveAsync(userId, FeatureValues.StarBuilder, attemptId.ToString("N"),
+                    $"star:create:{key}", cancellationToken);
+                reservationId = reservation.EventId;
+            }
+            catch (BusinessException ex) when (ex.Code == "IDEMPOTENCY_CONFLICT")
+            {
+                if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
+                dbContext.ChangeTracker.Clear();
+                for (var i = 0; i < 10; i++)
+                {
+                    prior = await dbContext.IdempotencyRecords.AsNoTracking().SingleOrDefaultAsync(
+                        item => item.ActorId == userId && item.Operation == "star-attempt.create" && item.Key == key, cancellationToken);
+                    if (prior is not null) break;
+                    await Task.Delay(25, cancellationToken);
+                }
+                if (prior is not null)
+                {
+                    if (!string.Equals(prior.RequestFingerprint, fingerprint, StringComparison.Ordinal))
+                        throw new BusinessException("IDEMPOTENCY_CONFLICT", "Idempotency-Key đã được dùng với dữ liệu khác.", BusinessErrorKind.Conflict);
+                    return await GetStarAttemptAsync(userId, prior.ResourceId, cancellationToken);
+                }
+                throw;
+            }
         }
 
         var now = timeProvider.GetUtcNow();
@@ -316,13 +355,20 @@ public sealed partial class ScenarioStarService(
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(transaction, cancellationToken);
+            return MapStarAttempt(attempt);
         }
         catch (DbUpdateException)
         {
             if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
             dbContext.ChangeTracker.Clear();
-            prior = await dbContext.IdempotencyRecords.AsNoTracking().SingleOrDefaultAsync(
-                item => item.ActorId == userId && item.Operation == "star-attempt.create" && item.Key == key, cancellationToken);
+            for (var i = 0; i < 10; i++)
+            {
+                prior = await dbContext.IdempotencyRecords.AsNoTracking().SingleOrDefaultAsync(
+                    item => item.ActorId == userId && item.Operation == "star-attempt.create" && item.Key == key, cancellationToken);
+                if (prior is not null) break;
+                await Task.Delay(25, cancellationToken);
+            }
             if (prior is not null)
             {
                 if (!string.Equals(prior.RequestFingerprint, fingerprint, StringComparison.Ordinal))
@@ -331,8 +377,6 @@ public sealed partial class ScenarioStarService(
             }
             throw;
         }
-        await CommitAsync(transaction, cancellationToken);
-        return MapStarAttempt(attempt);
     }
 
     public async Task<StarAttemptView> GetAsync(Guid userId, Guid attemptId, CancellationToken cancellationToken) =>
@@ -605,6 +649,18 @@ public sealed partial class ScenarioStarService(
 
     private static string Fingerprint(params object?[] values) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(values)))).ToLowerInvariant();
+
+    private async Task<ScenarioAttempt?> FindScenarioAttemptForUpdateAsync(Guid attemptId, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.IsNpgsql())
+            return await dbContext.ScenarioAttempts
+                .FromSqlInterpolated($"SELECT * FROM scenario_attempts WHERE \"Id\" = {attemptId} FOR UPDATE")
+                .Include(item => item.Scenario)
+                .SingleOrDefaultAsync(cancellationToken);
+        return await dbContext.ScenarioAttempts
+            .Include(item => item.Scenario)
+            .SingleOrDefaultAsync(item => item.Id == attemptId, cancellationToken);
+    }
 
     private async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
     {

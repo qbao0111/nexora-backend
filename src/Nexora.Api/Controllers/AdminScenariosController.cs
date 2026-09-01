@@ -56,8 +56,8 @@ public sealed class AdminScenariosController(IAdminService adminService) : Contr
     [HttpPatch("scenarios/{id:guid}")]
     public async Task<ActionResult<ApiResponse<AdminScenarioResponse>>> UpdateScenario(Guid id, ScenarioUpdateRequest request, CancellationToken cancellationToken)
     {
-        var scenario = await adminService.UpdateScenarioAsync(User.GetRequiredUserId(), id, new ScenarioAdminWrite(
-            string.Empty, request.Title, request.Summary, request.CategoryId, request.Difficulty, request.Competency, request.EstimatedMinutes, request.Content), cancellationToken);
+        var scenario = await adminService.UpdateScenarioAsync(User.GetRequiredUserId(), id, new ScenarioAdminUpdate(
+            request.Title, request.Summary, request.CategoryId, request.Difficulty, request.Competency, request.EstimatedMinutes, request.Content), cancellationToken);
         return Ok(new ApiResponse<AdminScenarioResponse>(Map(scenario)));
     }
 
