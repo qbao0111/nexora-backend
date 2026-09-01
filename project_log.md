@@ -258,3 +258,12 @@ This log records completed implementation milestones and verification evidence. 
 - STAR overall score is computed server-side from validated components using 20/20/35/25 weighting. Follow-up generation receives weak/missing STAR signals and report responses include a deterministic optional `starSummary` when applicable answers exist.
 - Bumped only the interview rubric/schema version to `interview-rubric-star-v2` / `phase3-star-v2`; ResumeProfile, extraction, quota, FakePayment and the interview state machine remain unchanged.
 - Verification: restore/build passed with 0 warnings/errors; 43 retained unit/integration tests passed; EF Core reported no pending model changes. NuGet reported no vulnerable direct/transitive packages and secret-pattern review found only documented placeholders/development secret names, with no live secret committed.
+
+## 2026-09-01 — MoMo sandbox payment adapter
+
+- Added a provider-neutral MoMo sandbox payment adapter behind `IPaymentProvider` while preserving `FakePaymentProvider` as the default/fallback-free explicit development payment adapter.
+- Checkout creation now commits a stable local order/reference before the external provider call, then stores the returned hosted checkout URL; retrying the same idempotency key reuses the same order/reference.
+- Added owner-scoped checkout status and refresh endpoints so the frontend can poll payment state and manually reconcile delayed sandbox IPN by querying MoMo.
+- MoMo IPN verification validates the signed JSON payload, local order reference, amount and VND currency before fulfillment. Duplicate valid deliveries stay idempotent and return `204 No Content`.
+- Documented MoMo sandbox setup in `docs/momo-sandbox.md` and updated the frontend integration payment flow. DEC-02 remains unresolved and production payment remains fail-closed.
+- Verification: restore/build passed with 0 warnings/errors; 47 retained unit/integration tests passed; EF Core reported no pending model changes; NuGet reported no vulnerable direct/transitive packages. Scoped formatting passed for changed files; full-repo format remains blocked by the pre-existing `InitialIdentityFoundation` migration formatting issue that must not be rewritten casually.

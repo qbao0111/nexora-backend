@@ -21,11 +21,12 @@ public sealed class FakePaymentProvider(IOptions<FakePaymentOptions> options, Ti
     private readonly FakePaymentOptions _options = options.Value;
     public string ProviderName => "fake";
 
+    public string CreateProviderTransactionId(Guid orderId) => $"fake_{orderId:N}";
+
     public Task<PaymentCheckout> CreateCheckoutAsync(PaymentOrderRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var transactionId = $"fake_{request.OrderId:N}";
-        return Task.FromResult(new PaymentCheckout(ProviderName, transactionId, $"/fake-payments/{transactionId}"));
+        return Task.FromResult(new PaymentCheckout(ProviderName, request.ProviderTransactionId, $"/fake-payments/{request.ProviderTransactionId}"));
     }
 
     public Task<VerifiedPaymentEvent> VerifyWebhookAsync(string signature, string timestamp, ReadOnlyMemory<byte> body, CancellationToken cancellationToken)
@@ -55,8 +56,16 @@ public sealed class FakePaymentProvider(IOptions<FakePaymentOptions> options, Ti
             payload.EventId.Trim(),
             payload.OrderId,
             payload.TransactionId.Trim(),
+            payload.AmountMinor,
+            payload.Currency.Trim().ToUpperInvariant(),
             string.Equals(payload.Status, "paid", StringComparison.OrdinalIgnoreCase),
             payload.OccurredAt));
+    }
+
+    public Task<VerifiedPaymentEvent?> QueryPaymentAsync(PaymentOrderRequest request, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult<VerifiedPaymentEvent?>(null);
     }
 
     private static BusinessException InvalidWebhook() =>
@@ -65,5 +74,5 @@ public sealed class FakePaymentProvider(IOptions<FakePaymentOptions> options, Ti
     private static BusinessException InvalidPayload() =>
         new("INVALID_WEBHOOK_PAYLOAD", "Dữ liệu webhook thanh toán không hợp lệ.", BusinessErrorKind.Validation);
 
-    private sealed record FakeWebhookPayload(string EventId, Guid OrderId, string TransactionId, string Status, DateTimeOffset OccurredAt);
+    private sealed record FakeWebhookPayload(string EventId, Guid OrderId, string TransactionId, long AmountMinor, string Currency, string Status, DateTimeOffset OccurredAt);
 }

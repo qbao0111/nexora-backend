@@ -43,9 +43,36 @@ public static class DependencyInjection
         services.AddSingleton<IAiProvider>(provider => provider.GetRequiredService<GeminiAiProvider>());
         services.AddHttpClient<GeminiDocumentOcrProvider>();
         services.AddSingleton<IDocumentOcrProvider>(provider => provider.GetRequiredService<GeminiDocumentOcrProvider>());
+        var paymentProvider = configuration.GetValue($"{PaymentProviderOptions.SectionName}:Provider", "fake")?.Trim().ToLowerInvariant() ?? "fake";
+        services.AddOptions<PaymentProviderOptions>().Bind(configuration.GetSection(PaymentProviderOptions.SectionName))
+            .Validate(options => string.Equals(options.Provider, "fake", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(options.Provider, "momo", StringComparison.OrdinalIgnoreCase), "Billing:Payment:Provider must be fake or momo.")
+            .ValidateOnStart();
         services.AddOptions<FakePaymentOptions>().Bind(configuration.GetSection(FakePaymentOptions.SectionName))
             .Validate(options => options.TimestampToleranceMinutes is > 0 and <= 60, "Fake payment timestamp tolerance must be between 1 and 60 minutes.");
-        services.AddSingleton<IPaymentProvider, FakePaymentProvider>();
+        services.AddOptions<MomoOptions>().Bind(configuration.GetSection(MomoOptions.SectionName))
+            .Validate(options => !string.Equals(paymentProvider, "momo", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(options.Environment, "Sandbox", StringComparison.OrdinalIgnoreCase),
+                "Only Billing:MoMo:Environment=Sandbox is supported before DEC-02 production payment approval.")
+            .Validate(options => !string.Equals(paymentProvider, "momo", StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(options.PartnerCode) &&
+                 !string.IsNullOrWhiteSpace(options.AccessKey) &&
+                 !string.IsNullOrWhiteSpace(options.SecretKey) &&
+                 !string.IsNullOrWhiteSpace(options.RedirectUrl) &&
+                 !string.IsNullOrWhiteSpace(options.IpnUrl)),
+                "MoMo sandbox configuration is required when Billing:Payment:Provider=momo.")
+            .Validate(options => options.TimeoutSeconds is >= 30 and <= 60, "Billing:MoMo:TimeoutSeconds must be between 30 and 60 seconds.")
+            .ValidateOnStart();
+        services.AddHttpClient<MomoPaymentProvider>((provider, client) =>
+        {
+            var momo = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<MomoOptions>>().Value;
+            client.BaseAddress = new Uri("https://test-payment.momo.vn");
+            client.Timeout = TimeSpan.FromSeconds(momo.TimeoutSeconds);
+        });
+        if (string.Equals(paymentProvider, "momo", StringComparison.OrdinalIgnoreCase))
+            services.AddSingleton<IPaymentProvider>(provider => provider.GetRequiredService<MomoPaymentProvider>());
+        else
+            services.AddSingleton<IPaymentProvider, FakePaymentProvider>();
         return services;
     }
 }

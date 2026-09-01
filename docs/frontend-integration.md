@@ -80,7 +80,26 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
 
 ## Interview and report flow
 
-1. Optional `GET /plans` (`200`) and `POST /checkout-sessions` (`201`, idempotency key) for a paid development entitlement. Payment remains a fake development adapter; the browser never receives its webhook secret. After the owner fulfills the fake checkout, refetch `/me`.
+1. Optional `GET /plans` (`200`) and `POST /checkout-sessions` (`201`, idempotency key) for a paid development entitlement:
+
+   ```json
+   { "planPriceId": "10000000-0000-0000-0000-000000000002" }
+   ```
+
+   The response is provider-neutral:
+
+   ```json
+   {
+     "orderId": "...",
+     "status": "pending",
+     "amountMinor": 49000,
+     "currency": "VND",
+     "provider": "momo",
+     "checkoutUrl": "https://test-payment.momo.vn/..."
+   }
+   ```
+
+   If Development uses `Billing:Payment:Provider=momo`, redirect the browser to `checkoutUrl`, then poll `GET /checkout-sessions/{orderId}` after the user returns. If IPN is delayed, call `POST /checkout-sessions/{orderId}/refresh` with Bearer auth to reconcile the pending order from MoMo sandbox. If Development uses `fake`, the owner can still complete the fake webhook helper; the browser never receives the fake webhook secret. After payment completion, refetch `/me`.
 
 2. `POST /interviews` (`201`, Bearer + idempotency key):
 

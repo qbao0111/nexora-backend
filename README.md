@@ -73,7 +73,7 @@ dotnet run --project src/Nexora.Api --no-launch-profile
 dotnet run --project src/Nexora.Worker --no-launch-profile
 ```
 
-Both processes use the same ignored `.nexora-local/storage` path when launched from the repository root. Development uses Gemini for AI, `FakePaymentProvider` for payment, and `LocalStorageProvider` for private files. Readiness is `/api/v1/health`; liveness is `/health/live`.
+Both processes use the same ignored `.nexora-local/storage` path when launched from the repository root. Development uses Gemini for AI, `LocalStorageProvider` for private files, and a config-selected payment adapter. The default remains `FakePaymentProvider`; MoMo sandbox can be enabled explicitly for internal payment testing with no production provider decision. Readiness is `/api/v1/health`; liveness is `/health/live`.
 
 ### Gemini development configuration
 
@@ -87,6 +87,10 @@ dotnet user-secrets set "Ai:Gemini:Model" "YOUR_CONFIGURED_MODEL" --project src/
 Restart API and Worker after changing secrets. If AI is enabled and either value is missing, startup fails with a clear configuration error. Gemini is an internal-development integration; DEC-01 production provider/model and budget decisions remain deferred.
 
 Use the real browser/frontend journey for CV, JD and interview validation. A normal text PDF/DOCX stays local; only suspicious extraction automatically uses one Gemini document-understanding fallback that returns extracted text and the compact resume profile together. See [frontend integration](docs/frontend-integration.md) and the Desktop guides generated for the project owner.
+
+### MoMo sandbox payment configuration
+
+Fake payment remains the default development adapter. To test the real hosted payment round-trip with MoMo sandbox, explicitly set `Billing:Payment:Provider=momo` and the MoMo sandbox secrets through user-secrets. See [MoMo sandbox payment runbook](docs/momo-sandbox.md). Production payment stays disabled until DEC-02 is approved; this sandbox adapter is not a production payment selection.
 
 ## Optional offline/local PostgreSQL
 
