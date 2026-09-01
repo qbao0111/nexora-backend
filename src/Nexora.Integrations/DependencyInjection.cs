@@ -61,6 +61,13 @@ public static class DependencyInjection
                  !string.IsNullOrWhiteSpace(options.RedirectUrl) &&
                  !string.IsNullOrWhiteSpace(options.IpnUrl)),
                 "MoMo sandbox configuration is required when Billing:Payment:Provider=momo.")
+            .Validate(options => string.Equals(options.RequestType, MomoRequestTypes.CaptureWallet, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(options.RequestType, MomoRequestTypes.PayWithCreditCard, StringComparison.OrdinalIgnoreCase),
+                "Billing:MoMo:RequestType must be captureWallet or payWithCC.")
+            .Validate(options => !string.Equals(paymentProvider, "momo", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(options.RequestType, MomoRequestTypes.PayWithCreditCard, StringComparison.OrdinalIgnoreCase) ||
+                !string.IsNullOrWhiteSpace(options.TestCustomerEmail),
+                "Billing:MoMo:TestCustomerEmail is required when Billing:MoMo:RequestType=payWithCC.")
             .Validate(options => options.TimeoutSeconds is >= 30 and <= 60, "Billing:MoMo:TimeoutSeconds must be between 30 and 60 seconds.")
             .ValidateOnStart();
         services.AddHttpClient<MomoPaymentProvider>((provider, client) =>

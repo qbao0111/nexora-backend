@@ -20,16 +20,24 @@ public sealed class MomoOptions
     public string SecretKey { get; init; } = string.Empty;
     public string RedirectUrl { get; init; } = string.Empty;
     public string IpnUrl { get; init; } = string.Empty;
+    public string RequestType { get; init; } = MomoRequestTypes.CaptureWallet;
+    public string TestCustomerEmail { get; init; } = "sandbox@nexora.local";
     public int TimeoutSeconds { get; init; } = 35;
+}
+
+public static class MomoRequestTypes
+{
+    public const string CaptureWallet = "captureWallet";
+    public const string PayWithCreditCard = "payWithCC";
 }
 
 public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOptions> options) : IPaymentProvider
 {
-    private const string RequestType = "captureWallet";
     private const string MomoProviderName = "momo";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
-        NumberHandling = JsonNumberHandling.AllowReadingFromString
+        NumberHandling = JsonNumberHandling.AllowReadingFromString,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
     private readonly MomoOptions _options = options.Value;
 
@@ -44,6 +52,7 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
         var momoRequestId = ToMomoRequestId(request.OrderId);
         var orderInfo = $"Nexora {request.Currency} {request.AmountMinor}";
         var extraData = string.Empty;
+        var requestType = NormalizeRequestType(_options.RequestType);
         var rawSignature = string.Join('&',
             $"accessKey={_options.AccessKey}",
             $"amount={request.AmountMinor.ToString(CultureInfo.InvariantCulture)}",
@@ -54,7 +63,7 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
             $"partnerCode={_options.PartnerCode}",
             $"redirectUrl={_options.RedirectUrl}",
             $"requestId={momoRequestId}",
-            $"requestType={RequestType}");
+            $"requestType={requestType}");
         var body = new MomoCreateRequest(
             _options.PartnerCode,
             momoRequestId,
@@ -63,10 +72,11 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
             orderInfo,
             _options.RedirectUrl,
             _options.IpnUrl,
-            RequestType,
+            requestType,
             extraData,
             "vi",
             true,
+            CreateUserInfo(requestType),
             Sign(rawSignature, _options.SecretKey));
 
         using var response = await httpClient.PostAsJsonAsync("/v2/gateway/api/create", body, JsonOptions, cancellationToken);
@@ -79,7 +89,7 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
             payload.Amount != request.AmountMinor)
             throw new BusinessException("PAYMENT_REFERENCE_MISMATCH", "Thông tin thanh toán MoMo không khớp order.", BusinessErrorKind.Validation);
 
-        VerifyCreateResponseSignature(payload);
+        VerifyCreateResponseSignatureWhenPresent(payload);
         var payUrl = ValidatePayUrl(payload.PayUrl!);
 
         return new PaymentCheckout(ProviderName, orderId, payUrl);
@@ -149,7 +159,7 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             throw new BusinessException("PAYMENT_PROVIDER_AUTH_FAILED", "MoMo sandbox authentication failed.", BusinessErrorKind.ExternalFailure);
         if (!response.IsSuccessStatusCode)
-            throw new BusinessException("PAYMENT_PROVIDER_UNAVAILABLE", "MoMo sandbox hiện không khả dụng.", BusinessErrorKind.ExternalFailure);
+            throw await ProviderRejectedAsync(response, cancellationToken);
         try
         {
             return await response.Content.ReadFromJsonAsync<T>(JsonOptions, cancellationToken)
@@ -159,6 +169,25 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
         {
             throw new BusinessException("PAYMENT_PROVIDER_INVALID_RESPONSE", "MoMo sandbox trả về dữ liệu không hợp lệ.", BusinessErrorKind.ExternalFailure);
         }
+    }
+
+    private static async Task<BusinessException> ProviderRejectedAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var payload = await response.Content.ReadFromJsonAsync<MomoProviderErrorResponse>(JsonOptions, cancellationToken);
+            if (payload is not null && payload.ResultCode == 11)
+                return new BusinessException(
+                    "PAYMENT_PROVIDER_ACCESS_DENIED",
+                    "MoMo sandbox từ chối quyền truy cập phương thức thanh toán này.",
+                    BusinessErrorKind.ExternalFailure);
+        }
+        catch (JsonException)
+        {
+            // Fall through to the generic provider availability error.
+        }
+
+        return new BusinessException("PAYMENT_PROVIDER_UNAVAILABLE", "MoMo sandbox hiện không khả dụng.", BusinessErrorKind.ExternalFailure);
     }
 
     private static void ValidateRequest(PaymentOrderRequest request)
@@ -171,17 +200,26 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
             throw new BusinessException("PAYMENT_REFERENCE_MISMATCH", "Thông tin thanh toán MoMo không khớp order.", BusinessErrorKind.Validation);
     }
 
-    private void VerifyCreateResponseSignature(MomoCreateResponse payload)
+    private static string NormalizeRequestType(string? requestType)
     {
-        if (string.IsNullOrWhiteSpace(payload.Signature) ||
-            string.IsNullOrWhiteSpace(payload.RequestId) ||
-            string.IsNullOrWhiteSpace(payload.OrderId) ||
-            payload.ResponseTime is null)
-            throw new BusinessException("PAYMENT_PROVIDER_INVALID_RESPONSE", "MoMo sandbox trả về dữ liệu không hợp lệ.", BusinessErrorKind.ExternalFailure);
+        if (string.Equals(requestType, MomoRequestTypes.PayWithCreditCard, StringComparison.OrdinalIgnoreCase))
+            return MomoRequestTypes.PayWithCreditCard;
+        return MomoRequestTypes.CaptureWallet;
+    }
+
+    private MomoUserInfo? CreateUserInfo(string requestType) =>
+        string.Equals(requestType, MomoRequestTypes.PayWithCreditCard, StringComparison.Ordinal)
+            ? new MomoUserInfo(_options.TestCustomerEmail)
+            : null;
+
+    private void VerifyCreateResponseSignatureWhenPresent(MomoCreateResponse payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload.Signature)) return;
+        if (string.IsNullOrWhiteSpace(payload.RequestId) || string.IsNullOrWhiteSpace(payload.OrderId) || payload.ResponseTime is null)
+            throw InvalidCreateResponse();
         var rawSignature = string.Join('&',
             $"accessKey={_options.AccessKey}",
             $"amount={payload.Amount.ToString(CultureInfo.InvariantCulture)}",
-            $"message={payload.Message}",
             $"orderId={payload.OrderId}",
             $"partnerCode={payload.PartnerCode}",
             $"payUrl={payload.PayUrl ?? string.Empty}",
@@ -191,7 +229,7 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
         var expected = Encoding.UTF8.GetBytes(Sign(rawSignature, _options.SecretKey));
         var supplied = Encoding.UTF8.GetBytes(payload.Signature.Trim().ToLowerInvariant());
         if (supplied.Length != expected.Length || !CryptographicOperations.FixedTimeEquals(supplied, expected))
-            throw new BusinessException("PAYMENT_PROVIDER_INVALID_RESPONSE", "MoMo sandbox trả về dữ liệu không hợp lệ.", BusinessErrorKind.ExternalFailure);
+            throw InvalidCreateResponse();
     }
 
     private string ValidatePayUrl(string payUrl)
@@ -262,6 +300,9 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
     private static BusinessException InvalidPayload() =>
         new("INVALID_WEBHOOK_PAYLOAD", "Dữ liệu webhook thanh toán không hợp lệ.", BusinessErrorKind.Validation);
 
+    private static BusinessException InvalidCreateResponse() =>
+        new("PAYMENT_PROVIDER_INVALID_RESPONSE", "MoMo sandbox trả về dữ liệu không hợp lệ.", BusinessErrorKind.ExternalFailure);
+
     private sealed record MomoCreateRequest(
         string PartnerCode,
         string RequestId,
@@ -274,7 +315,10 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
         string ExtraData,
         string Lang,
         bool AutoCapture,
+        MomoUserInfo? UserInfo,
         string Signature);
+
+    private sealed record MomoUserInfo(string Email);
 
     private sealed record MomoQueryRequest(string PartnerCode, string RequestId, string OrderId, string Lang, string Signature);
 
@@ -302,6 +346,8 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
         int ResultCode,
         long ResponseTime,
         string? ExtraData);
+
+    private sealed record MomoProviderErrorResponse(int ResultCode, string Message);
 
     private sealed record MomoPaymentPayload(
         string PartnerCode,
