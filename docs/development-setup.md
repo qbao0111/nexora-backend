@@ -91,6 +91,18 @@ pwsh ./scripts/complete-fake-payment.ps1 -OrderId "ORDER_ID"
 
 Refetch `/api/v1/me` after fulfillment. The owner validates the complete Gemini journey manually with the real browser/frontend and real CV/JD files; do not put provider secrets in the browser.
 
+For hosted payment sandbox testing, keep FakePayment as the default and explicitly switch a machine to VNPAY only through user-secrets:
+
+```powershell
+dotnet user-secrets set "Billing:Payment:Provider" "vnpay" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Vnpay:Environment" "Sandbox" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Vnpay:TmnCode" "VNPAY_SANDBOX_TMN_CODE" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Vnpay:HashSecret" "VNPAY_SANDBOX_HASH_SECRET" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Vnpay:ReturnUrl" "http://localhost:3000/payment/return" --project src/Nexora.Api
+```
+
+VNPAY IPN is configured in the VNPAY sandbox merchant portal, not sent in the payment URL. For local testing run `ngrok http 5088` and configure the public IPN URL as `https://<ngrok-domain>/api/v1/webhooks/payments/vnpay`. See [vnpay-sandbox.md](vnpay-sandbox.md).
+
 ## 6. Team branch and pull-request workflow
 
 Use one coherent feature/phase per branch so it can be reviewed or reverted independently:

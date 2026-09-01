@@ -29,9 +29,12 @@ public sealed class FakePaymentProvider(IOptions<FakePaymentOptions> options, Ti
         return Task.FromResult(new PaymentCheckout(ProviderName, request.ProviderTransactionId, $"/fake-payments/{request.ProviderTransactionId}"));
     }
 
-    public Task<VerifiedPaymentEvent> VerifyWebhookAsync(string signature, string timestamp, ReadOnlyMemory<byte> body, CancellationToken cancellationToken)
+    public Task<VerifiedPaymentEvent> VerifyWebhookAsync(PaymentCallbackRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var signature = request.Headers.TryGetValue("X-Payment-Signature", out var signatureValue) ? signatureValue : string.Empty;
+        var timestamp = request.Headers.TryGetValue("X-Payment-Timestamp", out var timestampValue) ? timestampValue : string.Empty;
+        var body = request.Body;
         if (string.IsNullOrWhiteSpace(_options.WebhookSecret)) throw InvalidWebhook();
         if (!long.TryParse(timestamp, NumberStyles.None, CultureInfo.InvariantCulture, out var unixSeconds)) throw InvalidWebhook();
         var sentAt = DateTimeOffset.FromUnixTimeSeconds(unixSeconds);

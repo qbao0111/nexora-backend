@@ -18,15 +18,17 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
     private readonly SqliteConnection _connection;
     private readonly IAiProvider _aiProvider;
     private readonly IReadOnlyDictionary<string, string?>? _configurationOverrides;
+    private readonly Action<IServiceCollection>? _configureServices;
     private readonly string _environment = "Testing";
 
-    public NexoraApiFactory() : this(null, null) { }
+    public NexoraApiFactory() : this((IAiProvider?)null, null) { }
 
     internal NexoraApiFactory(IAiProvider aiProvider) : this(aiProvider, null) { }
 
-    internal NexoraApiFactory(IReadOnlyDictionary<string, string?> configurationOverrides) : this(null, configurationOverrides) { }
+    internal NexoraApiFactory(IReadOnlyDictionary<string, string?> configurationOverrides) : this((IAiProvider?)null, configurationOverrides) { }
+    internal NexoraApiFactory(IReadOnlyDictionary<string, string?> configurationOverrides, Action<IServiceCollection> configureServices) : this((IAiProvider?)null, configurationOverrides, configureServices) { }
 
-    internal NexoraApiFactory(string environment) : this(null, new Dictionary<string, string?>
+    internal NexoraApiFactory(string environment) : this((IAiProvider?)null, new Dictionary<string, string?>
     {
         ["Features:Ai"] = "false",
         ["Features:Payment"] = "false",
@@ -35,13 +37,15 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
         ["Authentication:Jwt:Audience"] = "Nexora.Tests.Client",
         ["Authentication:Jwt:SigningKey"] = "integration-test-signing-key-32-characters-minimum",
         ["Ai:Gemini:ApiKey"] = "test-only-not-used",
-        ["Ai:Gemini:Model"] = "test-gemini-model"
+        ["Ai:Gemini:Model"] = "test-gemini-model",
+        ["Billing:Payment:Provider"] = "fake"
     }) => _environment = environment;
 
-    private NexoraApiFactory(IAiProvider? aiProvider, IReadOnlyDictionary<string, string?>? configurationOverrides)
+    private NexoraApiFactory(IAiProvider? aiProvider, IReadOnlyDictionary<string, string?>? configurationOverrides, Action<IServiceCollection>? configureServices = null)
     {
         _aiProvider = aiProvider ?? new TestAiProvider();
         _configurationOverrides = configurationOverrides;
+        _configureServices = configureServices;
         _connection = new SqliteConnection(_connectionString);
         _connection.Open();
     }
@@ -57,6 +61,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
                 ["Authentication:Jwt:SigningKey"] = "integration-test-signing-key-32-characters-minimum",
                 ["Authentication:Jwt:Issuer"] = "Nexora.Tests",
                 ["Authentication:Jwt:Audience"] = "Nexora.Tests.Client",
+                ["Billing:Payment:Provider"] = "fake",
                 ["Billing:FakePayment:WebhookSecret"] = "phase2-test-webhook-key-material",
                 ["Billing:FakePayment:TimestampToleranceMinutes"] = "5",
                 ["Ai:Gemini:ApiKey"] = "test-only-not-used",
@@ -76,6 +81,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
             services.AddDbContext<NexoraDbContext>(options => options.UseSqlite(_connectionString));
             services.RemoveAll<IAiProvider>();
             services.AddSingleton(_aiProvider);
+            _configureServices?.Invoke(services);
         });
     }
 

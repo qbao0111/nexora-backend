@@ -267,3 +267,11 @@ This log records completed implementation milestones and verification evidence. 
 - MoMo IPN verification validates the signed JSON payload, local order reference, amount and VND currency before fulfillment. Duplicate valid deliveries stay idempotent and return `204 No Content`.
 - Documented MoMo sandbox setup in `docs/momo-sandbox.md` and updated the frontend integration payment flow. DEC-02 remains unresolved and production payment remains fail-closed.
 - Verification: restore/build passed with 0 warnings/errors; 47 retained unit/integration tests passed; EF Core reported no pending model changes; NuGet reported no vulnerable direct/transitive packages. Scoped formatting passed for changed files; full-repo format remains blocked by the pre-existing `InitialIdentityFoundation` migration formatting issue that must not be rewritten casually.
+
+## 2026-09-02 — VNPAY Sandbox supersedes active MoMo development payment
+
+- Replaced the active hosted payment provider path with VNPAY Sandbox PAY 2.1.0 behind the existing `IPaymentProvider` boundary. `FakePaymentProvider` remains the deterministic default for normal automated development/integration tests.
+- Removed active MoMo runtime registration, source tests and sandbox runbook. Historical MoMo payment records and project log entries remain historical and are not rewritten.
+- VNPAY checkout builds a signed sandbox payment URL locally with deterministic `nx{OrderId:N}` transaction references, VND amount ×100 conversion, GMT+7 timestamps and HMAC-SHA512 signatures.
+- Added VNPAY GET IPN handling with provider-protocol JSON responses, checksum/TmnCode/reference/amount validation, duplicate handling and the shared PaymentEvent → Subscription → Entitlement fulfillment path. Checkout refresh uses VNPAY QueryDr reconciliation.
+- DEC-02 remains unresolved; this is internal sandbox support only and does not enable production VNPAY.

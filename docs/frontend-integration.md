@@ -94,12 +94,12 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
      "status": "pending",
      "amountMinor": 49000,
      "currency": "VND",
-     "provider": "momo",
-     "checkoutUrl": "https://test-payment.momo.vn/..."
+     "provider": "vnpay",
+     "checkoutUrl": "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?..."
    }
    ```
 
-   If Development uses `Billing:Payment:Provider=momo`, redirect the browser to `checkoutUrl`, then poll `GET /checkout-sessions/{orderId}` after the user returns. The backend may be configured with MoMo `captureWallet` for QR/Test App checkout or `payWithCC` for browser-based sandbox card checkout; the frontend flow is unchanged. If IPN is delayed, call `POST /checkout-sessions/{orderId}/refresh` with Bearer auth to reconcile the pending order from MoMo sandbox. If Development uses `fake`, the owner can still complete the fake webhook helper; the browser never receives the fake webhook secret. After payment completion, refetch `/me`.
+   If Development uses `Billing:Payment:Provider=vnpay`, redirect the browser to `checkoutUrl`, then poll `GET /checkout-sessions/{orderId}` after the user returns from VNPAY. The VNPAY return URL is browser navigation only; it never grants entitlement. VNPAY IPN is a server-side `GET /webhooks/payments/vnpay` configured in the VNPAY sandbox merchant portal. If IPN is delayed, call `POST /checkout-sessions/{orderId}/refresh` with Bearer auth to reconcile the pending order through VNPAY QueryDr. If Development uses `fake`, the owner can still complete the fake webhook helper; the browser never receives the fake webhook secret. After payment completion, refetch `/me`.
 
 2. `POST /interviews` (`201`, Bearer + idempotency key):
 

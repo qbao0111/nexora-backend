@@ -46,40 +46,45 @@ public static class DependencyInjection
         var paymentProvider = configuration.GetValue($"{PaymentProviderOptions.SectionName}:Provider", "fake")?.Trim().ToLowerInvariant() ?? "fake";
         services.AddOptions<PaymentProviderOptions>().Bind(configuration.GetSection(PaymentProviderOptions.SectionName))
             .Validate(options => string.Equals(options.Provider, "fake", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(options.Provider, "momo", StringComparison.OrdinalIgnoreCase), "Billing:Payment:Provider must be fake or momo.")
+                string.Equals(options.Provider, "vnpay", StringComparison.OrdinalIgnoreCase), "Billing:Payment:Provider must be fake or vnpay.")
             .ValidateOnStart();
         services.AddOptions<FakePaymentOptions>().Bind(configuration.GetSection(FakePaymentOptions.SectionName))
             .Validate(options => options.TimestampToleranceMinutes is > 0 and <= 60, "Fake payment timestamp tolerance must be between 1 and 60 minutes.");
-        services.AddOptions<MomoOptions>().Bind(configuration.GetSection(MomoOptions.SectionName))
-            .Validate(options => !string.Equals(paymentProvider, "momo", StringComparison.OrdinalIgnoreCase) ||
+        services.AddOptions<VnpayOptions>().Bind(configuration.GetSection(VnpayOptions.SectionName))
+            .Validate(options => !string.Equals(paymentProvider, "vnpay", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(options.Environment, "Sandbox", StringComparison.OrdinalIgnoreCase),
-                "Only Billing:MoMo:Environment=Sandbox is supported before DEC-02 production payment approval.")
-            .Validate(options => !string.Equals(paymentProvider, "momo", StringComparison.OrdinalIgnoreCase) ||
-                (!string.IsNullOrWhiteSpace(options.PartnerCode) &&
-                 !string.IsNullOrWhiteSpace(options.AccessKey) &&
-                 !string.IsNullOrWhiteSpace(options.SecretKey) &&
-                 !string.IsNullOrWhiteSpace(options.RedirectUrl) &&
-                 !string.IsNullOrWhiteSpace(options.IpnUrl)),
-                "MoMo sandbox configuration is required when Billing:Payment:Provider=momo.")
-            .Validate(options => string.Equals(options.RequestType, MomoRequestTypes.CaptureWallet, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(options.RequestType, MomoRequestTypes.PayWithCreditCard, StringComparison.OrdinalIgnoreCase),
-                "Billing:MoMo:RequestType must be captureWallet or payWithCC.")
-            .Validate(options => !string.Equals(paymentProvider, "momo", StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(options.RequestType, MomoRequestTypes.PayWithCreditCard, StringComparison.OrdinalIgnoreCase) ||
-                !string.IsNullOrWhiteSpace(options.TestCustomerEmail),
-                "Billing:MoMo:TestCustomerEmail is required when Billing:MoMo:RequestType=payWithCC.")
-            .Validate(options => options.TimeoutSeconds is >= 30 and <= 60, "Billing:MoMo:TimeoutSeconds must be between 30 and 60 seconds.")
+                "Only Billing:Vnpay:Environment=Sandbox is supported before DEC-02 production payment approval.")
+            .Validate(options => !string.Equals(paymentProvider, "vnpay", StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(options.TmnCode) &&
+                 !string.IsNullOrWhiteSpace(options.HashSecret) &&
+                 Uri.TryCreate(options.ReturnUrl, UriKind.Absolute, out _)),
+                "VNPAY sandbox configuration is required when Billing:Payment:Provider=vnpay.")
+            .Validate(options => !string.Equals(paymentProvider, "vnpay", StringComparison.OrdinalIgnoreCase) ||
+                IsExpectedVnpayUrl(options.PaymentUrl, "/paymentv2/vpcpay.html"),
+                "Billing:Vnpay:PaymentUrl must be the VNPAY sandbox payment endpoint.")
+            .Validate(options => !string.Equals(paymentProvider, "vnpay", StringComparison.OrdinalIgnoreCase) ||
+                IsExpectedVnpayUrl(options.QueryUrl, "/merchant_webapi/api/transaction"),
+                "Billing:Vnpay:QueryUrl must be the VNPAY sandbox query endpoint.")
+            .Validate(options => string.Equals(options.Locale, "vn", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(options.Locale, "en", StringComparison.OrdinalIgnoreCase), "Billing:Vnpay:Locale must be vn or en.")
+            .Validate(options => options.ExpireMinutes is >= 5 and <= 60, "Billing:Vnpay:ExpireMinutes must be between 5 and 60 minutes.")
+            .Validate(options => options.TimeoutSeconds is >= 30 and <= 60, "Billing:Vnpay:TimeoutSeconds must be between 30 and 60 seconds.")
             .ValidateOnStart();
-        services.AddHttpClient<MomoPaymentProvider>((provider, client) =>
+        services.AddHttpClient<VnpayPaymentProvider>((provider, client) =>
         {
-            var momo = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<MomoOptions>>().Value;
-            client.BaseAddress = new Uri("https://test-payment.momo.vn");
-            client.Timeout = TimeSpan.FromSeconds(momo.TimeoutSeconds);
+            var vnpay = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<VnpayOptions>>().Value;
+            client.Timeout = TimeSpan.FromSeconds(vnpay.TimeoutSeconds);
         });
-        if (string.Equals(paymentProvider, "momo", StringComparison.OrdinalIgnoreCase))
-            services.AddSingleton<IPaymentProvider>(provider => provider.GetRequiredService<MomoPaymentProvider>());
+        if (string.Equals(paymentProvider, "vnpay", StringComparison.OrdinalIgnoreCase))
+            services.AddSingleton<IPaymentProvider>(provider => provider.GetRequiredService<VnpayPaymentProvider>());
         else
             services.AddSingleton<IPaymentProvider, FakePaymentProvider>();
         return services;
     }
+
+    private static bool IsExpectedVnpayUrl(string value, string path) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        uri.Scheme == Uri.UriSchemeHttps &&
+        string.Equals(uri.Host, "sandbox.vnpayment.vn", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(uri.AbsolutePath, path, StringComparison.Ordinal);
 }

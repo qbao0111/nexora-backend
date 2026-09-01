@@ -24,7 +24,7 @@ Start at the repository [README](../README.md). Coding agents must read [AGENTS.
 | [11-analysis-design-models.md](11-analysis-design-models.md) | Use cases, diagrams and traceability. |
 | [development-setup.md](development-setup.md) | Fresh-machine teammate setup, secret configuration, local runtime and troubleshooting. |
 | [frontend-integration.md](frontend-integration.md) | Browser/API handoff, auth, polling, idempotency and core FE journey. |
-| [momo-sandbox.md](momo-sandbox.md) | Internal MoMo sandbox setup, webhook/query flow and safety notes before DEC-02 production payment approval. |
+| [vnpay-sandbox.md](vnpay-sandbox.md) | Internal VNPAY sandbox setup, IPN/QueryDr flow and safety notes before DEC-02 production payment approval. |
 
 ## Deferred decisions are production gates, not engineering blockers
 

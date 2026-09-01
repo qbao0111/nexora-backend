@@ -21,7 +21,8 @@
 | POST | `/checkout-sessions` | Tạo order/URL thanh toán. |
 | GET | `/checkout-sessions/:id` | Đọc trạng thái checkout của owner. |
 | POST | `/checkout-sessions/:id/refresh` | Reconcile checkout pending từ provider sandbox khi IPN chậm. |
-| POST | `/webhooks/payments/:provider` | Nhận webhook đã verify chữ ký. |
+| POST | `/webhooks/payments/fake` | Nhận webhook fake đã ký cho test deterministic nội bộ. |
+| GET | `/webhooks/payments/vnpay` | Nhận VNPAY Sandbox PAY 2.1.0 IPN dạng query-string, trả JSON theo protocol VNPAY. |
 | POST | `/uploads/presign` | Cấp signed URL upload CV/avatar. |
 | POST | `/resumes` | Ghi metadata file sau upload. |
 | GET | `/resumes/:id` | Đọc trạng thái xử lý CV và lỗi an toàn của owner. |
