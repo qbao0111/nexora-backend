@@ -71,6 +71,14 @@ internal sealed class TestAiProvider : IAiProvider
                 ["Diễn đạt rõ ràng"],
                 ["Thiếu kết quả định lượng"],
                 ["Luyện trả lời theo STAR"]),
+            var type when type == typeof(ResumeAnalysisOutput) => new ResumeAnalysisOutput(
+                ["Kinh nghiệm C# và PostgreSQL phù hợp yêu cầu", "Có kỹ năng phân tích hệ thống"],
+                ["Cần bổ sung kiến thức về kiến trúc phân tán"],
+                ["Tham gia thêm các bài test kỹ năng"]),
+            var type when type == typeof(ResumeProfile) => new ResumeProfile(
+                "Tóm tắt hồ sơ ứng viên",
+                ["C#", "PostgreSQL"],
+                [], [], [], [], []),
             _ => throw new InvalidOperationException($"Test provider does not support {typeof(T).Name}.")
         };
         return Task.FromResult((T)result);

@@ -187,6 +187,11 @@ public sealed partial class PracticeService(
             ?? throw NotFound();
         await featureEntitlementService.RequireEnabledAsync(userId, FeatureValues.CvAnalysis, cancellationToken);
         var access = await featureEntitlementService.GetAsync(userId, FeatureValues.CvAnalysis, cancellationToken);
+
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        prior = await FindIdempotentAsync(userId, "resume-analysis.create", key, fingerprint, cancellationToken);
+        if (prior is not null) return await GetResumeAnalysisAsync(userId, prior.ResourceId, cancellationToken);
+
         var now = timeProvider.GetUtcNow();
         var analysis = new ResumeAnalysis
         {
@@ -213,7 +218,19 @@ public sealed partial class PracticeService(
         }
         dbContext.AddRange(analysis, Idempotency(userId, "resume-analysis.create", key, fingerprint, analysis.Id, now),
             Outbox("ResumeAnalysisRequested", "resume_analysis", analysis.Id, now));
-        await dbContext.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
+            dbContext.ChangeTracker.Clear();
+            prior = await FindIdempotentAsync(userId, "resume-analysis.create", key, fingerprint, cancellationToken);
+            if (prior is not null) return await GetResumeAnalysisAsync(userId, prior.ResourceId, cancellationToken);
+            throw;
+        }
+        await CommitAsync(transaction, cancellationToken);
         return MapAnalysis(analysis);
     }
 
@@ -279,7 +296,7 @@ public sealed partial class PracticeService(
         dbContext.AddRange(reservation, session, Idempotency(userId, "interview.start", key, fingerprint, session.Id, now),
             Outbox("InterviewStartRequested", "interview", session.Id, now));
         await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
         return MapInterview(session, [], []);
     }
 
@@ -371,7 +388,7 @@ public sealed partial class PracticeService(
         session.UpdatedAt = now;
         dbContext.AddRange(answer, Idempotency(userId, "interview.answer", key, fingerprint, answer.Id, now));
         await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
         return new AnswerResult(MapAnswer(answer), nextQuestion is null ? null : MapQuestion(nextQuestion), nextQuestion is null);
     }
 
@@ -390,7 +407,7 @@ public sealed partial class PracticeService(
             dbContext.AddRange(Idempotency(userId, "interview.complete", key, fingerprint, session.Id, retryAt),
                 Outbox("InterviewReportRequested", "interview", session.Id, retryAt));
             await dbContext.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            await CommitAsync(transaction, cancellationToken);
             return MapInterview(session, session.Questions, session.Answers);
         }
         if (session.Status != PracticeValues.Active || session.Questions.Count == 0 || session.Answers.Count != session.Questions.Count)
@@ -402,7 +419,7 @@ public sealed partial class PracticeService(
         dbContext.AddRange(Idempotency(userId, "interview.complete", key, fingerprint, session.Id, now),
             Outbox("InterviewReportRequested", "interview", session.Id, now));
         await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
         return MapInterview(session, session.Questions, session.Answers);
     }
 
@@ -634,13 +651,16 @@ public sealed partial class PracticeService(
         var input = resumeContextBuilder.BuildResumeAnalysisContext(profile, analysis.JobDescription.Content);
         var result = await aiProvider.GenerateStructuredAsync<ResumeAnalysisOutput>(Request("resume.analysis", input, analysis.Id), cancellationToken);
         if (result.Strengths.Count == 0 || result.Gaps.Count == 0 || result.Recommendations.Count == 0) throw InvalidAiOutput();
+
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
         analysis.Result = JsonSerializer.Serialize(result, JsonOptions);
         analysis.Status = PracticeValues.Completed;
         analysis.CompletedAt = analysis.UpdatedAt = timeProvider.GetUtcNow();
         MarkProcessed(job);
-        await dbContext.SaveChangesAsync(cancellationToken);
         if (analysis.UsageReservationId.HasValue)
             await featureEntitlementService.ConsumeAsync(analysis.UserId, analysis.UsageReservationId.Value, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
     }
 
     private async Task ActivateInterviewAsync(OutboxEvent job, CancellationToken cancellationToken)
@@ -656,7 +676,7 @@ public sealed partial class PracticeService(
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         var session = await dbContext.InterviewSessions.SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
-        if (session.Status != PracticeValues.Starting) { MarkProcessed(job); await dbContext.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return; }
+        if (session.Status != PracticeValues.Starting) { MarkProcessed(job); await dbContext.SaveChangesAsync(cancellationToken); await CommitAsync(transaction, cancellationToken); return; }
         var reservation = await dbContext.UsageEvents.AsNoTracking().SingleAsync(item => item.Id == session.ReservationEventId, cancellationToken);
         var entitlement = await FindEntitlementForUpdateAsync(reservation.EntitlementId, cancellationToken) ?? throw InvalidState();
         var now = timeProvider.GetUtcNow();
@@ -676,7 +696,7 @@ public sealed partial class PracticeService(
         session.UpdatedAt = now;
         MarkProcessed(job);
         await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
     }
 
     private async Task BuildReportAsync(OutboxEvent job, CancellationToken cancellationToken)
@@ -696,7 +716,7 @@ public sealed partial class PracticeService(
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         var session = await dbContext.InterviewSessions.SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
-        if (session.Status == PracticeValues.Completed) { MarkProcessed(job); await dbContext.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return; }
+        if (session.Status == PracticeValues.Completed) { MarkProcessed(job); await dbContext.SaveChangesAsync(cancellationToken); await CommitAsync(transaction, cancellationToken); return; }
         if (session.Status != PracticeValues.Completing) throw InvalidState();
         var now = timeProvider.GetUtcNow();
         dbContext.InterviewReports.Add(new InterviewReport
@@ -722,7 +742,7 @@ public sealed partial class PracticeService(
         session.CompletedAt = now;
         MarkProcessed(job);
         await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
     }
 
     private async Task FailJobAsync(OutboxEvent job, CancellationToken cancellationToken)
@@ -789,7 +809,7 @@ public sealed partial class PracticeService(
             }
         }
         await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
     }
 
     private void FinalizeReservation(Entitlement entitlement, UsageEvent reservation, string action, DateTimeOffset now)
@@ -858,8 +878,17 @@ public sealed partial class PracticeService(
         return await dbContext.Entitlements.SingleOrDefaultAsync(item => item.Id == entitlementId, cancellationToken);
     }
 
-    private Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
-        dbContext.Database.BeginTransactionAsync(dbContext.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
+    private async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is not null) return null;
+        return await dbContext.Database.BeginTransactionAsync(dbContext.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
+    }
+
+    private static async Task CommitAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction, CancellationToken cancellationToken)
+    {
+        if (transaction is null) return;
+        await transaction.CommitAsync(cancellationToken);
+    }
 
     private static void ValidateInterview(StartInterviewCommand command)
     {

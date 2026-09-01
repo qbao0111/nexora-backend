@@ -176,6 +176,41 @@ public sealed class MomoPaymentProviderTests
     }
 
     [Fact]
+    public async Task CreateCheckoutWithProductionHostInSandboxEnvironmentIsRejected()
+    {
+        var orderId = Guid.NewGuid();
+        var providerTxId = MomoPaymentProvider.ToMomoOrderId(orderId);
+        var requestId = MomoPaymentProvider.ToMomoRequestId(orderId);
+        const long amount = 49000;
+        const string payUrl = "https://payment.momo.vn/v2/gateway/pay?s=123";
+        const long responseTime = 1700000000000;
+
+        var rawSig = $"accessKey=access&amount={amount}&message=Success&orderId={providerTxId}&partnerCode=MOMO&payUrl={payUrl}&requestId={requestId}&responseTime={responseTime}&resultCode=0";
+        var signature = MomoPaymentProvider.Sign(rawSig, "secret");
+
+        var responseJson = JsonSerializer.Serialize(new
+        {
+            partnerCode = "MOMO",
+            requestId,
+            orderId = providerTxId,
+            amount,
+            resultCode = 0,
+            message = "Success",
+            payUrl,
+            responseTime,
+            signature
+        });
+
+        var handler = new TestHttpMessageHandler(HttpStatusCode.OK, responseJson);
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://test-payment.momo.vn") };
+        var provider = new MomoPaymentProvider(httpClient, Options.Create(TestOptions));
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() =>
+            provider.CreateCheckoutAsync(new PaymentOrderRequest(orderId, amount, "VND", providerTxId), CancellationToken.None));
+        Assert.Equal("PAYMENT_CHECKOUT_FAILED", exception.Code);
+    }
+
+    [Fact]
     public async Task QueryPaymentDoesNotRequireIpnSignatureAndReturnsVerifiedEvent()
     {
         var orderId = Guid.NewGuid();

@@ -194,13 +194,15 @@ public sealed class MomoPaymentProvider(HttpClient httpClient, IOptions<MomoOpti
             throw new BusinessException("PAYMENT_PROVIDER_INVALID_RESPONSE", "MoMo sandbox trả về dữ liệu không hợp lệ.", BusinessErrorKind.ExternalFailure);
     }
 
-    private static string ValidatePayUrl(string payUrl)
+    private string ValidatePayUrl(string payUrl)
     {
         if (!Uri.TryCreate(payUrl, UriKind.Absolute, out var uri) ||
             !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
             throw new BusinessException("PAYMENT_CHECKOUT_FAILED", "Không thể tạo phiên thanh toán.", BusinessErrorKind.ExternalFailure);
         var host = uri.Host.ToLowerInvariant();
-        var allowedHosts = new[] { "test-payment.momo.vn", "payment.momo.vn" };
+        var allowedHosts = string.Equals(_options.Environment, "Sandbox", StringComparison.OrdinalIgnoreCase)
+            ? new[] { "test-payment.momo.vn" }
+            : new[] { "test-payment.momo.vn", "payment.momo.vn" };
         if (!allowedHosts.Any(host.Equals))
             throw new BusinessException("PAYMENT_CHECKOUT_FAILED", "Không thể tạo phiên thanh toán.", BusinessErrorKind.ExternalFailure);
         return payUrl;
