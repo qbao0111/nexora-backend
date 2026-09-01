@@ -105,9 +105,41 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
 
    Render `data.nextQuestion` when present; stop collecting answers when `data.isComplete` is `true`.
 
+   Behavioral answers include structured STAR coaching at `data.answer.evaluation.star`:
+
+   ```json
+   {
+     "applicable": true,
+     "overallScore": 72,
+     "situation": { "score": 80, "detected": true, "evidence": "...", "feedback": "..." },
+     "task": { "score": 65, "detected": true, "evidence": "...", "feedback": "..." },
+     "action": { "score": 85, "detected": true, "evidence": "...", "feedback": "..." },
+     "result": { "score": 55, "detected": false, "evidence": "", "feedback": "..." },
+     "missingElements": ["result"],
+     "strengths": ["..."],
+     "coachingTips": ["..."]
+   }
+   ```
+
+   If `applicable=false`, hide the STAR panel and show the existing generic `scores`/`feedback`. Do not parse Gemini prose; the UI can render the structured fields directly.
+
 4. `POST /interviews/{id}/complete` (`202`, new idempotency key, empty body) changes the session to `completing`.
 
-5. Poll `GET /interviews/{id}` and `GET /interviews/{id}/report`. A report `404` means “not ready yet” only while the session is known to be `completing`; otherwise show the error. A successful report (`200`) contains the server score, rubric evidence, strengths, gaps, action plan and coaching disclaimer.
+5. Poll `GET /interviews/{id}` and `GET /interviews/{id}/report`. A report `404` means “not ready yet” only while the session is known to be `completing`; otherwise show the error. A successful report (`200`) contains the server score, rubric evidence, strengths, gaps, action plan, optional `starSummary` and coaching disclaimer. `starSummary` appears only when at least one answer was STAR-applicable.
+
+   ```json
+   {
+     "starSummary": {
+       "applicableAnswers": 2,
+       "averageScore": 72,
+       "componentAverages": { "situation": 80, "task": 65, "action": 78, "result": 58 },
+       "strongestComponent": "action",
+       "weakestComponent": "result",
+       "recurringIssues": ["result"],
+       "coachingPriorities": ["Kết thúc câu trả lời bằng kết quả và tác động cụ thể."]
+     }
+   }
+   ```
 
 6. `GET /dashboard` (`200`) loads persisted interview/report history and billing summary.
 

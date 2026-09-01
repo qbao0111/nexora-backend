@@ -126,6 +126,46 @@ Idempotency-Key: 4e8b...
 
 Response có answer đã lưu và question tiếp theo hoặc `isComplete: true`. Một question chỉ nhận một answer chính thức trừ khi endpoint revision được định nghĩa riêng.
 
+`answer.evaluation` giữ các field generic hiện có và có thêm `star` để frontend render STAR coaching khi phù hợp:
+
+```json
+{
+  "scores": [
+    { "criterion": "structure", "score": 70, "evidence": "..." }
+  ],
+  "feedback": "...",
+  "star": {
+    "applicable": true,
+    "overallScore": 72,
+    "situation": { "score": 80, "detected": true, "evidence": "...", "feedback": "..." },
+    "task": { "score": 65, "detected": true, "evidence": "...", "feedback": "..." },
+    "action": { "score": 85, "detected": true, "evidence": "...", "feedback": "..." },
+    "result": { "score": 55, "detected": false, "evidence": "", "feedback": "..." },
+    "missingElements": ["result"],
+    "strengths": ["..."],
+    "coachingTips": ["..."]
+  }
+}
+```
+
+Nếu câu hỏi không phù hợp STAR, `star.applicable=false` và các component có thể là `null`/empty. Frontend không parse prose để suy ra điểm STAR.
+
+Report có thêm `starSummary` khi có ít nhất một answer STAR-applicable:
+
+```json
+{
+  "starSummary": {
+    "applicableAnswers": 2,
+    "averageScore": 72,
+    "componentAverages": { "situation": 80, "task": 65, "action": 78, "result": 58 },
+    "strongestComponent": "action",
+    "weakestComponent": "result",
+    "recurringIssues": ["result"],
+    "coachingPriorities": ["Kết thúc câu trả lời bằng kết quả và tác động cụ thể."]
+  }
+}
+```
+
 ### Error envelope
 
 ```json

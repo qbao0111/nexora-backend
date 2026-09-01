@@ -42,7 +42,27 @@ public sealed class AiProviderException(AiProviderFailureKind kind, string messa
 public sealed record GeneratedQuestion(string Content);
 public sealed record ResumeAnalysisOutput(IReadOnlyCollection<string> Strengths, IReadOnlyCollection<string> Gaps, IReadOnlyCollection<string> Recommendations);
 public sealed record RubricScore(string Criterion, int Score, string Evidence);
-public sealed record AnswerEvaluation(IReadOnlyCollection<RubricScore> Scores, string Feedback);
+public sealed record StarComponentEvaluation(int Score, bool Detected, string Evidence, string Feedback);
+public sealed record StarEvaluation(
+    bool Applicable,
+    int? OverallScore,
+    StarComponentEvaluation? Situation,
+    StarComponentEvaluation? Task,
+    StarComponentEvaluation? Action,
+    StarComponentEvaluation? Result,
+    IReadOnlyCollection<string> MissingElements,
+    IReadOnlyCollection<string> Strengths,
+    IReadOnlyCollection<string> CoachingTips);
+public sealed record StarComponentAverages(int Situation, int Task, int Action, int Result);
+public sealed record StarReportSummary(
+    int ApplicableAnswers,
+    int AverageScore,
+    StarComponentAverages ComponentAverages,
+    string StrongestComponent,
+    string WeakestComponent,
+    IReadOnlyCollection<string> RecurringIssues,
+    IReadOnlyCollection<string> CoachingPriorities);
+public sealed record AnswerEvaluation(IReadOnlyCollection<RubricScore> Scores, string Feedback, StarEvaluation? Star = null);
 public sealed record InterviewReportOutput(
     IReadOnlyCollection<RubricScore> Scores,
     IReadOnlyCollection<string> Strengths,

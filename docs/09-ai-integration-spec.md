@@ -7,8 +7,8 @@
 
 - Parse JD and CV to a defined schema.
 - Compare CV/JD with evidence-based gaps and suggestions.
-- Generate one mock-interview question from session context.
-- Evaluate an answer by explicit rubric and generate a coaching report.
+- Generate one mock-interview question from session context, with behavioral questions favoring evidence-rich scenarios.
+- Evaluate an answer by explicit rubric, add structured STAR coaching when applicable, and generate a coaching report.
 - Transform/evaluate STAR and case answers without inventing achievements.
 
 Nexora is a practice product: AI output is coaching guidance, not hiring truth or real-interview covert assistance.
@@ -56,6 +56,8 @@ StartInterview retries must not duplicate session, question, usage event or job 
 ## 4. Output quality and safety rules
 
 - Structured output must pass JSON schema + server semantic validation (exact rubric criteria `correctness`, `structure`, `completeness`, `clarity`; score 0–100; required grounded evidence; no missing criterion).
+- Behavioral answer evaluation also returns `star.applicable`. When true, Situation/Task/Action/Result components use 0–100 scores with grounded evidence and concise coaching. When false, STAR component details remain null/empty; technical explanations must keep the generic rubric only.
+- The server computes STAR overall score with Situation 20%, Task 20%, Action 35% and Result 25%, and aggregates final report `starSummary` from persisted answer evaluations rather than asking the model to perform arithmetic.
 - Preserve candidate facts: if a metric/result is absent, suggest how to quantify it; never fabricate achievements.
 - Keep `evidence` references to answer spans where possible. If no evidence exists, classify feedback as suggestion, not fact.
 - Treat CV/JD/answer as untrusted input: delimiter, instruction hierarchy, no tool access, no secrets in prompt, max input size.

@@ -140,10 +140,14 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
     {
         "resume.profile" => "Extract a faithful compact resume profile. Use null or empty arrays for information that is absent; never infer or fabricate candidate details.",
         "resume.analysis" => "Identify grounded strengths, gaps, and actionable recommendations for the target job.",
-        "interview.first-question" => "Generate one concise interview-practice question appropriate for the supplied role.",
-        "interview.followup" => "Generate one concise follow-up question based only on the supplied answer.",
-        "interview.evaluate" or "interview.report" =>
-            "Return exactly four scores with criterion values correctness, structure, completeness, and clarity. Each score is an integer from 0 to 100 and includes non-empty evidence.",
+        "interview.first-question" =>
+            "Generate one concise interview-practice question appropriate for the supplied role. If interview-type is behavioral, favor behavioral evidence categories such as teamwork, conflict, ownership, failure, deadline pressure, ambiguity, stakeholder communication, learning, or problem solving. Invite a concrete story naturally; do not explain the STAR method every time.",
+        "interview.followup" =>
+            "Generate one concise natural interviewer follow-up based only on the supplied answer. If STAR missing elements or coaching tips are supplied, prefer eliciting the weakest missing information without mechanically saying labels like 'give me your STAR Result'.",
+        "interview.evaluate" =>
+            "Return exactly four general scores with criterion values correctness, structure, completeness, and clarity. Also return star.applicable. STAR applies only when the actual question asks for behavioral or situational evidence. When applicable, evaluate Situation, Task, Action, and Result from the user's answer only; never invent missing evidence, mark missing parts, and keep coaching concise. Use 0-100 integer component scores. When not applicable, set star.applicable=false and omit component details.",
+        "interview.report" =>
+            "Return exactly four scores with criterion values correctness, structure, completeness, and clarity. Each score is an integer from 0 to 100 and includes non-empty evidence. Do not calculate STAR arithmetic; the server aggregates persisted STAR evaluations.",
         _ => "Follow the Nexora-owned response schema."
     };
 
