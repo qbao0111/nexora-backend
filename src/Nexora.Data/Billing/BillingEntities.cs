@@ -7,6 +7,9 @@ public sealed class Plan
     public Guid Id { get; set; }
     public string Code { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string? Badge { get; set; }
+    public bool IsHighlighted { get; set; }
     public int SortOrder { get; set; }
     public bool IsActive { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -24,6 +27,7 @@ public sealed class PlanPrice
     public bool IsActive { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public Plan Plan { get; set; } = null!;
+    public ICollection<PlanPriceFeature> Features { get; } = [];
 }
 
 public sealed class Order
@@ -40,6 +44,7 @@ public sealed class Order
     public string PaymentProvider { get; set; } = string.Empty;
     public string ProviderTransactionId { get; set; } = string.Empty;
     public string CheckoutUrl { get; set; } = string.Empty;
+    public string FeaturesSnapshot { get; set; } = "[]";
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public ApplicationUser User { get; set; } = null!;
@@ -62,14 +67,14 @@ public sealed class Subscription
 {
     public Guid Id { get; set; }
     public Guid UserId { get; set; }
-    public Guid OrderId { get; set; }
+    public Guid? OrderId { get; set; }
     public string Status { get; set; } = string.Empty;
     public DateTimeOffset StartsAt { get; set; }
     public DateTimeOffset EndsAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public ApplicationUser User { get; set; } = null!;
-    public Order Order { get; set; } = null!;
+    public Order? Order { get; set; }
     public Entitlement Entitlement { get; set; } = null!;
 }
 
@@ -92,6 +97,7 @@ public sealed class Entitlement
     public ApplicationUser User { get; set; } = null!;
     public Subscription Subscription { get; set; } = null!;
     public ICollection<UsageEvent> UsageEvents { get; } = [];
+    public ICollection<EntitlementFeature> FeatureEntitlements { get; } = [];
 }
 
 public sealed class UsageEvent

@@ -18,9 +18,17 @@ public sealed record PlanPriceView(
     long AmountMinor,
     string Currency,
     int? DurationDays,
-    int? InterviewQuota);
+    int? InterviewQuota,
+    IReadOnlyCollection<PlanFeatureView> Features);
 
-public sealed record PlanView(Guid Id, string Code, string Name, IReadOnlyCollection<PlanPriceView> Prices);
+public sealed record PlanView(
+    Guid Id,
+    string Code,
+    string Name,
+    string Description,
+    string? Badge,
+    bool IsHighlighted,
+    IReadOnlyCollection<PlanPriceView> Prices);
 
 public sealed record CheckoutSession(
     Guid OrderId,
@@ -41,6 +49,8 @@ public sealed record CheckoutStatus(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
+public sealed record OrderView(Guid Id, string PlanCode, long AmountMinor, string Currency, string Status, DateTimeOffset CreatedAt);
+public sealed record BillingSummary(EntitlementView? Entitlement, IReadOnlyCollection<OrderView> Orders);
 public sealed record EntitlementView(
     Guid Id,
     string PlanCode,
@@ -50,13 +60,11 @@ public sealed record EntitlementView(
     int? Limit,
     int Reserved,
     int Consumed,
-    int Adjustment)
+    int Adjustment,
+    IReadOnlyCollection<EntitlementFeatureView> Features)
 {
     public int? Available => Limit is null ? null : Math.Max(0, Limit.Value + Adjustment - Reserved - Consumed);
 }
-
-public sealed record OrderView(Guid Id, string PlanCode, long AmountMinor, string Currency, string Status, DateTimeOffset CreatedAt);
-public sealed record BillingSummary(EntitlementView? Entitlement, IReadOnlyCollection<OrderView> Orders);
 public sealed record UsageReservation(Guid EventId, Guid EntitlementId, int? Available);
 
 public interface IBillingService

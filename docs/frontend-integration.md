@@ -162,6 +162,105 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
 
 6. `GET /dashboard` (`200`) loads persisted interview/report history and billing summary.
 
+## Feature Entitlement Matrix
+
+`GET /api/v1/me` exposes the authoritative snapshot of the current user's entitlement and active feature quotas:
+
+```json
+{
+  "data": {
+    "id": "...",
+    "email": "candidate@example.com",
+    "displayName": "Candidate",
+    "roles": ["Candidate"],
+    "billing": {
+      "entitlement": {
+        "id": "...",
+        "planCode": "pro",
+        "startsAt": "2026-09-01T00:00:00Z",
+        "endsAt": "2026-11-30T00:00:00Z",
+        "limit": null,
+        "reserved": 0,
+        "consumed": 2,
+        "available": null,
+        "features": [
+          {
+            "code": "scenario",
+            "name": "Thực hành tình huống",
+            "enabled": true,
+            "limit": 20,
+            "reserved": 0,
+            "consumed": 3,
+            "adjustment": 0,
+            "available": 17,
+            "unlimited": false
+          },
+          {
+            "code": "progress_analytics",
+            "name": "Phân tích tiến độ",
+            "enabled": true,
+            "limit": null,
+            "reserved": 0,
+            "consumed": 0,
+            "adjustment": 0,
+            "available": null,
+            "unlimited": true
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+Stable feature codes: `cv_analysis`, `interview`, `scenario`, `star_builder`, `advanced_report`, `progress_analytics`.
+
+## Scenario Library and Practice Flow
+
+1. `GET /api/v1/scenarios` (`200`, Bearer): lists published scenarios with category, difficulty (`easy`, `medium`, `hard`), and competency. Browsing scenarios does NOT consume quota.
+2. `GET /api/v1/scenarios/{id-or-slug}` (`200`, Bearer): fetches scenario details.
+3. `POST /api/v1/scenario-attempts` (`201`, Bearer + `Idempotency-Key`):
+   ```json
+   { "scenarioId": "..." }
+   ```
+   Creates or returns the user's active draft attempt.
+4. `POST /api/v1/scenario-attempts/{attemptId}/submit` (`202`, Bearer + `Idempotency-Key`):
+   ```json
+   { "answer": "Detailed structured answer addressing the prompt..." }
+   ```
+   Reserves 1 scenario quota event and queues background AI evaluation.
+5. Poll `GET /api/v1/scenario-attempts/{attemptId}` (`200`):
+   Status moves `submitted → processing → completed` (or `failed`). Upon successful evaluation, 1 quota is consumed. If evaluation fails, the reserved quota is voided.
+   Evaluation output includes:
+   `overallScore`, `dimensions: [{ criterion, score, evidence, feedback }]`, `strengths`, `gaps`, `recommendedApproach`, and `feedback`.
+
+## Standalone STAR Builder Flow
+
+1. `POST /api/v1/star-attempts` (`201`, Bearer + `Idempotency-Key`):
+   ```json
+   {
+     "question": "Kể về một lần bạn xử lý xung đột trong nhóm.",
+     "answer": "Khi làm việc tại dự án X, tình huống là... nhiệm vụ của tôi... tôi đã thực hiện... kết quả đạt được..."
+   }
+   ```
+   Reserves 1 `star_builder` quota and queues evaluation.
+2. Poll `GET /api/v1/star-attempts/{attemptId}` (`200`):
+   Returns structured STAR coaching identical to interview answers (`applicable`, `overallScore`, `situation`, `task`, `action`, `result`, `missingElements`, `strengths`, `coachingTips`).
+   Upon successful evaluation, quota is consumed; upon terminal failure, quota is voided.
+3. `GET /api/v1/star-attempts` (`200`, Bearer): lists the user's recent standalone STAR attempts.
+
+## Progress Analytics Flow
+
+`GET /api/v1/progress` (`200`, Bearer) is gated by the `progress_analytics` feature entitlement.
+Returns privacy-safe user-owned aggregates:
+- `completedInterviews` count
+- `recentInterviewScores` (last 10 completed sessions)
+- `averageInterviewScore`
+- `starAverages` (breakdown across situation, task, action, result)
+- `completedScenarios` count and `averageScenarioScore`
+- `completedStarAttempts` count
+- `recentActivity` audit timeline (type, resourceId, timestamp)
+
 ## Development shortcut (optional)
 
 `POST /dev/resume-analysis` is **DEVELOPMENT ONLY**. It accepts multipart `File` + `JobDescription` and an idempotency key, then orchestrates the same real upload, storage, extraction, automatic fallback, Worker, PostgreSQL and Gemini services. It is useful for backend debugging; the normal frontend should use the explicit sequence above. The route is not mapped outside Development.

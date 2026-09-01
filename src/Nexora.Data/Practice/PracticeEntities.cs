@@ -60,6 +60,7 @@ public sealed class ResumeAnalysis
     public string SchemaVersion { get; set; } = string.Empty;
     public string? Result { get; set; }
     public string? ErrorCode { get; set; }
+    public Guid? UsageReservationId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }

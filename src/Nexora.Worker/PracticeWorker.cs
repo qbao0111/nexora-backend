@@ -17,6 +17,7 @@ public sealed partial class PracticeWorker(
                 using var scope = scopeFactory.CreateScope();
                 var count = await scope.ServiceProvider.GetRequiredService<IPrivacyJobProcessor>().ProcessPendingAsync(stoppingToken);
                 count += await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(stoppingToken);
+                count += await scope.ServiceProvider.GetRequiredService<IScenarioStarJobProcessor>().ProcessPendingAsync(stoppingToken);
                 if (count > 0)
                 {
                     pollingBackoff.Reset();

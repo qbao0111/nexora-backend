@@ -64,7 +64,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
         ValidateLifetime = true,
         ClockSkew = TimeSpan.FromSeconds(30),
         NameClaimType = JwtRegisteredClaimNames.Email,
-        RoleClaimType = ClaimTypes.Role
+        RoleClaimType = "role"
     };
     options.Events = new JwtBearerEvents
     {
@@ -88,7 +88,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
 });
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy(AuthorizationPolicies.Admin, policy => policy.RequireRole("Admin"));
+    options.AddPolicy(AuthorizationPolicies.Admin, policy => policy.RequireAssertion(context =>
+        context.User.IsInRole("Admin") || context.User.HasClaim("role", "Admin") || context.User.HasClaim(ClaimTypes.Role, "Admin")));
     options.AddPolicy(AuthorizationPolicies.Owner, policy => policy.Requirements.Add(new OwnerRequirement()));
 });
 builder.Services.AddSingleton<IAuthorizationHandler, OwnerAuthorizationHandler>();

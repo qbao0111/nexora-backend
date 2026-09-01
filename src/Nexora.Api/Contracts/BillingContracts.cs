@@ -30,6 +30,8 @@ public sealed record EntitlementResponse(
     int? Limit,
     int Reserved,
     int Consumed,
-    int? Available);
+    int? Available,
+    IReadOnlyCollection<EntitlementFeatureResponse> Features);
+public sealed record EntitlementFeatureResponse(string Code, string Name, bool Enabled, int? Limit, int Reserved, int Consumed, int Adjustment, int? Available, bool Unlimited);
 public sealed record OrderResponse(Guid Id, string PlanCode, long AmountMinor, string Currency, string Status, DateTimeOffset CreatedAt);
 public sealed record BillingSummaryResponse(EntitlementResponse? Entitlement, IReadOnlyCollection<OrderResponse> Orders);

@@ -45,7 +45,8 @@ public sealed class MeController(IAuthService authService, IBillingService billi
             summary.Entitlement.Limit,
             summary.Entitlement.Reserved,
             summary.Entitlement.Consumed,
-            summary.Entitlement.Available),
+            summary.Entitlement.Available,
+            summary.Entitlement.Features.Select(f => new EntitlementFeatureResponse(f.Code, f.Name, f.Enabled, f.Limit, f.Reserved, f.Consumed, f.Adjustment, f.Available, f.Unlimited)).ToArray()),
         summary.Orders.Select(order => new OrderResponse(
             order.Id, order.PlanCode, order.AmountMinor, order.Currency, order.Status, order.CreatedAt)).ToArray());
 }
