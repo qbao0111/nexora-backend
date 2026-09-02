@@ -30,7 +30,10 @@ public sealed class SepayBillingApiTests : IDisposable
             ["Billing:Sepay:MerchantId"] = "MERCHANT_TEST",
             ["Billing:Sepay:SecretKey"] = SecretKey,
             ["Billing:Sepay:CheckoutUrl"] = "https://pay-sandbox.sepay.vn/v1/checkout/init",
-            ["Billing:Sepay:ApiBaseUrl"] = "https://pgapi-sandbox.sepay.vn"
+            ["Billing:Sepay:ApiBaseUrl"] = "https://pgapi-sandbox.sepay.vn",
+            ["Billing:Sepay:SuccessUrl"] = "https://frontend.example.test/payment/success",
+            ["Billing:Sepay:ErrorUrl"] = "https://frontend.example.test/payment/error",
+            ["Billing:Sepay:CancelUrl"] = "https://frontend.example.test/payment/cancel"
         }, services =>
         {
             services.RemoveAll<IPaymentProvider>();
@@ -190,11 +193,16 @@ public sealed class SepayBillingApiTests : IDisposable
         var action = data.GetProperty("checkout");
         Assert.Equal("POST", action.GetProperty("method").GetString());
         Assert.Equal("https://pay-sandbox.sepay.vn/v1/checkout/init", action.GetProperty("url").GetString());
-        var fields = action.GetProperty("fields").EnumerateArray().Select(item =>
-            $"{item.GetProperty("name").GetString()}={item.GetProperty("value").GetString()}").ToArray();
-        var names = fields.Select(field => field[..field.IndexOf('=')]).ToArray();
-        Assert.Equal("signature", names[^1]);
-        Assert.DoesNotContain(names, name => string.Equals(name, "secret_key", StringComparison.OrdinalIgnoreCase));
+        var formFields = action.GetProperty("fields").EnumerateArray().Select(item =>
+            (Name: item.GetProperty("name").GetString()!, Value: item.GetProperty("value").GetString()!)).ToArray();
+        var fields = formFields.Select(field => $"{field.Name}={field.Value}").ToArray();
+        Assert.Equal(
+            ["order_amount", "merchant", "currency", "operation", "order_description", "order_invoice_number", "success_url", "error_url", "cancel_url", "signature"],
+            formFields.Select(field => field.Name).ToArray());
+        Assert.Equal("https://frontend.example.test/payment/success", formFields[6].Value);
+        Assert.Equal("https://frontend.example.test/payment/error", formFields[7].Value);
+        Assert.Equal("https://frontend.example.test/payment/cancel", formFields[8].Value);
+        Assert.DoesNotContain(formFields, field => string.Equals(field.Name, "secret_key", StringComparison.OrdinalIgnoreCase));
         return new CheckoutResponse(data.GetProperty("orderId").GetGuid(), data.GetProperty("amountMinor").GetInt64(), string.Join("\n", fields));
     }
 

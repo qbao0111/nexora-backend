@@ -12,6 +12,7 @@ namespace Nexora.Integrations;
 
 public static class DependencyInjection
 {
+    private const int MaximumSepayCallbackUrlLength = 2048;
     private static readonly string[] AllowedSepayPaymentMethods =
     [
         "CARD",
@@ -71,10 +72,11 @@ public static class DependencyInjection
                 IsExpectedSepayApiUrl(options.ApiBaseUrl),
                 "Billing:Sepay:ApiBaseUrl must be the SePay Sandbox API host.")
             .Validate(options => string.IsNullOrWhiteSpace(options.PaymentMethod) ||
-                AllowedSepayPaymentMethods.Contains(options.PaymentMethod.Trim(), StringComparer.OrdinalIgnoreCase),
+                (string.Equals(options.PaymentMethod, options.PaymentMethod.Trim(), StringComparison.Ordinal) &&
+                 AllowedSepayPaymentMethods.Contains(options.PaymentMethod, StringComparer.OrdinalIgnoreCase)),
                 "Billing:Sepay:PaymentMethod must be CARD, BANK_TRANSFER or NAPAS_BANK_TRANSFER.")
-            .Validate(options => IsOptionalPublicHttpsUrl(options.SuccessUrl) && IsOptionalPublicHttpsUrl(options.ErrorUrl) && IsOptionalPublicHttpsUrl(options.CancelUrl),
-                "Billing:Sepay callback URLs must be absolute HTTPS URLs when supplied.")
+            .Validate(AreValidSepayCallbackUrls,
+                "Billing:Sepay callback URLs must be all empty or a same-origin public HTTPS triplet without whitespace, userinfo or fragments (max 2048 characters each).")
             .Validate(options => options.TimeoutSeconds is >= 5 and <= 60, "Billing:Sepay:TimeoutSeconds must be between 5 and 60 seconds.")
             .ValidateOnStart();
         services.AddHttpClient<SepayPaymentProvider>((provider, client) =>
@@ -102,7 +104,41 @@ public static class DependencyInjection
         string.Equals(uri.Host, "pgapi-sandbox.sepay.vn", StringComparison.OrdinalIgnoreCase) &&
         (uri.AbsolutePath is "/" or "") && string.IsNullOrEmpty(uri.Query);
 
-    private static bool IsOptionalPublicHttpsUrl(string value) =>
-        string.IsNullOrWhiteSpace(value) ||
-        (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps && !uri.IsLoopback);
+    private static bool AreValidSepayCallbackUrls(SepayOptions options)
+    {
+        var values = new[] { options.SuccessUrl, options.ErrorUrl, options.CancelUrl };
+        if (values.All(string.IsNullOrEmpty)) return true;
+        if (values.Any(string.IsNullOrEmpty)) return false;
+
+        var uris = new Uri[values.Length];
+        for (var index = 0; index < values.Length; index++)
+        {
+            if (!TryCreatePublicHttpsCallback(values[index], out var uri)) return false;
+            uris[index] = uri;
+        }
+
+        return IsSameOrigin(uris[0], uris[1]) && IsSameOrigin(uris[0], uris[2]);
+    }
+
+    private static bool TryCreatePublicHttpsCallback(string value, out Uri uri)
+    {
+        uri = null!;
+        if (value.Length > MaximumSepayCallbackUrlLength ||
+            string.IsNullOrWhiteSpace(value) ||
+            !string.Equals(value, value.Trim(), StringComparison.Ordinal) ||
+            !Uri.TryCreate(value, UriKind.Absolute, out var parsed) ||
+            parsed is null)
+            return false;
+
+        uri = parsed;
+        return uri.Scheme == Uri.UriSchemeHttps &&
+            !uri.IsLoopback &&
+            string.IsNullOrEmpty(uri.UserInfo) &&
+            string.IsNullOrEmpty(uri.Fragment);
+    }
+
+    private static bool IsSameOrigin(Uri left, Uri right) =>
+        string.Equals(left.Scheme, right.Scheme, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase) &&
+        left.Port == right.Port;
 }

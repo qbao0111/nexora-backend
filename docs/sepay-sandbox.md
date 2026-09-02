@@ -15,9 +15,21 @@ dotnet user-secrets set "Billing:Sepay:SecretKey" "YOUR_SANDBOX_SECRET_KEY" --pr
 
 Restart both API and Worker after changing secrets. The checkout endpoint is `https://pay-sandbox.sepay.vn/v1/checkout/init`; reconciliation uses `https://pgapi-sandbox.sepay.vn` with Basic authentication. No production endpoint is accepted by the Development adapter.
 
+## Configure browser callback URLs (optional)
+
+Browser redirects require a public HTTPS frontend. Configure all three values together when using hosted return pages:
+
+```powershell
+dotnet user-secrets set "Billing:Sepay:SuccessUrl" "https://YOUR-PUBLIC-FRONTEND/payment/success" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:ErrorUrl" "https://YOUR-PUBLIC-FRONTEND/payment/error" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:CancelUrl" "https://YOUR-PUBLIC-FRONTEND/payment/cancel" --project src/Nexora.Api
+```
+
+Localhost and HTTP callback URLs are intentionally rejected because SePay must be able to reach the browser return destination. Use a Vercel/preview frontend URL or a public tunnel for the frontend. This is separate from the backend IPN tunnel: for example, frontend `https://nexora-preview.vercel.app/payment/success` versus backend `https://backend-ngrok.example/api/v1/webhooks/payments/sepay`. Committed Development appsettings keep these values empty for backend-only testing.
+
 ## Configure the IPN URL
 
-1. Start a public HTTPS tunnel: `ngrok http 5088`.
+1. For the backend IPN only, start a public HTTPS tunnel: `ngrok http 5088`.
 2. In the SePay Sandbox merchant dashboard set the IPN URL to `https://<ngrok-domain>/api/v1/webhooks/payments/sepay`.
 3. Select `SECRET_KEY` authentication when the dashboard offers that option.
 

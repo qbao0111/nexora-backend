@@ -297,3 +297,10 @@ This log records completed implementation milestones and verification evidence. 
 ## 2026-09-02 — SePay PaymentMethod validation correction
 
 - Fixed the inverted SePay payment-method allowlist validation and added regression coverage for allowed and rejected values.
+
+## 2026-09-02 — SePay checkout return configuration hardening
+
+- SePay `PaymentMethod` now rejects surrounding whitespace instead of validating a trimmed copy and later submitting the untrimmed value.
+- SePay return URLs now validate as a coherent public HTTPS callback triplet.
+- Callback fields/signature and frontend source-of-truth behavior are covered by regression tests.
+- The previously successful live Sandbox payment round-trip remains the latest manual evidence; this patch itself does not perform another external payment.

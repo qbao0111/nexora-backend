@@ -78,6 +78,45 @@ public sealed class SepayPaymentProviderTests
     }
 
     [Fact]
+    public async Task CheckoutIncludesCallbackFieldsInSignedOrder()
+    {
+        const string successUrl = "https://example.com/payment/success";
+        const string errorUrl = "https://example.com/payment/error";
+        const string cancelUrl = "https://example.com/payment/cancel";
+        var provider = NewProvider(new SepayOptions
+        {
+            Environment = "Sandbox",
+            MerchantId = "MERCHANT_123",
+            SecretKey = "secret",
+            CheckoutUrl = TestOptions.CheckoutUrl,
+            ApiBaseUrl = TestOptions.ApiBaseUrl,
+            SuccessUrl = successUrl,
+            ErrorUrl = errorUrl,
+            CancelUrl = cancelUrl
+        });
+
+        var invoice = SepayPaymentProvider.ToSepayInvoiceNumber(OrderId);
+        var checkout = await provider.CreateCheckoutAsync(
+            new PaymentOrderRequest(OrderId, 49_000, "VND", invoice, DateTimeOffset.UtcNow, null), CancellationToken.None);
+
+        var fields = checkout.Action.Fields;
+        Assert.Equal(
+            ["order_amount", "merchant", "currency", "operation", "order_description", "order_invoice_number", "success_url", "error_url", "cancel_url", "signature"],
+            fields.Select(field => field.Name).ToArray());
+        Assert.Equal(successUrl, fields[6].Value);
+        Assert.Equal(errorUrl, fields[7].Value);
+        Assert.Equal(cancelUrl, fields[8].Value);
+        Assert.DoesNotContain(fields, field => field.Value == "secret");
+
+        const string signingString = "order_amount=49000,merchant=MERCHANT_123,currency=VND,operation=PURCHASE,order_description=Nexora order NX11111111222233334444555555555555,order_invoice_number=NX11111111222233334444555555555555,success_url=https://example.com/payment/success,error_url=https://example.com/payment/error,cancel_url=https://example.com/payment/cancel";
+        const string expected = "ilDFrIOo40KLtDSsPcGDSUp5iQMkIq2GW/XUPq9EbNE=";
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes("secret"));
+        var independent = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(signingString)));
+        Assert.Equal(expected, independent);
+        Assert.Equal(expected, fields[^1].Value);
+    }
+
+    [Fact]
     public void OptionalFieldsAreOmittedWhenUnsetAndProtocolOrderIsNotAlphabetical()
     {
         var fields = new List<CheckoutFormField>
@@ -238,6 +277,11 @@ public sealed class SepayPaymentProviderTests
     [InlineData("MOMO")]
     [InlineData("BANK")]
     [InlineData("INVALID")]
+    [InlineData(" CARD")]
+    [InlineData("CARD ")]
+    [InlineData(" BANK_TRANSFER ")]
+    [InlineData("\tCARD")]
+    [InlineData("NAPAS_BANK_TRANSFER\n")]
     public void InvalidSepayPaymentMethodsFailOptionsValidation(string paymentMethod)
     {
         using var serviceProvider = new ServiceCollection()
@@ -247,7 +291,89 @@ public sealed class SepayPaymentProviderTests
         Assert.Throws<OptionsValidationException>(() => serviceProvider.GetRequiredService<IOptions<SepayOptions>>().Value);
     }
 
-    private static IConfiguration CreateSepayConfiguration(string paymentMethod) =>
+    [Fact]
+    public void EmptyCallbackUrlsPassOptionsValidation()
+    {
+        var options = ResolveSepayOptions();
+        Assert.Equal(string.Empty, options.SuccessUrl);
+        Assert.Equal(string.Empty, options.ErrorUrl);
+        Assert.Equal(string.Empty, options.CancelUrl);
+    }
+
+    [Fact]
+    public void SameOriginPublicHttpsCallbackUrlsPassOptionsValidation()
+    {
+        var options = ResolveSepayOptions(
+            successUrl: "https://example.com/payment/success",
+            errorUrl: "https://example.com/payment/error",
+            cancelUrl: "https://example.com/payment/cancel");
+
+        Assert.Equal("https://example.com/payment/success", options.SuccessUrl);
+        Assert.Equal("https://example.com/payment/error", options.ErrorUrl);
+        Assert.Equal("https://example.com/payment/cancel", options.CancelUrl);
+    }
+
+    [Fact]
+    public void CallbackQueryStringIsAllowed()
+    {
+        var options = ResolveSepayOptions(
+            successUrl: "https://example.com/payment/success?source=sepay",
+            errorUrl: "https://example.com/payment/error",
+            cancelUrl: "https://example.com/payment/cancel");
+
+        Assert.Equal("https://example.com/payment/success?source=sepay", options.SuccessUrl);
+    }
+
+    [Theory]
+    [InlineData("https://example.com/payment/success", "", "")]
+    [InlineData("https://example.com/payment/success", "https://example.com/payment/error", "")]
+    [InlineData("http://example.com/payment/success", "http://example.com/payment/error", "http://example.com/payment/cancel")]
+    [InlineData("http://localhost:3000/payment/success", "http://localhost:3000/payment/error", "http://localhost:3000/payment/cancel")]
+    [InlineData("https://localhost/payment/success", "https://localhost/payment/error", "https://localhost/payment/cancel")]
+    [InlineData("https://127.0.0.1/payment/success", "https://127.0.0.1/payment/error", "https://127.0.0.1/payment/cancel")]
+    [InlineData("https://good.example/payment/success", "https://evil.example/payment/error", "https://good.example/payment/cancel")]
+    [InlineData("https://example.com/payment/success#foo", "https://example.com/payment/error", "https://example.com/payment/cancel")]
+    [InlineData("https://user:pass@example.com/payment/success", "https://example.com/payment/error", "https://example.com/payment/cancel")]
+    [InlineData(" https://example.com/payment/success", "https://example.com/payment/error", "https://example.com/payment/cancel")]
+    [InlineData("https://example.com/payment/success", "https://example.com/payment/error ", "https://example.com/payment/cancel")]
+    [InlineData("   ", "https://example.com/payment/error", "https://example.com/payment/cancel")]
+    public void InvalidCallbackUrlsFailOptionsValidation(string successUrl, string errorUrl, string cancelUrl)
+    {
+        AssertInvalidCallbackConfiguration(successUrl, errorUrl, cancelUrl);
+    }
+
+    [Fact]
+    public void CallbackUrlLongerThan2048CharactersFailsOptionsValidation()
+    {
+        var tooLong = "https://example.com/payment/" + new string('a', 2048);
+        AssertInvalidCallbackConfiguration(tooLong, "https://example.com/payment/error", "https://example.com/payment/cancel");
+    }
+
+    private static SepayOptions ResolveSepayOptions(
+        string paymentMethod = "",
+        string successUrl = "",
+        string errorUrl = "",
+        string cancelUrl = "")
+    {
+        using var serviceProvider = new ServiceCollection()
+            .AddIntegrations(CreateSepayConfiguration(paymentMethod, successUrl, errorUrl, cancelUrl))
+            .BuildServiceProvider();
+        return serviceProvider.GetRequiredService<IOptions<SepayOptions>>().Value;
+    }
+
+    private static void AssertInvalidCallbackConfiguration(string successUrl, string errorUrl, string cancelUrl)
+    {
+        using var serviceProvider = new ServiceCollection()
+            .AddIntegrations(CreateSepayConfiguration("", successUrl, errorUrl, cancelUrl))
+            .BuildServiceProvider();
+        Assert.Throws<OptionsValidationException>(() => serviceProvider.GetRequiredService<IOptions<SepayOptions>>().Value);
+    }
+
+    private static IConfiguration CreateSepayConfiguration(
+        string paymentMethod,
+        string successUrl = "",
+        string errorUrl = "",
+        string cancelUrl = "") =>
         new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["Features:Ai"] = "false",
@@ -257,7 +383,10 @@ public sealed class SepayPaymentProviderTests
             ["Billing:Sepay:SecretKey"] = "secret",
             ["Billing:Sepay:CheckoutUrl"] = "https://pay-sandbox.sepay.vn/v1/checkout/init",
             ["Billing:Sepay:ApiBaseUrl"] = "https://pgapi-sandbox.sepay.vn",
-            ["Billing:Sepay:PaymentMethod"] = paymentMethod
+            ["Billing:Sepay:PaymentMethod"] = paymentMethod,
+            ["Billing:Sepay:SuccessUrl"] = successUrl,
+            ["Billing:Sepay:ErrorUrl"] = errorUrl,
+            ["Billing:Sepay:CancelUrl"] = cancelUrl
         }).Build();
 
     private static SepayPaymentProvider NewProvider(SepayOptions? options = null, HttpMessageHandler? handler = null) =>

@@ -100,7 +100,15 @@ dotnet user-secrets set "Billing:Sepay:MerchantId" "YOUR_SANDBOX_MERCHANT_ID" --
 dotnet user-secrets set "Billing:Sepay:SecretKey" "YOUR_SANDBOX_SECRET_KEY" --project src/Nexora.Api
 ```
 
-SePay IPN is configured in the SePay merchant dashboard, not sent in the checkout form. For local testing run `ngrok http 5088` and configure the public IPN URL as `https://<ngrok-domain>/api/v1/webhooks/payments/sepay`. See [sepay-sandbox.md](sepay-sandbox.md).
+For frontend browser return pages, configure all three public HTTPS URLs through user-secrets:
+
+```powershell
+dotnet user-secrets set "Billing:Sepay:SuccessUrl" "https://YOUR-PUBLIC-FRONTEND/payment/success" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:ErrorUrl" "https://YOUR-PUBLIC-FRONTEND/payment/error" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:CancelUrl" "https://YOUR-PUBLIC-FRONTEND/payment/cancel" --project src/Nexora.Api
+```
+
+Localhost/HTTP callback URLs are rejected intentionally. Use a Vercel preview URL or a public frontend tunnel. SePay IPN is configured separately in the merchant dashboard; for the backend IPN only, run `ngrok http 5088` and use `https://<ngrok-domain>/api/v1/webhooks/payments/sepay`. Do not confuse the backend IPN URL with the frontend callback URLs. See [sepay-sandbox.md](sepay-sandbox.md).
 
 ## 6. Team branch and pull-request workflow
 

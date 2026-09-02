@@ -111,7 +111,20 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
    }
    ```
 
-   For SePay, create a temporary HTML form with `method=POST`, `action=checkout.url`, append hidden inputs in exactly the returned `checkout.fields` order, and submit it. Do not use fetch or generate a GET query. SePay sends a server-side `POST /api/v1/webhooks/payments/sepay` with `X-Secret-Key`; the browser never receives the SePay SecretKey. Poll `GET /checkout-sessions/{orderId}` after the hosted checkout returns. The status is `processing`, `pending`, `fulfilled` or terminal `failed`; a failed order requires a new checkout intent. If IPN is delayed, call `POST /checkout-sessions/{orderId}/refresh` with Bearer auth to reconcile through the SePay Sandbox REST API. If Development uses `fake`, the existing fake webhook helper remains available for deterministic tests. After payment completion, refetch `/me`.
+   For SePay, create a temporary HTML form with `method=POST`, `action=checkout.url`, append hidden inputs in exactly the returned `checkout.fields` order, and submit it. Do not use fetch or generate a GET query. Before `form.submit()`, save the order ID:
+
+   ```js
+   sessionStorage.setItem("pendingPaymentOrderId", data.orderId);
+   form.submit();
+   ```
+
+   SePay sends a server-side `POST /api/v1/webhooks/payments/sepay` with `X-Secret-Key`; the browser never receives the SePay SecretKey. The browser return pages (`/payment/success`, `/payment/error`, `/payment/cancel`) are UI hints only. On all three routes, read `pendingPaymentOrderId`, call `GET /api/v1/checkout-sessions/{orderId}`, and treat the backend order status as authoritative. Never grant entitlement from a browser redirect.
+
+   - Success: show “Đang xác nhận thanh toán...”, poll briefly while `pending`, optionally call `POST /api/v1/checkout-sessions/{orderId}/refresh` after a short delay, show success and refetch `/api/v1/me` only when `fulfilled`, then clear `pendingPaymentOrderId`. Show failure if the backend says `failed`.
+   - Error: query the backend first because the IPN may already have fulfilled the order; do not immediately mark the order failed locally.
+   - Cancel: query the backend without mutating it. If it remains `pending`, let the user leave or start a new checkout.
+
+   A failed order is terminal and requires a new checkout intent. If Development uses `fake`, the existing fake webhook helper remains available for deterministic tests. After payment completion, refetch `/me`.
 
 2. `POST /interviews` (`201`, Bearer + idempotency key):
 
