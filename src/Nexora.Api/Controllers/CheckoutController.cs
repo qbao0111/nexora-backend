@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -14,9 +15,9 @@ public sealed class CheckoutController(IBillingService billingService) : Control
     public async Task<ActionResult<ApiResponse<CheckoutResponse>>> Create(CheckoutRequest request, CancellationToken cancellationToken)
     {
         var checkout = await billingService.CreateCheckoutAsync(
-            User.GetRequiredUserId(), request.PlanPriceId, Request.Headers["Idempotency-Key"].ToString(), cancellationToken);
+            User.GetRequiredUserId(), request.PlanPriceId, Request.Headers["Idempotency-Key"].ToString(), ClientIpAddress(), cancellationToken);
         return StatusCode(201, new ApiResponse<CheckoutResponse>(new CheckoutResponse(
-            checkout.OrderId, checkout.Status, checkout.AmountMinor, checkout.Currency, checkout.Provider, checkout.CheckoutUrl)));
+            checkout.OrderId, checkout.Status, checkout.AmountMinor, checkout.Currency, checkout.Provider, Map(checkout.Checkout))));
     }
 
     [HttpGet("{orderId:guid}")]
@@ -40,7 +41,21 @@ public sealed class CheckoutController(IBillingService billingService) : Control
         checkout.Currency,
         checkout.Provider,
         checkout.Status,
-        checkout.CheckoutUrl,
+        Map(checkout.Checkout),
         checkout.CreatedAt,
         checkout.UpdatedAt);
+
+    private static CheckoutActionResponse? Map(CheckoutAction? action) => action is null
+        ? null
+        : new CheckoutActionResponse(action.Method, action.Url,
+            action.Fields.Select(field => new CheckoutFieldResponse(field.Name, field.Value)).ToArray());
+
+    private string? ClientIpAddress()
+    {
+        var address = HttpContext.Connection.RemoteIpAddress;
+        if (address is null) return null;
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (IPAddress.IsLoopback(address)) return "127.0.0.1";
+        return address.ToString();
+    }
 }

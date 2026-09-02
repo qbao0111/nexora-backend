@@ -26,12 +26,18 @@ public sealed class FakePaymentProvider(IOptions<FakePaymentOptions> options, Ti
     public Task<PaymentCheckout> CreateCheckoutAsync(PaymentOrderRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(new PaymentCheckout(ProviderName, request.ProviderTransactionId, $"/fake-payments/{request.ProviderTransactionId}"));
+        return Task.FromResult(new PaymentCheckout(
+            ProviderName,
+            request.ProviderTransactionId,
+            new CheckoutAction("GET", $"/fake-payments/{request.ProviderTransactionId}", Array.Empty<CheckoutFormField>())));
     }
 
-    public Task<VerifiedPaymentEvent> VerifyWebhookAsync(string signature, string timestamp, ReadOnlyMemory<byte> body, CancellationToken cancellationToken)
+    public Task<VerifiedPaymentEvent> VerifyWebhookAsync(PaymentCallbackRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var signature = request.Headers.TryGetValue("X-Payment-Signature", out var signatureValue) ? signatureValue : string.Empty;
+        var timestamp = request.Headers.TryGetValue("X-Payment-Timestamp", out var timestampValue) ? timestampValue : string.Empty;
+        var body = request.Body;
         if (string.IsNullOrWhiteSpace(_options.WebhookSecret)) throw InvalidWebhook();
         if (!long.TryParse(timestamp, NumberStyles.None, CultureInfo.InvariantCulture, out var unixSeconds)) throw InvalidWebhook();
         var sentAt = DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
@@ -49,8 +55,10 @@ public sealed class FakePaymentProvider(IOptions<FakePaymentOptions> options, Ti
         try { payload = JsonSerializer.Deserialize<FakeWebhookPayload>(body.Span, JsonOptions); }
         catch (JsonException) { throw InvalidPayload(); }
         if (payload is null || payload.OrderId == Guid.Empty || string.IsNullOrWhiteSpace(payload.EventId) ||
-            string.IsNullOrWhiteSpace(payload.TransactionId) || payload.OccurredAt == default)
+            string.IsNullOrWhiteSpace(payload.TransactionId) || string.IsNullOrWhiteSpace(payload.Status) || payload.OccurredAt == default)
             throw InvalidPayload();
+
+        var status = payload.Status.Trim();
 
         return Task.FromResult(new VerifiedPaymentEvent(
             payload.EventId.Trim(),
@@ -58,7 +66,8 @@ public sealed class FakePaymentProvider(IOptions<FakePaymentOptions> options, Ti
             payload.TransactionId.Trim(),
             payload.AmountMinor,
             payload.Currency.Trim().ToUpperInvariant(),
-            string.Equals(payload.Status, "paid", StringComparison.OrdinalIgnoreCase),
+            string.Equals(status, "paid", StringComparison.OrdinalIgnoreCase),
+            !string.Equals(status, "pending", StringComparison.OrdinalIgnoreCase),
             payload.OccurredAt));
     }
 

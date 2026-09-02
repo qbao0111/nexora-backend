@@ -267,3 +267,40 @@ This log records completed implementation milestones and verification evidence. 
 - MoMo IPN verification validates the signed JSON payload, local order reference, amount and VND currency before fulfillment. Duplicate valid deliveries stay idempotent and return `204 No Content`.
 - Documented MoMo sandbox setup in `docs/momo-sandbox.md` and updated the frontend integration payment flow. DEC-02 remains unresolved and production payment remains fail-closed.
 - Verification: restore/build passed with 0 warnings/errors; 47 retained unit/integration tests passed; EF Core reported no pending model changes; NuGet reported no vulnerable direct/transitive packages. Scoped formatting passed for changed files; full-repo format remains blocked by the pre-existing `InitialIdentityFoundation` migration formatting issue that must not be rewritten casually.
+
+## 2026-09-02 — VNPAY Sandbox supersedes active MoMo development payment
+
+- Replaced the active hosted payment provider path with VNPAY Sandbox PAY 2.1.0 behind the existing `IPaymentProvider` boundary. `FakePaymentProvider` remains the deterministic default for normal automated development/integration tests.
+- Removed active MoMo runtime registration, source tests and sandbox runbook. Historical MoMo payment records and project log entries remain historical and are not rewritten.
+- VNPAY checkout builds a signed sandbox payment URL locally with deterministic `nx{OrderId:N}` transaction references, VND amount ×100 conversion, GMT+7 timestamps and HMAC-SHA512 signatures.
+- Added VNPAY GET IPN handling with provider-protocol JSON responses, checksum/TmnCode/reference/amount validation, duplicate handling and the shared PaymentEvent → Subscription → Entitlement fulfillment path. Checkout refresh uses VNPAY QueryDr reconciliation.
+- DEC-02 remains unresolved; this is internal sandbox support only and does not enable production VNPAY.
+
+## 2026-09-02 — VNPAY protocol correctness patch
+
+- Separated PAY/IPN checksum data from transport query construction and added the official fixed HMAC-SHA512 regression vector.
+- QueryDr now validates correlation before response-code handling, fails closed with `PAYMENT_PROVIDER_QUERY_FAILED` for protocol errors, and distinguishes pending (`00/01`) from terminal failed statuses.
+- Added provider-neutral `IsFinal` and `BillingValues.Failed`; verified failed callbacks close orders without granting entitlements while duplicate callbacks remain idempotent.
+- Tightened VNPAY `TmnCode` startup validation and added independent unit/integration coverage for signatures, failed/pending flows and QueryDr errors. No migration or package was added.
+
+## 2026-09-02 — VNPAY 2.1 checksum compatibility follow-up
+
+- Aligned PAY/IPN HMACSHA512 canonicalization with the current VNPAY 2.1.0 online migration guidance: sorted non-empty key/value pairs use application/x-www-form-urlencoded-compatible encoding before signing.
+- Updated the PAY regression vector and independent test helpers; QueryDr remains pipe-signed and unchanged.
+
+## 2026-09-02 — SePay Sandbox gateway replaces active VNPAY adapter
+
+- Replaced the active VNPAY Sandbox runtime with a BCL-only SePay Payment Gateway Sandbox adapter; `FakePaymentProvider` remains the default deterministic test provider and DEC-02 stays unresolved.
+- Checkout responses now expose an ordered POST action with SePay fields and a Base64 HMAC-SHA256 signature; checkout creation stays local and existing order/idempotency, PaymentEvent and entitlement paths are reused.
+- Added SePay `ORDER_PAID`/`TRANSACTION_VOID` IPN handling with `X-Secret-Key`, sandbox REST Basic-auth reconciliation, terminal failed-payment behavior and focused mocked unit/integration coverage. No migration, package or credential was added; live Sandbox checkout/IPN verification remains manual.
+
+## 2026-09-02 — SePay PaymentMethod validation correction
+
+- Fixed the inverted SePay payment-method allowlist validation and added regression coverage for allowed and rejected values.
+
+## 2026-09-02 — SePay checkout return configuration hardening
+
+- SePay `PaymentMethod` now rejects surrounding whitespace instead of validating a trimmed copy and later submitting the untrimmed value.
+- SePay return URLs now validate as a coherent public HTTPS callback triplet.
+- Callback fields/signature and frontend source-of-truth behavior are covered by regression tests.
+- The previously successful live Sandbox payment round-trip remains the latest manual evidence; this patch itself does not perform another external payment.

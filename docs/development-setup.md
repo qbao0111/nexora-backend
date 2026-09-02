@@ -91,6 +91,25 @@ pwsh ./scripts/complete-fake-payment.ps1 -OrderId "ORDER_ID"
 
 Refetch `/api/v1/me` after fulfillment. The owner validates the complete Gemini journey manually with the real browser/frontend and real CV/JD files; do not put provider secrets in the browser.
 
+For hosted payment sandbox testing, keep FakePayment as the default and explicitly switch a machine to SePay only through user-secrets:
+
+```powershell
+dotnet user-secrets set "Billing:Payment:Provider" "sepay" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:Environment" "Sandbox" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:MerchantId" "YOUR_SANDBOX_MERCHANT_ID" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:SecretKey" "YOUR_SANDBOX_SECRET_KEY" --project src/Nexora.Api
+```
+
+For frontend browser return pages, configure all three public HTTPS URLs through user-secrets:
+
+```powershell
+dotnet user-secrets set "Billing:Sepay:SuccessUrl" "https://YOUR-PUBLIC-FRONTEND/payment/success" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:ErrorUrl" "https://YOUR-PUBLIC-FRONTEND/payment/error" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:CancelUrl" "https://YOUR-PUBLIC-FRONTEND/payment/cancel" --project src/Nexora.Api
+```
+
+Localhost/HTTP callback URLs are rejected intentionally. Use a Vercel preview URL or a public frontend tunnel. SePay IPN is configured separately in the merchant dashboard; for the backend IPN only, run `ngrok http 5088` and use `https://<ngrok-domain>/api/v1/webhooks/payments/sepay`. Do not confuse the backend IPN URL with the frontend callback URLs. See [sepay-sandbox.md](sepay-sandbox.md).
+
 ## 6. Team branch and pull-request workflow
 
 Use one coherent feature/phase per branch so it can be reviewed or reverted independently:

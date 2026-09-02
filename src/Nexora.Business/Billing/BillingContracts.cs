@@ -6,6 +6,7 @@ public static class BillingValues
     public const string Processing = "processing";
     public const string Processed = "processed";
     public const string Fulfilled = "fulfilled";
+    public const string Failed = "failed";
     public const string Active = "active";
     public const string Reserve = "reserve";
     public const string Consume = "consume";
@@ -36,7 +37,7 @@ public sealed record CheckoutSession(
     long AmountMinor,
     string Currency,
     string Provider,
-    string CheckoutUrl);
+    CheckoutAction? Checkout);
 
 public sealed record CheckoutStatus(
     Guid OrderId,
@@ -45,7 +46,7 @@ public sealed record CheckoutStatus(
     string Currency,
     string Provider,
     string Status,
-    string CheckoutUrl,
+    CheckoutAction? Checkout,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
@@ -70,10 +71,10 @@ public sealed record UsageReservation(Guid EventId, Guid EntitlementId, int? Ava
 public interface IBillingService
 {
     Task<IReadOnlyCollection<PlanView>> GetPlansAsync(CancellationToken cancellationToken);
-    Task<CheckoutSession> CreateCheckoutAsync(Guid userId, Guid planPriceId, string idempotencyKey, CancellationToken cancellationToken);
+    Task<CheckoutSession> CreateCheckoutAsync(Guid userId, Guid planPriceId, string idempotencyKey, string? ipAddress, CancellationToken cancellationToken);
     Task<CheckoutStatus> GetCheckoutAsync(Guid userId, Guid orderId, CancellationToken cancellationToken);
     Task<CheckoutStatus> RefreshCheckoutAsync(Guid userId, Guid orderId, CancellationToken cancellationToken);
-    Task<string> ProcessPaymentWebhookAsync(string provider, string signature, string timestamp, ReadOnlyMemory<byte> body, CancellationToken cancellationToken);
+    Task<PaymentWebhookProcessResult> ProcessPaymentWebhookAsync(string provider, PaymentCallbackRequest callback, CancellationToken cancellationToken);
     Task<BillingSummary> GetSummaryAsync(Guid userId, CancellationToken cancellationToken);
     Task<UsageReservation> ReserveInterviewAsync(Guid userId, string sourceId, string idempotencyKey, CancellationToken cancellationToken);
     Task ConsumeReservationAsync(Guid userId, Guid reservationEventId, CancellationToken cancellationToken);
@@ -81,15 +82,27 @@ public interface IBillingService
     Task AdjustInterviewQuotaAsync(Guid userId, int quantity, string reason, string idempotencyKey, CancellationToken cancellationToken);
 }
 
-public sealed record PaymentOrderRequest(Guid OrderId, long AmountMinor, string Currency, string ProviderTransactionId);
-public sealed record PaymentCheckout(string Provider, string ProviderTransactionId, string CheckoutUrl);
-public sealed record VerifiedPaymentEvent(string ProviderEventId, Guid OrderId, string ProviderTransactionId, long AmountMinor, string Currency, bool IsPaid, DateTimeOffset OccurredAt);
+public sealed record PaymentOrderRequest(Guid OrderId, long AmountMinor, string Currency, string ProviderTransactionId, DateTimeOffset CreatedAt, string? IpAddress);
+public sealed record CheckoutFormField(string Name, string Value);
+public sealed record CheckoutAction(string Method, string Url, IReadOnlyList<CheckoutFormField> Fields);
+public sealed record PaymentCheckout(string Provider, string ProviderTransactionId, CheckoutAction Action);
+public sealed record VerifiedPaymentEvent(
+    string ProviderEventId,
+    Guid OrderId,
+    string ProviderTransactionId,
+    long AmountMinor,
+    string Currency,
+    bool IsPaid,
+    bool IsFinal,
+    DateTimeOffset OccurredAt);
+public sealed record PaymentCallbackRequest(string Method, IReadOnlyDictionary<string, string> QueryParameters, IReadOnlyDictionary<string, string> Headers, ReadOnlyMemory<byte> Body);
+public sealed record PaymentWebhookProcessResult(Guid OrderId, string OrderStatus, bool WasDuplicate, bool WasAlreadyFinal);
 
 public interface IPaymentProvider
 {
     string ProviderName { get; }
     string CreateProviderTransactionId(Guid orderId);
     Task<PaymentCheckout> CreateCheckoutAsync(PaymentOrderRequest request, CancellationToken cancellationToken);
-    Task<VerifiedPaymentEvent> VerifyWebhookAsync(string signature, string timestamp, ReadOnlyMemory<byte> body, CancellationToken cancellationToken);
+    Task<VerifiedPaymentEvent> VerifyWebhookAsync(PaymentCallbackRequest request, CancellationToken cancellationToken);
     Task<VerifiedPaymentEvent?> QueryPaymentAsync(PaymentOrderRequest request, CancellationToken cancellationToken);
 }

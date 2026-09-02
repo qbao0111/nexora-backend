@@ -18,10 +18,11 @@
 | GET | `/me/export` | Export allowlisted core profile/billing/practice data của owner; không trả storage key, credential hoặc provider secret. |
 | POST | `/me/deletion-requests` | Yêu cầu xoá bất đồng bộ; bắt buộc `Idempotency-Key`, revoke session ngay và trả `202`. |
 | GET | `/plans` | Gói, giá, quyền lợi từ server. |
-| POST | `/checkout-sessions` | Tạo order/URL thanh toán. |
+| POST | `/checkout-sessions` | Tạo order và checkout action (form POST của payment provider). |
 | GET | `/checkout-sessions/:id` | Đọc trạng thái checkout của owner. |
 | POST | `/checkout-sessions/:id/refresh` | Reconcile checkout pending từ provider sandbox khi IPN chậm. |
-| POST | `/webhooks/payments/:provider` | Nhận webhook đã verify chữ ký. |
+| POST | `/webhooks/payments/fake` | Nhận webhook fake đã ký cho test deterministic nội bộ. |
+| POST | `/webhooks/payments/sepay` | Nhận SePay Sandbox IPN JSON với `X-Secret-Key`, trả `{ "success": true }` khi callback hợp lệ hoặc trùng. |
 | POST | `/uploads/presign` | Cấp signed URL upload CV/avatar. |
 | POST | `/resumes` | Ghi metadata file sau upload. |
 | GET | `/resumes/:id` | Đọc trạng thái xử lý CV và lỗi an toàn của owner. |
@@ -226,6 +227,8 @@ Interview: canonical tại 08-data-model.md
 ```
 
 Chỉ `active` nhận official answer. Completion xảy ra đúng một lần; report generation idempotent; optimistic concurrency/versioning chống transition/answer trùng. Terminal interview states không đổi trừ administrative/recovery process explicit và audited.
+
+Checkout payment responses expose `checkout: { method, url, fields[] }`. SePay uses a signed ordered POST form; the frontend must submit the fields as returned and must not generate signatures. Checkout statuses are `processing`, `pending`, `fulfilled` and terminal `failed`. SePay `ORDER_PAID` requires `CAPTURED` + `APPROVED`; `TRANSACTION_VOID` becomes final unpaid and moves a pending order to `failed`. Duplicate valid IPNs are acknowledged with HTTP 200 and do not create duplicate subscriptions or entitlements. Order `failed` is terminal and refresh does not call the provider again.
 
 ## Phân quyền
 

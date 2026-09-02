@@ -86,7 +86,7 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
    { "planPriceId": "10000000-0000-0000-0000-000000000002" }
    ```
 
-   The response is provider-neutral:
+   The response is provider-neutral. In Development with SePay, it contains a signed form action:
 
    ```json
    {
@@ -94,12 +94,37 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
      "status": "pending",
      "amountMinor": 49000,
      "currency": "VND",
-     "provider": "momo",
-     "checkoutUrl": "https://test-payment.momo.vn/..."
+     "provider": "sepay",
+     "checkout": {
+       "method": "POST",
+       "url": "https://pay-sandbox.sepay.vn/v1/checkout/init",
+       "fields": [
+         { "name": "order_amount", "value": "49000" },
+         { "name": "merchant", "value": "..." },
+         { "name": "currency", "value": "VND" },
+         { "name": "operation", "value": "PURCHASE" },
+         { "name": "order_description", "value": "Nexora order NX..." },
+         { "name": "order_invoice_number", "value": "NX..." },
+         { "name": "signature", "value": "..." }
+       ]
+     }
    }
    ```
 
-   If Development uses `Billing:Payment:Provider=momo`, redirect the browser to `checkoutUrl`, then poll `GET /checkout-sessions/{orderId}` after the user returns. The backend may be configured with MoMo `captureWallet` for QR/Test App checkout or `payWithCC` for browser-based sandbox card checkout; the frontend flow is unchanged. If IPN is delayed, call `POST /checkout-sessions/{orderId}/refresh` with Bearer auth to reconcile the pending order from MoMo sandbox. If Development uses `fake`, the owner can still complete the fake webhook helper; the browser never receives the fake webhook secret. After payment completion, refetch `/me`.
+   For SePay, create a temporary HTML form with `method=POST`, `action=checkout.url`, append hidden inputs in exactly the returned `checkout.fields` order, and submit it. Do not use fetch or generate a GET query. Before `form.submit()`, save the order ID:
+
+   ```js
+   sessionStorage.setItem("pendingPaymentOrderId", data.orderId);
+   form.submit();
+   ```
+
+   SePay sends a server-side `POST /api/v1/webhooks/payments/sepay` with `X-Secret-Key`; the browser never receives the SePay SecretKey. The browser return pages (`/payment/success`, `/payment/error`, `/payment/cancel`) are UI hints only. On all three routes, read `pendingPaymentOrderId`, call `GET /api/v1/checkout-sessions/{orderId}`, and treat the backend order status as authoritative. Never grant entitlement from a browser redirect.
+
+   - Success: show “Đang xác nhận thanh toán...”, poll briefly while `pending`, optionally call `POST /api/v1/checkout-sessions/{orderId}/refresh` after a short delay, show success and refetch `/api/v1/me` only when `fulfilled`, then clear `pendingPaymentOrderId`. Show failure if the backend says `failed`.
+   - Error: query the backend first because the IPN may already have fulfilled the order; do not immediately mark the order failed locally.
+   - Cancel: query the backend without mutating it. If it remains `pending`, let the user leave or start a new checkout.
+
+   A failed order is terminal and requires a new checkout intent. If Development uses `fake`, the existing fake webhook helper remains available for deterministic tests. After payment completion, refetch `/me`.
 
 2. `POST /interviews` (`201`, Bearer + idempotency key):
 
