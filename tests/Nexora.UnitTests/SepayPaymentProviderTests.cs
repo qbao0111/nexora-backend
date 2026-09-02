@@ -215,6 +215,51 @@ public sealed class SepayPaymentProviderTests
         Assert.Throws<OptionsValidationException>(() => serviceProvider.GetRequiredService<IOptions<SepayOptions>>().Value);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("CARD")]
+    [InlineData("BANK_TRANSFER")]
+    [InlineData("NAPAS_BANK_TRANSFER")]
+    [InlineData("card")]
+    [InlineData("bank_transfer")]
+    [InlineData("   ")]
+    public void AllowedSepayPaymentMethodsPassOptionsValidation(string paymentMethod)
+    {
+        using var serviceProvider = new ServiceCollection()
+            .AddIntegrations(CreateSepayConfiguration(paymentMethod))
+            .BuildServiceProvider();
+
+        var options = serviceProvider.GetRequiredService<IOptions<SepayOptions>>().Value;
+        Assert.Equal(paymentMethod, options.PaymentMethod);
+    }
+
+    [Theory]
+    [InlineData("PAYPAL")]
+    [InlineData("MOMO")]
+    [InlineData("BANK")]
+    [InlineData("INVALID")]
+    public void InvalidSepayPaymentMethodsFailOptionsValidation(string paymentMethod)
+    {
+        using var serviceProvider = new ServiceCollection()
+            .AddIntegrations(CreateSepayConfiguration(paymentMethod))
+            .BuildServiceProvider();
+
+        Assert.Throws<OptionsValidationException>(() => serviceProvider.GetRequiredService<IOptions<SepayOptions>>().Value);
+    }
+
+    private static IConfiguration CreateSepayConfiguration(string paymentMethod) =>
+        new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Features:Ai"] = "false",
+            ["Billing:Payment:Provider"] = "sepay",
+            ["Billing:Sepay:Environment"] = "Sandbox",
+            ["Billing:Sepay:MerchantId"] = "MERCHANT_TEST",
+            ["Billing:Sepay:SecretKey"] = "secret",
+            ["Billing:Sepay:CheckoutUrl"] = "https://pay-sandbox.sepay.vn/v1/checkout/init",
+            ["Billing:Sepay:ApiBaseUrl"] = "https://pgapi-sandbox.sepay.vn",
+            ["Billing:Sepay:PaymentMethod"] = paymentMethod
+        }).Build();
+
     private static SepayPaymentProvider NewProvider(SepayOptions? options = null, HttpMessageHandler? handler = null) =>
         new(new HttpClient(handler ?? new QueryHandler("{}")), Options.Create(options ?? TestOptions), TimeProvider.System);
 

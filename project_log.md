@@ -293,3 +293,7 @@ This log records completed implementation milestones and verification evidence. 
 - Replaced the active VNPAY Sandbox runtime with a BCL-only SePay Payment Gateway Sandbox adapter; `FakePaymentProvider` remains the default deterministic test provider and DEC-02 stays unresolved.
 - Checkout responses now expose an ordered POST action with SePay fields and a Base64 HMAC-SHA256 signature; checkout creation stays local and existing order/idempotency, PaymentEvent and entitlement paths are reused.
 - Added SePay `ORDER_PAID`/`TRANSACTION_VOID` IPN handling with `X-Secret-Key`, sandbox REST Basic-auth reconciliation, terminal failed-payment behavior and focused mocked unit/integration coverage. No migration, package or credential was added; live Sandbox checkout/IPN verification remains manual.
+
+## 2026-09-02 — SePay PaymentMethod validation correction
+
+- Fixed the inverted SePay payment-method allowlist validation and added regression coverage for allowed and rejected values.

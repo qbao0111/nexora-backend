@@ -12,6 +12,13 @@ namespace Nexora.Integrations;
 
 public static class DependencyInjection
 {
+    private static readonly string[] AllowedSepayPaymentMethods =
+    [
+        "CARD",
+        "BANK_TRANSFER",
+        "NAPAS_BANK_TRANSFER"
+    ];
+
     public static IServiceCollection AddIntegrations(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddOptions<LocalStorageOptions>().Bind(configuration.GetSection(LocalStorageOptions.SectionName))
@@ -63,9 +70,8 @@ public static class DependencyInjection
             .Validate(options => !string.Equals(paymentProvider, "sepay", StringComparison.OrdinalIgnoreCase) ||
                 IsExpectedSepayApiUrl(options.ApiBaseUrl),
                 "Billing:Sepay:ApiBaseUrl must be the SePay Sandbox API host.")
-            .Validate(options => !string.IsNullOrWhiteSpace(options.PaymentMethod) &&
-                !new[] { "CARD", "BANK_TRANSFER", "NAPAS_BANK_TRANSFER" }.Contains(options.PaymentMethod, StringComparer.OrdinalIgnoreCase) ||
-                string.IsNullOrWhiteSpace(options.PaymentMethod),
+            .Validate(options => string.IsNullOrWhiteSpace(options.PaymentMethod) ||
+                AllowedSepayPaymentMethods.Contains(options.PaymentMethod.Trim(), StringComparer.OrdinalIgnoreCase),
                 "Billing:Sepay:PaymentMethod must be CARD, BANK_TRANSFER or NAPAS_BANK_TRANSFER.")
             .Validate(options => IsOptionalPublicHttpsUrl(options.SuccessUrl) && IsOptionalPublicHttpsUrl(options.ErrorUrl) && IsOptionalPublicHttpsUrl(options.CancelUrl),
                 "Billing:Sepay callback URLs must be absolute HTTPS URLs when supplied.")
