@@ -5,7 +5,7 @@
 **Current milestone:** Real browser/API/PostgreSQL/Gemini flow is the development verification path
 
 **Specification baseline:** Approved implementation baseline
-**Last updated:** 2026-08-25
+**Last updated:** 2026-09-02
 
 Nexora is an AI-powered interview-practice application. Its journey is **CV/JD → personalised mock interview → rubric/evidence-based feedback → report → further practice**. The MVP is a coaching product, not a covert assistant for live interviews.
 
@@ -90,7 +90,24 @@ Use the real browser/frontend journey for CV, JD and interview validation. A nor
 
 ### SePay Sandbox payment configuration
 
-Fake payment remains the default development adapter. To test the hosted SePay Sandbox form, explicitly set `Billing:Payment:Provider=sepay` and the SePay Sandbox secrets through user-secrets. See [SePay Sandbox payment runbook](docs/sepay-sandbox.md). Production payment stays disabled until DEC-02 is approved; this sandbox adapter is not a production payment selection.
+Fake payment remains the default development adapter. To test the hosted SePay Sandbox form, explicitly switch only your local user-secrets to SePay:
+
+```powershell
+dotnet user-secrets set "Billing:Payment:Provider" "sepay" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:Environment" "Sandbox" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:MerchantId" "YOUR_SANDBOX_MERCHANT_ID" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:SecretKey" "YOUR_SANDBOX_SECRET_KEY" --project src/Nexora.Api
+```
+
+For browser return pages, configure all three callback URLs together. They must be public HTTPS frontend URLs on the same origin; localhost/HTTP are rejected:
+
+```powershell
+dotnet user-secrets set "Billing:Sepay:SuccessUrl" "https://YOUR-PUBLIC-FRONTEND/payment/success" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:ErrorUrl" "https://YOUR-PUBLIC-FRONTEND/payment/error" --project src/Nexora.Api
+dotnet user-secrets set "Billing:Sepay:CancelUrl" "https://YOUR-PUBLIC-FRONTEND/payment/cancel" --project src/Nexora.Api
+```
+
+Configure the backend IPN separately in the SePay dashboard as `https://<ngrok-domain>/api/v1/webhooks/payments/sepay`. See [SePay Sandbox payment runbook](docs/sepay-sandbox.md). Production payment stays disabled until DEC-02 is approved; this sandbox adapter is not a production payment selection.
 
 ## Optional offline/local PostgreSQL
 
