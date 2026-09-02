@@ -17,7 +17,7 @@ public sealed class CheckoutController(IBillingService billingService) : Control
         var checkout = await billingService.CreateCheckoutAsync(
             User.GetRequiredUserId(), request.PlanPriceId, Request.Headers["Idempotency-Key"].ToString(), ClientIpAddress(), cancellationToken);
         return StatusCode(201, new ApiResponse<CheckoutResponse>(new CheckoutResponse(
-            checkout.OrderId, checkout.Status, checkout.AmountMinor, checkout.Currency, checkout.Provider, checkout.CheckoutUrl)));
+            checkout.OrderId, checkout.Status, checkout.AmountMinor, checkout.Currency, checkout.Provider, Map(checkout.Checkout))));
     }
 
     [HttpGet("{orderId:guid}")]
@@ -41,9 +41,14 @@ public sealed class CheckoutController(IBillingService billingService) : Control
         checkout.Currency,
         checkout.Provider,
         checkout.Status,
-        checkout.CheckoutUrl,
+        Map(checkout.Checkout),
         checkout.CreatedAt,
         checkout.UpdatedAt);
+
+    private static CheckoutActionResponse? Map(CheckoutAction? action) => action is null
+        ? null
+        : new CheckoutActionResponse(action.Method, action.Url,
+            action.Fields.Select(field => new CheckoutFieldResponse(field.Name, field.Value)).ToArray());
 
     private string? ClientIpAddress()
     {

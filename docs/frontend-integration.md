@@ -86,7 +86,7 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
    { "planPriceId": "10000000-0000-0000-0000-000000000002" }
    ```
 
-   The response is provider-neutral:
+   The response is provider-neutral. In Development with SePay, it contains a signed form action:
 
    ```json
    {
@@ -94,12 +94,24 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
      "status": "pending",
      "amountMinor": 49000,
      "currency": "VND",
-     "provider": "vnpay",
-     "checkoutUrl": "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?..."
+     "provider": "sepay",
+     "checkout": {
+       "method": "POST",
+       "url": "https://pay-sandbox.sepay.vn/v1/checkout/init",
+       "fields": [
+         { "name": "order_amount", "value": "49000" },
+         { "name": "merchant", "value": "..." },
+         { "name": "currency", "value": "VND" },
+         { "name": "operation", "value": "PURCHASE" },
+         { "name": "order_description", "value": "Nexora order NX..." },
+         { "name": "order_invoice_number", "value": "NX..." },
+         { "name": "signature", "value": "..." }
+       ]
+     }
    }
    ```
 
-   If Development uses `Billing:Payment:Provider=vnpay`, redirect the browser to `checkoutUrl`, then poll `GET /checkout-sessions/{orderId}` after the user returns from VNPAY. The status is `processing`, `pending`, `fulfilled` or terminal `failed`; a failed order must not be retried or refreshed—start a new checkout intent. The VNPAY return URL is browser navigation only; it never grants entitlement. VNPAY IPN is a server-side `GET /webhooks/payments/vnpay` configured in the VNPAY sandbox merchant portal. If IPN is delayed, call `POST /checkout-sessions/{orderId}/refresh` with Bearer auth to reconcile the pending order through VNPAY QueryDr. If Development uses `fake`, the owner can still complete the fake webhook helper; the browser never receives the fake webhook secret. After payment completion, refetch `/me`.
+   For SePay, create a temporary HTML form with `method=POST`, `action=checkout.url`, append hidden inputs in exactly the returned `checkout.fields` order, and submit it. Do not use fetch or generate a GET query. SePay sends a server-side `POST /api/v1/webhooks/payments/sepay` with `X-Secret-Key`; the browser never receives the SePay SecretKey. Poll `GET /checkout-sessions/{orderId}` after the hosted checkout returns. The status is `processing`, `pending`, `fulfilled` or terminal `failed`; a failed order requires a new checkout intent. If IPN is delayed, call `POST /checkout-sessions/{orderId}/refresh` with Bearer auth to reconcile through the SePay Sandbox REST API. If Development uses `fake`, the existing fake webhook helper remains available for deterministic tests. After payment completion, refetch `/me`.
 
 2. `POST /interviews` (`201`, Bearer + idempotency key):
 

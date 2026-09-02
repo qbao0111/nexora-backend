@@ -37,7 +37,7 @@ public sealed record CheckoutSession(
     long AmountMinor,
     string Currency,
     string Provider,
-    string CheckoutUrl);
+    CheckoutAction? Checkout);
 
 public sealed record CheckoutStatus(
     Guid OrderId,
@@ -46,7 +46,7 @@ public sealed record CheckoutStatus(
     string Currency,
     string Provider,
     string Status,
-    string CheckoutUrl,
+    CheckoutAction? Checkout,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
@@ -83,7 +83,9 @@ public interface IBillingService
 }
 
 public sealed record PaymentOrderRequest(Guid OrderId, long AmountMinor, string Currency, string ProviderTransactionId, DateTimeOffset CreatedAt, string? IpAddress);
-public sealed record PaymentCheckout(string Provider, string ProviderTransactionId, string CheckoutUrl);
+public sealed record CheckoutFormField(string Name, string Value);
+public sealed record CheckoutAction(string Method, string Url, IReadOnlyList<CheckoutFormField> Fields);
+public sealed record PaymentCheckout(string Provider, string ProviderTransactionId, CheckoutAction Action);
 public sealed record VerifiedPaymentEvent(
     string ProviderEventId,
     Guid OrderId,

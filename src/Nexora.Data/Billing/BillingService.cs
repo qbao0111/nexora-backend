@@ -177,7 +177,7 @@ public sealed partial class BillingService(
         var order = await dbContext.Orders.AsNoTracking()
             .SingleOrDefaultAsync(item => item.Id == orderId && item.UserId == userId, cancellationToken)
             ?? throw new BusinessException("ORDER_NOT_FOUND", "Không tìm thấy order thanh toán.", BusinessErrorKind.NotFound);
-        return MapCheckoutStatus(order);
+        return await BuildCheckoutStatusAsync(order, cancellationToken);
     }
 
     public async Task<CheckoutStatus> RefreshCheckoutAsync(Guid userId, Guid orderId, CancellationToken cancellationToken)
@@ -190,17 +190,16 @@ public sealed partial class BillingService(
 
         if (order.Status == BillingValues.Processing)
         {
-            var checkout = await EnsureProviderCheckoutAsync(order, null, cancellationToken);
-            return new CheckoutStatus(checkout.OrderId, order.PlanCodeSnapshot, checkout.AmountMinor, checkout.Currency, checkout.Provider, checkout.Status, checkout.CheckoutUrl, order.CreatedAt, order.UpdatedAt);
+            return await BuildCheckoutStatusAsync(order, cancellationToken);
         }
-        if (order.Status != BillingValues.Pending) return MapCheckoutStatus(order);
+        if (order.Status != BillingValues.Pending) return MapCheckoutStatus(order, null);
 
         var verified = await paymentProvider.QueryPaymentAsync(
             new PaymentOrderRequest(order.Id, order.AmountMinor, order.Currency, order.ProviderTransactionId, order.CreatedAt, null), cancellationToken);
         if (verified is not null) await ApplyPaymentEventAsync(verified, cancellationToken);
 
         var refreshed = await dbContext.Orders.AsNoTracking().SingleAsync(item => item.Id == orderId, cancellationToken);
-        return MapCheckoutStatus(refreshed);
+        return await BuildCheckoutStatusAsync(refreshed, cancellationToken);
     }
 
     public async Task<PaymentWebhookProcessResult> ProcessPaymentWebhookAsync(
@@ -523,15 +522,16 @@ public sealed partial class BillingService(
 
     private async Task<CheckoutSession> EnsureProviderCheckoutAsync(Order order, string? ipAddress, CancellationToken cancellationToken)
     {
-        if (order.Status != BillingValues.Processing && !string.IsNullOrWhiteSpace(order.CheckoutUrl)) return MapCheckout(order);
         if (!string.Equals(order.PaymentProvider, paymentProvider.ProviderName, StringComparison.Ordinal))
             throw new BusinessException("PAYMENT_PROVIDER_NOT_SUPPORTED", "Cổng thanh toán không được hỗ trợ.", BusinessErrorKind.NotFound);
+        if (order.Status is not (BillingValues.Processing or BillingValues.Pending)) return MapCheckout(order, null);
 
         var providerCheckout = await paymentProvider.CreateCheckoutAsync(
             new PaymentOrderRequest(order.Id, order.AmountMinor, order.Currency, order.ProviderTransactionId, order.CreatedAt, ipAddress), cancellationToken);
         if (!string.Equals(providerCheckout.Provider, paymentProvider.ProviderName, StringComparison.Ordinal) ||
             !string.Equals(providerCheckout.ProviderTransactionId, order.ProviderTransactionId, StringComparison.Ordinal) ||
-            string.IsNullOrWhiteSpace(providerCheckout.CheckoutUrl))
+            providerCheckout.Action is null || string.IsNullOrWhiteSpace(providerCheckout.Action.Method) ||
+            string.IsNullOrWhiteSpace(providerCheckout.Action.Url))
             throw new BusinessException("PAYMENT_CHECKOUT_FAILED", "Không thể tạo phiên thanh toán.", BusinessErrorKind.ExternalFailure);
 
         var current = await FindOrderForUpdateAsync(order.Id, cancellationToken)
@@ -539,11 +539,19 @@ public sealed partial class BillingService(
         if (current.Status == BillingValues.Processing || string.IsNullOrWhiteSpace(current.CheckoutUrl))
         {
             current.Status = BillingValues.Pending;
-            current.CheckoutUrl = providerCheckout.CheckoutUrl;
+            current.CheckoutUrl = providerCheckout.Action.Url;
             current.UpdatedAt = timeProvider.GetUtcNow();
             await dbContext.SaveChangesAsync(cancellationToken);
         }
-        return MapCheckout(current);
+        return MapCheckout(current, current.Status is BillingValues.Processing or BillingValues.Pending ? providerCheckout.Action : null);
+    }
+
+    private async Task<CheckoutStatus> BuildCheckoutStatusAsync(Order order, CancellationToken cancellationToken)
+    {
+        if (order.Status is not (BillingValues.Processing or BillingValues.Pending)) return MapCheckoutStatus(order, null);
+        var checkout = await EnsureProviderCheckoutAsync(order, null, cancellationToken);
+        var current = await dbContext.Orders.AsNoTracking().SingleAsync(item => item.Id == order.Id, cancellationToken);
+        return MapCheckoutStatus(current, checkout.Checkout);
     }
 
     private Task<UsageEvent?> FindUsageByKeyAsync(Guid userId, string action, string key, CancellationToken cancellationToken) =>
@@ -607,11 +615,11 @@ public sealed partial class BillingService(
     private static int? Available(Entitlement entitlement) =>
         entitlement.InterviewLimit is null ? null : entitlement.InterviewLimit.Value + entitlement.Adjustment - entitlement.Reserved - entitlement.Consumed;
 
-    private static CheckoutSession MapCheckout(Order order) =>
-        new(order.Id, order.Status, order.AmountMinor, order.Currency, order.PaymentProvider, order.CheckoutUrl);
+    private static CheckoutSession MapCheckout(Order order, CheckoutAction? action) =>
+        new(order.Id, order.Status, order.AmountMinor, order.Currency, order.PaymentProvider, action);
 
-    private static CheckoutStatus MapCheckoutStatus(Order order) =>
-        new(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.PaymentProvider, order.Status, order.CheckoutUrl, order.CreatedAt, order.UpdatedAt);
+    private static CheckoutStatus MapCheckoutStatus(Order order, CheckoutAction? action) =>
+        new(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.PaymentProvider, order.Status, action, order.CreatedAt, order.UpdatedAt);
 
     private static OutboxEvent CreateOutbox(string type, string aggregateType, Guid aggregateId, object payload, DateTimeOffset now) => new()
     {

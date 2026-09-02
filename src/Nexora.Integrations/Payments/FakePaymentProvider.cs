@@ -26,7 +26,10 @@ public sealed class FakePaymentProvider(IOptions<FakePaymentOptions> options, Ti
     public Task<PaymentCheckout> CreateCheckoutAsync(PaymentOrderRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(new PaymentCheckout(ProviderName, request.ProviderTransactionId, $"/fake-payments/{request.ProviderTransactionId}"));
+        return Task.FromResult(new PaymentCheckout(
+            ProviderName,
+            request.ProviderTransactionId,
+            new CheckoutAction("GET", $"/fake-payments/{request.ProviderTransactionId}", Array.Empty<CheckoutFormField>())));
     }
 
     public Task<VerifiedPaymentEvent> VerifyWebhookAsync(PaymentCallbackRequest request, CancellationToken cancellationToken)

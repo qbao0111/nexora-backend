@@ -287,3 +287,9 @@ This log records completed implementation milestones and verification evidence. 
 
 - Aligned PAY/IPN HMACSHA512 canonicalization with the current VNPAY 2.1.0 online migration guidance: sorted non-empty key/value pairs use application/x-www-form-urlencoded-compatible encoding before signing.
 - Updated the PAY regression vector and independent test helpers; QueryDr remains pipe-signed and unchanged.
+
+## 2026-09-02 — SePay Sandbox gateway replaces active VNPAY adapter
+
+- Replaced the active VNPAY Sandbox runtime with a BCL-only SePay Payment Gateway Sandbox adapter; `FakePaymentProvider` remains the default deterministic test provider and DEC-02 stays unresolved.
+- Checkout responses now expose an ordered POST action with SePay fields and a Base64 HMAC-SHA256 signature; checkout creation stays local and existing order/idempotency, PaymentEvent and entitlement paths are reused.
+- Added SePay `ORDER_PAID`/`TRANSACTION_VOID` IPN handling with `X-Secret-Key`, sandbox REST Basic-auth reconciliation, terminal failed-payment behavior and focused mocked unit/integration coverage. No migration, package or credential was added; live Sandbox checkout/IPN verification remains manual.

@@ -46,45 +46,57 @@ public static class DependencyInjection
         var paymentProvider = configuration.GetValue($"{PaymentProviderOptions.SectionName}:Provider", "fake")?.Trim().ToLowerInvariant() ?? "fake";
         services.AddOptions<PaymentProviderOptions>().Bind(configuration.GetSection(PaymentProviderOptions.SectionName))
             .Validate(options => string.Equals(options.Provider, "fake", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(options.Provider, "vnpay", StringComparison.OrdinalIgnoreCase), "Billing:Payment:Provider must be fake or vnpay.")
+                string.Equals(options.Provider, "sepay", StringComparison.OrdinalIgnoreCase), "Billing:Payment:Provider must be fake or sepay.")
             .ValidateOnStart();
         services.AddOptions<FakePaymentOptions>().Bind(configuration.GetSection(FakePaymentOptions.SectionName))
             .Validate(options => options.TimestampToleranceMinutes is > 0 and <= 60, "Fake payment timestamp tolerance must be between 1 and 60 minutes.");
-        services.AddOptions<VnpayOptions>().Bind(configuration.GetSection(VnpayOptions.SectionName))
-            .Validate(options => !string.Equals(paymentProvider, "vnpay", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(options.Environment, "Sandbox", StringComparison.OrdinalIgnoreCase),
-                "Only Billing:Vnpay:Environment=Sandbox is supported before DEC-02 production payment approval.")
-            .Validate(options => !string.Equals(paymentProvider, "vnpay", StringComparison.OrdinalIgnoreCase) ||
-                (VnpayPaymentProvider.IsValidTmnCode(options.TmnCode) &&
-                 !string.IsNullOrWhiteSpace(options.HashSecret) &&
-                 Uri.TryCreate(options.ReturnUrl, UriKind.Absolute, out _)),
-                "VNPAY sandbox TmnCode (exactly 8 alphanumeric characters), HashSecret and absolute ReturnUrl are required when Billing:Payment:Provider=vnpay.")
-            .Validate(options => !string.Equals(paymentProvider, "vnpay", StringComparison.OrdinalIgnoreCase) ||
-                IsExpectedVnpayUrl(options.PaymentUrl, "/paymentv2/vpcpay.html"),
-                "Billing:Vnpay:PaymentUrl must be the VNPAY sandbox payment endpoint.")
-            .Validate(options => !string.Equals(paymentProvider, "vnpay", StringComparison.OrdinalIgnoreCase) ||
-                IsExpectedVnpayUrl(options.QueryUrl, "/merchant_webapi/api/transaction"),
-                "Billing:Vnpay:QueryUrl must be the VNPAY sandbox query endpoint.")
-            .Validate(options => string.Equals(options.Locale, "vn", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(options.Locale, "en", StringComparison.OrdinalIgnoreCase), "Billing:Vnpay:Locale must be vn or en.")
-            .Validate(options => options.ExpireMinutes is >= 5 and <= 60, "Billing:Vnpay:ExpireMinutes must be between 5 and 60 minutes.")
-            .Validate(options => options.TimeoutSeconds is >= 30 and <= 60, "Billing:Vnpay:TimeoutSeconds must be between 30 and 60 seconds.")
+        services.AddOptions<SepayOptions>().Bind(configuration.GetSection(SepayOptions.SectionName))
+            .Validate(options => !string.Equals(paymentProvider, "sepay", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(options.Environment, "Sandbox", StringComparison.Ordinal),
+                "Billing:Sepay:Environment=Sandbox is required before production payment approval.")
+            .Validate(options => !string.Equals(paymentProvider, "sepay", StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(options.MerchantId) && !string.IsNullOrWhiteSpace(options.SecretKey)),
+                "Billing:Sepay:MerchantId and Billing:Sepay:SecretKey are required when Billing:Payment:Provider=sepay.")
+            .Validate(options => !string.Equals(paymentProvider, "sepay", StringComparison.OrdinalIgnoreCase) ||
+                IsExpectedSepayCheckoutUrl(options.CheckoutUrl),
+                "Billing:Sepay:CheckoutUrl must be the SePay Sandbox checkout endpoint.")
+            .Validate(options => !string.Equals(paymentProvider, "sepay", StringComparison.OrdinalIgnoreCase) ||
+                IsExpectedSepayApiUrl(options.ApiBaseUrl),
+                "Billing:Sepay:ApiBaseUrl must be the SePay Sandbox API host.")
+            .Validate(options => !string.IsNullOrWhiteSpace(options.PaymentMethod) &&
+                !new[] { "CARD", "BANK_TRANSFER", "NAPAS_BANK_TRANSFER" }.Contains(options.PaymentMethod, StringComparer.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(options.PaymentMethod),
+                "Billing:Sepay:PaymentMethod must be CARD, BANK_TRANSFER or NAPAS_BANK_TRANSFER.")
+            .Validate(options => IsOptionalPublicHttpsUrl(options.SuccessUrl) && IsOptionalPublicHttpsUrl(options.ErrorUrl) && IsOptionalPublicHttpsUrl(options.CancelUrl),
+                "Billing:Sepay callback URLs must be absolute HTTPS URLs when supplied.")
+            .Validate(options => options.TimeoutSeconds is >= 5 and <= 60, "Billing:Sepay:TimeoutSeconds must be between 5 and 60 seconds.")
             .ValidateOnStart();
-        services.AddHttpClient<VnpayPaymentProvider>((provider, client) =>
+        services.AddHttpClient<SepayPaymentProvider>((provider, client) =>
         {
-            var vnpay = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<VnpayOptions>>().Value;
-            client.Timeout = TimeSpan.FromSeconds(vnpay.TimeoutSeconds);
+            var sepay = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<SepayOptions>>().Value;
+            client.Timeout = TimeSpan.FromSeconds(sepay.TimeoutSeconds);
         });
-        if (string.Equals(paymentProvider, "vnpay", StringComparison.OrdinalIgnoreCase))
-            services.AddSingleton<IPaymentProvider>(provider => provider.GetRequiredService<VnpayPaymentProvider>());
+        if (string.Equals(paymentProvider, "sepay", StringComparison.OrdinalIgnoreCase))
+            services.AddSingleton<IPaymentProvider>(provider => provider.GetRequiredService<SepayPaymentProvider>());
         else
             services.AddSingleton<IPaymentProvider, FakePaymentProvider>();
         return services;
     }
 
-    private static bool IsExpectedVnpayUrl(string value, string path) =>
+    private static bool IsExpectedSepayCheckoutUrl(string value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
         uri.Scheme == Uri.UriSchemeHttps &&
-        string.Equals(uri.Host, "sandbox.vnpayment.vn", StringComparison.OrdinalIgnoreCase) &&
-        string.Equals(uri.AbsolutePath, path, StringComparison.Ordinal);
+        string.Equals(uri.Host, "pay-sandbox.sepay.vn", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(uri.AbsolutePath, "/v1/checkout/init", StringComparison.Ordinal) &&
+        string.IsNullOrEmpty(uri.Query);
+
+    private static bool IsExpectedSepayApiUrl(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        uri.Scheme == Uri.UriSchemeHttps &&
+        string.Equals(uri.Host, "pgapi-sandbox.sepay.vn", StringComparison.OrdinalIgnoreCase) &&
+        (uri.AbsolutePath is "/" or "") && string.IsNullOrEmpty(uri.Query);
+
+    private static bool IsOptionalPublicHttpsUrl(string value) =>
+        string.IsNullOrWhiteSpace(value) ||
+        (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps && !uri.IsLoopback);
 }
