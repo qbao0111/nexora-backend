@@ -242,7 +242,9 @@ public sealed partial class FeatureEntitlementService(
         var now = timeProvider.GetUtcNow();
         var candidates = await dbContext.Entitlements.AsNoTracking()
             .Where(item => item.UserId == userId && item.Status == BillingValues.Active).ToArrayAsync(cancellationToken);
-        return candidates.Where(item => item.StartsAt <= now && item.EndsAt > now).OrderBy(item => item.EndsAt).FirstOrDefault();
+        return candidates.Where(item => item.StartsAt <= now && item.EndsAt > now)
+            .OrderBy(item => string.Equals(item.PlanCodeSnapshot, "free", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ThenBy(item => item.EndsAt).FirstOrDefault();
     }
 
     private async Task<Entitlement?> FindActiveEntitlementForUpdateAsync(Guid userId, CancellationToken cancellationToken)
@@ -250,10 +252,12 @@ public sealed partial class FeatureEntitlementService(
         var now = timeProvider.GetUtcNow();
         if (dbContext.Database.IsNpgsql())
             return await dbContext.Entitlements.FromSqlInterpolated(
-                $"SELECT * FROM entitlements WHERE \"UserId\" = {userId} AND \"Status\" = {BillingValues.Active} AND \"StartsAt\" <= {now} AND \"EndsAt\" > {now} ORDER BY \"EndsAt\" LIMIT 1 FOR UPDATE")
+                $"SELECT * FROM entitlements WHERE \"UserId\" = {userId} AND \"Status\" = {BillingValues.Active} AND \"StartsAt\" <= {now} AND \"EndsAt\" > {now} ORDER BY CASE WHEN LOWER(\"PlanCodeSnapshot\") = 'free' THEN 1 ELSE 0 END, \"EndsAt\" LIMIT 1 FOR UPDATE")
                 .SingleOrDefaultAsync(cancellationToken);
         var candidates = await dbContext.Entitlements.Where(item => item.UserId == userId && item.Status == BillingValues.Active).ToArrayAsync(cancellationToken);
-        return candidates.Where(item => item.StartsAt <= now && item.EndsAt > now).OrderBy(item => item.EndsAt).FirstOrDefault();
+        return candidates.Where(item => item.StartsAt <= now && item.EndsAt > now)
+            .OrderBy(item => string.Equals(item.PlanCodeSnapshot, "free", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ThenBy(item => item.EndsAt).FirstOrDefault();
     }
 
     private async Task<EntitlementFeature?> FindEntitlementFeatureForUpdateAsync(Guid entitlementFeatureId, CancellationToken cancellationToken)

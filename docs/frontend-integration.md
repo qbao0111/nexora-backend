@@ -32,9 +32,15 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
    { "email": "candidate@example.com", "password": "...", "displayName": "Candidate" }
    ```
 
-   Save `data.accessToken` in memory. The response also sets the refresh cookie.
+   Save `data.accessToken` in memory. The response also sets the refresh cookie. Newly registered users automatically receive the `User` role and a default 100-year Free Plan entitlement with 1 mock interview.
 
-2. `GET /me` (`200`) to hydrate the current user and server-owned billing/quota state.
+2. `GET /me` (`200`) to hydrate the current user, assigned roles (`["User"]`), and server-owned billing/quota state.
+
+   `POST /me/password` (`200`, Bearer):
+   ```json
+   { "currentPassword": "...", "newPassword": "..." }
+   ```
+   Requires authenticated session and minimum 10-character password. Revokes all active refresh tokens and updates security stamp. Frontend should prompt for re-authentication or update memory session.
 
 3. `POST /uploads/presign` (`200`, Bearer):
 
@@ -197,7 +203,7 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
     "id": "...",
     "email": "candidate@example.com",
     "displayName": "Candidate",
-    "roles": ["Candidate"],
+    "roles": ["User"],
     "billing": {
       "entitlement": {
         "id": "...",

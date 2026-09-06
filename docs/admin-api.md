@@ -153,14 +153,56 @@ All administrative operations require administrative privileges. Mutation endpoi
 ## 3. User Management and Support
 
 ### 3.1 List Users
-`GET /api/v1/admin/users?query=...&role=...&planCode=...&entitlementState=...&cursor=...&pageSize=20`
-- Query filters by email or display name substring.
-- Filter by `role` (e.g. `Admin`, `Candidate`).
+`GET /api/v1/admin/users?query=...&search=...&role=...&planCode=...&entitlementState=...&cursor=...&pageSize=20`
+- Query/search filters by email or display name substring (case-insensitive).
+- Filter by `role` (e.g. `Admin`, `User`).
 - Filter by `planCode` (e.g. `free`, `pro`).
 - Filter by `entitlementState` (`active`, `expired`, `none`).
-- Cursor-based pagination on `id`.
+- Cursor-based pagination on `id` (returned as `data.lastId`).
 
-### 3.2 Get User Detail
+### 3.2 List System Roles
+`GET /api/v1/admin/roles`
+- Returns all available system roles (`id`, `name`, `normalizedName`).
+- **Response 200:**
+  ```json
+  {
+    "data": [
+      { "id": "50000000-0000-0000-0000-000000000001", "name": "User", "normalizedName": "USER" },
+      { "id": "50000000-0000-0000-0000-000000000002", "name": "Admin", "normalizedName": "ADMIN" }
+    ]
+  }
+  ```
+
+### 3.3 Update User Roles
+`PUT /api/v1/admin/users/{userId}/roles`
+- Requires `Admin` privileges and `Reason` field.
+- Invariants: Cannot remove `Admin` role from oneself; cannot remove the base `User` role.
+- Logs an immutable `AdminAuditEvent` (`user.roles.update`).
+- **Request Body:**
+  ```json
+  {
+    "roles": ["User", "Admin"],
+    "reason": "Promote to administrator"
+  }
+  ```
+- **Response 200:** Returns updated `AdminUserDetailView`.
+
+### 3.4 Update User Status (Activate/Deactivate)
+`PUT /api/v1/admin/users/{userId}/status`
+- Requires `Admin` privileges and `Reason` field.
+- Invariants: Cannot deactivate self; cannot deactivate the last remaining active Admin.
+- When deactivating: immediately revokes active refresh tokens and updates user security stamp. Inactive users are rejected on login, refresh, and subsequent request token validation.
+- Logs an immutable `AdminAuditEvent` (`user.deactivate` or `user.reactivate`).
+- **Request Body:**
+  ```json
+  {
+    "active": false,
+    "reason": "Suspicious account activity"
+  }
+  ```
+- **Response 200:** Returns updated `AdminUserDetailView`.
+
+### 3.5 Get User Detail
 `GET /api/v1/admin/users/{userId}`
 - Returns user account summary, current active entitlement with feature quotas, and recent orders.
 - **Strict Privacy Invariant:** No CV text, JD body, answers, transcripts, or reports are returned.
@@ -171,7 +213,7 @@ All administrative operations require administrative privileges. Mutation endpoi
       "id": "...",
       "email": "candidate@example.com",
       "displayName": "Nguyen Van A",
-      "roles": ["Candidate"],
+      "roles": ["User"],
       "active": true,
       "createdAt": "2026-09-01T00:00:00Z",
       "currentEntitlement": {
@@ -189,7 +231,7 @@ All administrative operations require administrative privileges. Mutation endpoi
   }
   ```
 
-### 3.3 Manual Plan Grant
+### 3.6 Manual Plan Grant
 `POST /api/v1/admin/users/{userId}/plan-grants`
 - Headers: `Idempotency-Key: <unique-uuid>`
 - **Request Body:**
@@ -204,7 +246,7 @@ All administrative operations require administrative privileges. Mutation endpoi
 - Logs an immutable `AdminAuditEvent`.
 - **Response 201:** Returns `AdminGrantResponse`.
 
-### 3.4 Quota Adjustment
+### 3.7 Quota Adjustment
 `POST /api/v1/admin/users/{userId}/feature-adjustments`
 - Headers: `Idempotency-Key: <unique-uuid>`
 - **Request Body:**

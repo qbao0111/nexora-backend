@@ -15,6 +15,7 @@ public interface IAuthService
     Task RevokeAllSessionsAsync(Guid userId, CancellationToken cancellationToken);
     Task<AuthenticatedUser> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken);
     Task<AuthenticatedUser> UpdateProfileAsync(Guid userId, string? displayName, CancellationToken cancellationToken);
+    Task ChangePasswordAsync(Guid userId, string currentPassword, string newPassword, CancellationToken cancellationToken);
 }
 
 public interface IExternalIdentityProvider

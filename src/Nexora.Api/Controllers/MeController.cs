@@ -24,6 +24,13 @@ public sealed class MeController(IAuthService authService, IBillingService billi
     public async Task<ActionResult<ApiResponse<UserResponse>>> UpdateProfile(UpdateProfileRequest request, CancellationToken cancellationToken) =>
         Ok(new ApiResponse<UserResponse>(Map(await authService.UpdateProfileAsync(User.GetRequiredUserId(), request.DisplayName, cancellationToken))));
 
+    [HttpPost("password")]
+    public async Task<IActionResult> ChangePassword(ChangePasswordRequest request, CancellationToken cancellationToken)
+    {
+        await authService.ChangePasswordAsync(User.GetRequiredUserId(), request.CurrentPassword, request.NewPassword, cancellationToken);
+        return NoContent();
+    }
+
     [HttpGet("export")]
     public async Task<ActionResult<ApiResponse<CoreDataExport>>> Export(CancellationToken cancellationToken) =>
         Ok(new ApiResponse<CoreDataExport>(await privacyService.ExportAsync(User.GetRequiredUserId(), cancellationToken)));

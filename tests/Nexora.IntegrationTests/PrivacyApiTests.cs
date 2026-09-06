@@ -73,48 +73,10 @@ public sealed class PrivacyApiTests
     private static async Task SeedPendingInterviewAsync(NexoraDbContext db, Guid userId)
     {
         var now = DateTimeOffset.UtcNow;
-        var order = new Order
-        {
-            Id = Guid.NewGuid(),
-            UserId = userId,
-            PlanPriceId = Guid.Parse("10000000-0000-0000-0000-000000000001"),
-            PlanCodeSnapshot = "free",
-            AmountMinor = 0,
-            Currency = "VND",
-            InterviewQuota = 1,
-            Status = BillingValues.Fulfilled,
-            PaymentProvider = "test",
-            ProviderTransactionId = Guid.NewGuid().ToString("N"),
-            CheckoutUrl = "https://example.test",
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        var subscription = new Subscription
-        {
-            Id = Guid.NewGuid(),
-            UserId = userId,
-            OrderId = order.Id,
-            Status = BillingValues.Active,
-            StartsAt = now.AddMinutes(-1),
-            EndsAt = now.AddDays(1),
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        var entitlement = new Entitlement
-        {
-            Id = Guid.NewGuid(),
-            UserId = userId,
-            SubscriptionId = subscription.Id,
-            PlanCodeSnapshot = "free",
-            Status = BillingValues.Active,
-            InterviewLimit = 1,
-            Reserved = 1,
-            StartsAt = subscription.StartsAt,
-            EndsAt = subscription.EndsAt,
-            CreatedAt = now,
-            UpdatedAt = now,
-            ConcurrencyToken = Guid.NewGuid()
-        };
+        var entitlement = await db.Entitlements.SingleAsync(item => item.UserId == userId);
+        entitlement.Reserved = 1;
+        entitlement.UpdatedAt = now;
+
         var reservation = new UsageEvent
         {
             Id = Guid.NewGuid(),
@@ -143,7 +105,7 @@ public sealed class PrivacyApiTests
             UpdatedAt = now
         };
         reservation.SourceId = session.Id.ToString("N");
-        db.AddRange(order, subscription, entitlement, reservation, session);
+        db.AddRange(reservation, session);
         await db.SaveChangesAsync();
     }
 

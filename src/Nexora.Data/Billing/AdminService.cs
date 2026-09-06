@@ -327,35 +327,281 @@ public sealed partial class AdminService(
         return MapPlan(reloaded.Plan, reloaded.Plan.Prices.OrderBy(p => p.AmountMinor));
     }
 
+    public Task<IReadOnlyCollection<AdminRoleView>> GetRolesAsync(CancellationToken cancellationToken)
+    {
+        IReadOnlyCollection<AdminRoleView> roles =
+        [
+            new(Nexora.Business.Authorization.RoleNames.User),
+            new(Nexora.Business.Authorization.RoleNames.Admin)
+        ];
+        return Task.FromResult(roles);
+    }
+
+    public async Task<AdminUserDetailView> UpdateUserRolesAsync(Guid adminUserId, Guid targetUserId, AdminUpdateRolesCommand command, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(command.Reason) || command.Reason.Trim().Length > 500)
+            throw Validation("Lý do cập nhật vai trò không hợp lệ.");
+
+        var targetUser = await userManager.FindByIdAsync(targetUserId.ToString())
+            ?? throw new BusinessException("USER_NOT_FOUND", "Không tìm thấy người dùng.", BusinessErrorKind.NotFound);
+
+        // Roles payload must contain "User"
+        var normalizedRequestedRoles = command.Roles
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (!normalizedRequestedRoles.Contains(Nexora.Business.Authorization.RoleNames.User, StringComparer.OrdinalIgnoreCase))
+            throw new BusinessException("CANNOT_REMOVE_USER_ROLE", "Không thể xóa vai trò User của tài khoản.", BusinessErrorKind.Validation);
+
+        var validRoles = new[] { Nexora.Business.Authorization.RoleNames.User, Nexora.Business.Authorization.RoleNames.Admin };
+        foreach (var role in normalizedRequestedRoles)
+        {
+            if (!validRoles.Contains(role, StringComparer.OrdinalIgnoreCase))
+                throw new BusinessException("INVALID_ROLE", $"Vai trò '{role}' không hợp lệ.", BusinessErrorKind.Validation);
+        }
+
+        var currentRoles = await userManager.GetRolesAsync(targetUser);
+
+        // Self-demotion guardrail: cannot remove Admin from self
+        if (adminUserId == targetUserId &&
+            currentRoles.Contains(Nexora.Business.Authorization.RoleNames.Admin, StringComparer.OrdinalIgnoreCase) &&
+            !normalizedRequestedRoles.Contains(Nexora.Business.Authorization.RoleNames.Admin, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new BusinessException("CANNOT_REMOVE_OWN_ADMIN_ROLE", "Quản trị viên không thể tự hạ quyền Admin của chính mình.", BusinessErrorKind.Conflict);
+        }
+
+        // Last active Admin guardrail: cannot remove Admin from last active Admin
+        var requestedAdmin = normalizedRequestedRoles.Contains(Nexora.Business.Authorization.RoleNames.Admin, StringComparer.OrdinalIgnoreCase);
+        var currentlyAdmin = currentRoles.Contains(Nexora.Business.Authorization.RoleNames.Admin, StringComparer.OrdinalIgnoreCase);
+
+        if (currentlyAdmin && !requestedAdmin)
+        {
+            var adminRoleId = Guid.Parse("50000000-0000-0000-0000-000000000002");
+            var otherActiveAdminCount = await dbContext.UserRoles
+                .Join(dbContext.Users, ur => ur.UserId, u => u.Id, (ur, u) => new { ur, u })
+                .Where(x => x.ur.RoleId == adminRoleId && x.u.Id != targetUserId && x.u.IsActive && x.u.DeletionRequestedAt == null && x.u.DeletedAt == null)
+                .CountAsync(cancellationToken);
+
+            if (otherActiveAdminCount == 0)
+            {
+                throw new BusinessException("LAST_ADMIN_CANNOT_BE_DEMOTED", "Không thể gỡ bỏ vai trò Admin của quản trị viên hoạt động duy nhất.", BusinessErrorKind.Conflict);
+            }
+        }
+
+        // Apply role changes
+        var canonicalRolesToSet = normalizedRequestedRoles.Select(r =>
+            string.Equals(r, Nexora.Business.Authorization.RoleNames.Admin, StringComparison.OrdinalIgnoreCase)
+                ? Nexora.Business.Authorization.RoleNames.Admin
+                : Nexora.Business.Authorization.RoleNames.User).ToArray();
+
+        var rolesToRemove = currentRoles.Except(canonicalRolesToSet, StringComparer.OrdinalIgnoreCase).ToArray();
+        var rolesToAdd = canonicalRolesToSet.Except(currentRoles, StringComparer.OrdinalIgnoreCase).ToArray();
+
+        if (rolesToRemove.Length > 0)
+        {
+            var removeResult = await userManager.RemoveFromRolesAsync(targetUser, rolesToRemove);
+            if (!removeResult.Succeeded)
+                throw new BusinessException("ROLE_UPDATE_FAILED", "Không thể xóa vai trò cũ.", BusinessErrorKind.ExternalFailure);
+        }
+
+        if (rolesToAdd.Length > 0)
+        {
+            var addResult = await userManager.AddToRolesAsync(targetUser, rolesToAdd);
+            if (!addResult.Succeeded)
+                throw new BusinessException("ROLE_UPDATE_FAILED", "Không thể thêm vai trò mới.", BusinessErrorKind.ExternalFailure);
+        }
+
+        // Revoke sessions (refresh tokens + security stamp)
+        var now = timeProvider.GetUtcNow();
+        await dbContext.RefreshTokens.Where(token => token.UserId == targetUserId && token.RevokedAt == null)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(token => token.RevokedAt, now), cancellationToken);
+        await userManager.UpdateSecurityStampAsync(targetUser);
+
+        // Audit
+        await AuditAsync(adminUserId, "user.roles.update", "user", targetUserId.ToString("N"),
+            $"Updated roles to [{string.Join(", ", canonicalRolesToSet)}]. Reason: {command.Reason.Trim()}", cancellationToken);
+
+        return await GetUserAsync(targetUserId, cancellationToken);
+    }
+
+    public async Task<AdminUserDetailView> UpdateUserStatusAsync(Guid adminUserId, Guid targetUserId, AdminUpdateStatusCommand command, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(command.Reason) || command.Reason.Trim().Length > 500)
+            throw Validation("Lý do thay đổi trạng thái không hợp lệ.");
+
+        var targetUser = await userManager.FindByIdAsync(targetUserId.ToString())
+            ?? throw new BusinessException("USER_NOT_FOUND", "Không tìm thấy người dùng.", BusinessErrorKind.NotFound);
+
+        // Cannot reactivate deleted or deletion-requested accounts
+        if (command.Active && (targetUser.DeletionRequestedAt is not null || targetUser.DeletedAt is not null))
+        {
+            throw new BusinessException("CANNOT_ACTIVATE_DELETED_USER", "Không thể kích hoạt tài khoản đã xóa hoặc đang chờ xóa.", BusinessErrorKind.Conflict);
+        }
+
+        // Cannot deactivate self
+        if (!command.Active && adminUserId == targetUserId)
+        {
+            throw new BusinessException("CANNOT_DEACTIVATE_SELF", "Quản trị viên không thể tự vô hiệu hóa tài khoản của chính mình.", BusinessErrorKind.Conflict);
+        }
+
+        // Cannot deactivate last active admin
+        if (!command.Active && await userManager.IsInRoleAsync(targetUser, Nexora.Business.Authorization.RoleNames.Admin))
+        {
+            var adminRoleId = Guid.Parse("50000000-0000-0000-0000-000000000002");
+            var otherActiveAdminCount = await dbContext.UserRoles
+                .Join(dbContext.Users, ur => ur.UserId, u => u.Id, (ur, u) => new { ur, u })
+                .Where(x => x.ur.RoleId == adminRoleId && x.u.Id != targetUserId && x.u.IsActive && x.u.DeletionRequestedAt == null && x.u.DeletedAt == null)
+                .CountAsync(cancellationToken);
+
+            if (otherActiveAdminCount == 0)
+            {
+                throw new BusinessException("LAST_ADMIN_CANNOT_BE_DEACTIVATED", "Không thể vô hiệu hóa quản trị viên hoạt động duy nhất.", BusinessErrorKind.Conflict);
+            }
+        }
+
+        targetUser.IsActive = command.Active;
+        targetUser.UpdatedAt = timeProvider.GetUtcNow();
+        await userManager.UpdateAsync(targetUser);
+
+        // When deactivating, revoke all active sessions
+        if (!command.Active)
+        {
+            var now = timeProvider.GetUtcNow();
+            await dbContext.RefreshTokens.Where(token => token.UserId == targetUserId && token.RevokedAt == null)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(token => token.RevokedAt, now), cancellationToken);
+            await userManager.UpdateSecurityStampAsync(targetUser);
+        }
+
+        var auditAction = command.Active ? "user.reactivate" : "user.deactivate";
+        await AuditAsync(adminUserId, auditAction, "user", targetUserId.ToString("N"),
+            $"Set active={command.Active}. Reason: {command.Reason.Trim()}", cancellationToken);
+
+        return await GetUserAsync(targetUserId, cancellationToken);
+    }
+
     public async Task<AdminUserPage> GetUsersAsync(string? query, string? role, string? planCode, string? entitlementState, Guid? cursor, int pageSize, CancellationToken cancellationToken)
     {
         if (pageSize is < 1 or > 100) pageSize = 20;
+        var now = timeProvider.GetUtcNow();
         var q = dbContext.Users.AsNoTracking().Include(item => item.Profile).AsQueryable();
+
         if (!string.IsNullOrWhiteSpace(query))
         {
-            var normalized = query.Trim().ToUpperInvariant();
-#pragma warning disable CA1862
-            q = q.Where(item => (item.Email ?? "").Contains(normalized) || (item.Profile != null && item.Profile.DisplayName != null && item.Profile.DisplayName.ToUpperInvariant().Contains(normalized)));
-#pragma warning restore CA1862
+            var pattern = $"%{query.Trim()}%";
+            q = q.Where(item =>
+                (item.NormalizedEmail != null && EF.Functions.Like(item.NormalizedEmail, pattern)) ||
+                (item.Email != null && EF.Functions.Like(item.Email, pattern)) ||
+                (item.Profile != null && item.Profile.DisplayName != null && EF.Functions.Like(item.Profile.DisplayName, pattern)));
         }
-        if (cursor.HasValue) q = q.Where(item => item.Id > cursor.Value);
+
+        if (!string.IsNullOrWhiteSpace(role))
+        {
+            var roleUpper = role.Trim().ToUpperInvariant();
+#pragma warning disable CA1311, CA1862, CA1304
+            var targetRoleId = await dbContext.Roles
+                .Where(r => (r.NormalizedName != null && r.NormalizedName == roleUpper) || (r.Name != null && r.Name.ToUpper() == roleUpper))
+                .Select(r => (Guid?)r.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+#pragma warning restore CA1311, CA1862, CA1304
+
+            if (targetRoleId.HasValue)
+            {
+                q = q.Where(u => dbContext.UserRoles.Any(ur => ur.UserId == u.Id && ur.RoleId == targetRoleId.Value));
+            }
+            else
+            {
+                return new AdminUserPage(null, Array.Empty<AdminUserSummaryView>());
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(planCode))
+        {
+            var planPattern = planCode.Trim().ToLowerInvariant();
+            var candidates = await dbContext.Entitlements.AsNoTracking()
+                .Where(e => e.Status == BillingValues.Active)
+                .Select(e => new { e.UserId, e.PlanCodeSnapshot, e.StartsAt, e.EndsAt })
+                .ToListAsync(cancellationToken);
+            var planUserIds = candidates
+                .Where(e => e.StartsAt <= now && e.EndsAt > now && string.Equals(e.PlanCodeSnapshot, planPattern, StringComparison.OrdinalIgnoreCase))
+                .Select(e => e.UserId)
+                .Distinct()
+                .ToArray();
+            q = q.Where(u => planUserIds.Contains(u.Id));
+        }
+
+        if (!string.IsNullOrWhiteSpace(entitlementState))
+        {
+            var state = entitlementState.Trim().ToLowerInvariant();
+            if (state == "active")
+            {
+                var activeCandidates = await dbContext.Entitlements.AsNoTracking()
+                    .Where(e => e.Status == BillingValues.Active)
+                    .Select(e => new { e.UserId, e.StartsAt, e.EndsAt })
+                    .ToListAsync(cancellationToken);
+                var activeUserIds = activeCandidates
+                    .Where(e => e.StartsAt <= now && e.EndsAt > now)
+                    .Select(e => e.UserId)
+                    .Distinct()
+                    .ToArray();
+                q = q.Where(u => activeUserIds.Contains(u.Id));
+            }
+            else if (state == "none")
+            {
+                q = q.Where(u => !dbContext.Entitlements.Any(e => e.UserId == u.Id));
+            }
+            else if (state == "expired")
+            {
+                var allEntitlements = await dbContext.Entitlements.AsNoTracking()
+                    .Select(e => new { e.UserId, e.Status, e.StartsAt, e.EndsAt })
+                    .ToListAsync(cancellationToken);
+                var userGroups = allEntitlements.GroupBy(e => e.UserId);
+                var expiredUserIds = userGroups
+                    .Where(g => !g.Any(e => e.Status == BillingValues.Active && e.StartsAt <= now && e.EndsAt > now))
+                    .Select(g => g.Key)
+                    .ToArray();
+                q = q.Where(u => expiredUserIds.Contains(u.Id));
+            }
+        }
+
+        if (cursor.HasValue)
+        {
+            q = q.Where(item => item.Id > cursor.Value);
+        }
+
         var users = await q.OrderBy(item => item.Id).Take(pageSize + 1).ToArrayAsync(cancellationToken);
+        var pageUsers = users.Take(pageSize).ToArray();
+        var userIds = pageUsers.Select(item => item.Id).ToArray();
+
+        var entitlements = await dbContext.Entitlements.AsNoTracking()
+            .Where(item => userIds.Contains(item.UserId))
+            .ToArrayAsync(cancellationToken);
+
         var result = new List<AdminUserSummaryView>();
-        var now = timeProvider.GetUtcNow();
-        var userIds = users.Select(item => item.Id).ToArray();
-        var entitlements = await dbContext.Entitlements.AsNoTracking().Where(item => userIds.Contains(item.UserId)).ToArrayAsync(cancellationToken);
-        foreach (var user in users.Take(pageSize))
+        foreach (var user in pageUsers)
         {
             var active = entitlements.Where(item => item.UserId == user.Id && item.Status == BillingValues.Active && item.StartsAt <= now && item.EndsAt > now)
-                .OrderBy(item => item.EndsAt).FirstOrDefault();
+                .OrderBy(item => string.Equals(item.PlanCodeSnapshot, "free", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+                .ThenBy(item => item.EndsAt).FirstOrDefault();
             var roles = await userManager.GetRolesAsync(user);
-            if (!string.IsNullOrWhiteSpace(role) && !roles.Contains(role, StringComparer.OrdinalIgnoreCase)) continue;
-            if (!string.IsNullOrWhiteSpace(planCode) && (active is null || !string.Equals(active.PlanCodeSnapshot, planCode, StringComparison.OrdinalIgnoreCase))) continue;
-            if (!string.IsNullOrWhiteSpace(entitlementState) && !MatchState(entitlementState, active)) continue;
-            result.Add(new AdminUserSummaryView(user.Id, user.Email ?? "", user.Profile?.DisplayName, roles.ToArray(), user.LockoutEnd is null || user.LockoutEnd <= now,
-                user.CreatedAt, active?.PlanCodeSnapshot, active?.Status, active?.StartsAt, active?.EndsAt));
+            var isEffectiveActive = user.IsActive && user.DeletionRequestedAt == null && user.DeletedAt == null;
+
+            result.Add(new AdminUserSummaryView(
+                user.Id,
+                user.Email ?? "",
+                user.Profile?.DisplayName,
+                roles.ToArray(),
+                isEffectiveActive,
+                user.CreatedAt,
+                active?.PlanCodeSnapshot,
+                active?.Status,
+                active?.StartsAt,
+                active?.EndsAt));
         }
-        return new AdminUserPage(users.Length > pageSize ? users.Last().Id : null, result);
+
+        Guid? nextCursor = users.Length > pageSize ? pageUsers.Last().Id : null;
+        return new AdminUserPage(nextCursor, result);
     }
 
     public async Task<AdminUserDetailView> GetUserAsync(Guid userId, CancellationToken cancellationToken)
@@ -367,7 +613,8 @@ public sealed partial class AdminService(
         var entitlementCandidates = await dbContext.Entitlements.AsNoTracking()
             .Where(item => item.UserId == userId && item.Status == BillingValues.Active).ToArrayAsync(cancellationToken);
         var entitlement = entitlementCandidates.Where(item => item.StartsAt <= now && item.EndsAt > now)
-            .OrderBy(item => item.EndsAt).FirstOrDefault();
+            .OrderBy(item => string.Equals(item.PlanCodeSnapshot, "free", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ThenBy(item => item.EndsAt).FirstOrDefault();
         var roles = await userManager.GetRolesAsync(user);
         var orders = await dbContext.Orders.AsNoTracking().Where(item => item.UserId == userId)
             .Select(item => new OrderView(item.Id, item.PlanCodeSnapshot, item.AmountMinor, item.Currency, item.Status, item.CreatedAt))
@@ -392,8 +639,9 @@ public sealed partial class AdminService(
         }
         var adminEntitlement = entitlement is null ? null : new AdminEntitlementView(entitlement.Id, entitlement.PlanCodeSnapshot, entitlement.Status,
             entitlement.StartsAt, entitlement.EndsAt, features);
+        var isEffectiveActive = user.IsActive && user.DeletionRequestedAt == null && user.DeletedAt == null;
         return new AdminUserDetailView(user.Id, user.Email ?? "", user.Profile?.DisplayName, roles.ToArray(),
-            user.LockoutEnd is null || user.LockoutEnd <= now, user.CreatedAt, adminEntitlement,
+            isEffectiveActive, user.CreatedAt, adminEntitlement,
             orders.OrderByDescending(item => item.CreatedAt).Take(20).ToArray());
     }
 
