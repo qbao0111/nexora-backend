@@ -110,7 +110,26 @@ dotnet user-secrets set "Billing:Sepay:CancelUrl" "https://YOUR-PUBLIC-FRONTEND/
 
 Localhost/HTTP callback URLs are rejected intentionally. Use a Vercel preview URL or a public frontend tunnel. SePay IPN is configured separately in the merchant dashboard; for the backend IPN only, run `ngrok http 5088` and use `https://<ngrok-domain>/api/v1/webhooks/payments/sepay`. Do not confuse the backend IPN URL with the frontend callback URLs. See [sepay-sandbox.md](sepay-sandbox.md).
 
-## 6. Team branch and pull-request workflow
+## 6. Seed thư viện tình huống
+
+Nexora quản lý nội dung tình huống phỏng vấn hoàn toàn từ backend thông qua thư viện tình huống. Frontend không sở hữu hoặc hardcode nội dung tình huống mà phải tích hợp trực tiếp qua API `GET /api/v1/scenarios`.
+
+Để hỗ trợ môi trường Development và Staging có ngay dữ liệu tình huống chuẩn xác, thực tế cho việc kiểm thử và tích hợp frontend, repository cung cấp script seed:
+
+```powershell
+pwsh ./scripts/seed-scenarios.ps1 `
+  -ApiBaseUrl "http://localhost:5088" `
+  -AccessToken "YOUR_ADMIN_ACCESS_TOKEN"
+```
+
+Lưu ý:
+- **Mục đích bootstrap**: Script này chỉ dùng để khởi tạo dữ liệu cho Development/Staging; nội dung trên Production phải được quản lý chính thức qua Admin Portal/Admin API.
+- **Yêu cầu quyền Admin**: Script gọi API quản trị chuẩn (`/api/v1/admin/scenarios`), do đó bắt buộc phải truyền token của tài khoản có role `Admin`.
+- **An toàn khi chạy lặp lại (Idempotent)**: Mặc định script sẽ kiểm tra danh sách tình huống hiện có theo `slug` và bỏ qua (`skip`) những tình huống đã tồn tại, không bao giờ tạo trùng lặp.
+- **Tùy chọn cập nhật (`-UpdateExisting`)**: Khi truyền switch `-UpdateExisting`, script sẽ so sánh và cập nhật các trường dữ liệu của tình huống qua `PATCH /api/v1/admin/scenarios/{id}`, đồng thời bảo đảm tình huống ở trạng thái xuất bản (`published`).
+- **Xác thực public API**: Sau khi hoàn thành seed, script tự động gọi `GET /api/v1/scenarios?pageSize=50` để xác thực toàn bộ 12 tình huống mẫu đã hiển thị công khai trên thư viện người dùng.
+
+## 7. Team branch and pull-request workflow
 
 Use one coherent feature/phase per branch so it can be reviewed or reverted independently:
 
@@ -131,7 +150,7 @@ git diff --check
 
 Update `project_log.md` after a completed verified slice, commit, push and create a PR. Merge only after the PR is conflict-free and required checks pass. Never commit user-secrets or `.nexora-local/` runtime data.
 
-## 7. Common problems
+## 8. Common problems
 
 | Symptom | Check |
 | --- | --- |

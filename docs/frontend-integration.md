@@ -242,8 +242,17 @@ Stable feature codes: `cv_analysis`, `interview`, `scenario`, `star_builder`, `a
 
 ## Scenario Library and Practice Flow
 
-1. `GET /api/v1/scenarios` (`200`, Bearer): lists published scenarios with category, difficulty (`easy`, `medium`, `hard`), and competency. Browsing scenarios does NOT consume quota.
-2. `GET /api/v1/scenarios/{id-or-slug}` (`200`, Bearer): fetches scenario details.
+### Nguồn dữ liệu và nguyên tắc tích hợp
+- **Source of Truth duy nhất**: `GET /api/v1/scenarios` (và `GET /api/v1/scenarios/{slugOrId}`). Frontend **tuyệt đối không sao chép** `scenarios.vi.json` hoặc hardcode nội dung tình huống vào mã nguồn giao diện.
+- **Các trạng thái bắt buộc frontend phải xử lý**:
+  1. **Loading**: Hiển thị skeleton hoặc spinner khi đang tải danh sách/chi tiết tình huống.
+  2. **Empty Library**: Hiển thị empty state rõ ràng khi thư viện chưa có tình huống nào (hoặc bộ lọc không khớp). Mặc dù dữ liệu mẫu được seed trong môi trường Development/Staging, frontend **vẫn phải render đúng trạng thái rỗng** khi `total == 0` hoặc `items` rỗng.
+  3. **Loaded**: Render lưới danh sách thẻ tình huống (phân trang, lọc theo danh mục `category`, độ khó `difficulty`, năng lực `competency`, tìm kiếm `search`).
+  4. **API Error**: Hiển thị thông báo lỗi thân thiện kèm `requestId` khi gọi API thất bại.
+
+### Quy trình tương tác API
+1. `GET /api/v1/scenarios` (`200`, Bearer): lists published scenarios with category, difficulty (`easy`, `medium`, `hard`), and competency. Browsing scenarios does NOT consume quota. Hỗ trợ query params: `category`, `difficulty`, `competency`, `search`, `page`, `pageSize`.
+2. `GET /api/v1/scenarios/{id-or-slug}` (`200`, Bearer): fetches scenario details bao gồm toàn bộ nội dung markdown (`content`).
 3. `POST /api/v1/scenario-attempts` (`201`, Bearer + `Idempotency-Key`):
    ```json
    { "scenarioId": "..." }

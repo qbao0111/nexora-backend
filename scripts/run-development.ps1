@@ -103,7 +103,7 @@ try {
     while (-not $apiProcess.HasExited -and -not $workerProcess.HasExited) {
         Start-Sleep -Seconds 1
     }
-    $failed = $apiProcess.HasExited ? 'API' : 'Worker'
+    if ($apiProcess.HasExited) { $failed = 'API' } else { $failed = 'Worker' }
     throw "$failed exited unexpectedly. Inspect $logRoot."
 }
 finally {

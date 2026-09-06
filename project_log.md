@@ -304,3 +304,12 @@ This log records completed implementation milestones and verification evidence. 
 - SePay return URLs now validate as a coherent public HTTPS callback triplet.
 - Callback fields/signature and frontend source-of-truth behavior are covered by regression tests.
 - The previously successful live Sandbox payment round-trip remains the latest manual evidence; this patch itself does not perform another external payment.
+
+## 2026-09-06 — Realistic Vietnamese scenario library seed pass
+
+- Added 12 Vietnamese scenario-library seed records in `scripts/data/scenarios.vi.json`.
+- 4 banking / 4 ecommerce / 4 logistics distributed across 3 easy, 6 medium, and 3 hard dilemmas with standardized single-competency tags.
+- Added PowerShell seeder `scripts/seed-scenarios.ps1` utilizing the canonical Admin API (`/api/v1/admin/scenarios`) and runtime category resolution.
+- Seeding is strictly idempotent by scenario slug; existing slugs are skipped by default and safely updated with `-UpdateExisting`.
+- Frontend remains strictly API-driven via `GET /api/v1/scenarios` with no hardcoded content; updated integration guidelines for empty/loading/error states.
+- No schema migration or EF model changes introduced.
