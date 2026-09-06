@@ -120,12 +120,16 @@ app.UseAuthentication();
 app.UseRateLimiter();
 app.UseAuthorization();
 app.UseMiddleware<FeatureGateMiddleware>();
-if (app.Environment.IsDevelopment() || app.Environment.IsEnvironment("Testing")) app.MapOpenApi("/openapi/{documentName}.json");
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment() || app.Environment.IsEnvironment("Testing") || app.Environment.IsEnvironment("Staging"))
+    app.MapOpenApi("/openapi/{documentName}.json");
+
+if (app.Environment.IsDevelopment() || app.Environment.IsEnvironment("Staging"))
     app.UseSwaggerUI(options =>
     {
         options.SwaggerEndpoint("../openapi/v1.json", "Nexora API v1");
-        options.DocumentTitle = "Nexora API — Development";
+        options.DocumentTitle = app.Environment.IsEnvironment("Staging")
+            ? "Nexora API — Staging"
+            : "Nexora API — Development";
         options.ConfigObject.PersistAuthorization = false;
         options.EnableValidator("");
     });

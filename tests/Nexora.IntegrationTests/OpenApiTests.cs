@@ -8,9 +8,9 @@ public sealed class OpenApiTests
     [Theory]
     [InlineData("Development", HttpStatusCode.OK, HttpStatusCode.OK)]
     [InlineData("Testing", HttpStatusCode.NotFound, HttpStatusCode.OK)]
-    [InlineData("Staging", HttpStatusCode.NotFound, HttpStatusCode.NotFound)]
+    [InlineData("Staging", HttpStatusCode.OK, HttpStatusCode.OK)]
     [InlineData("Production", HttpStatusCode.NotFound, HttpStatusCode.NotFound)]
-    public async Task SwaggerIsDevelopmentOnly(string environment, HttpStatusCode uiStatus, HttpStatusCode documentStatus)
+    public async Task SwaggerIsDevelopmentAndStagingOnly(string environment, HttpStatusCode uiStatus, HttpStatusCode documentStatus)
     {
         await using var factory = new NexoraApiFactory(environment);
         using var client = factory.CreateHttpsClient();
@@ -20,7 +20,7 @@ public sealed class OpenApiTests
         Assert.Equal(uiStatus, script.StatusCode);
         using var document = await client.GetAsync("/openapi/v1.json");
         Assert.Equal(documentStatus, document.StatusCode);
-        if (environment == "Development")
+        if (environment is "Development" or "Staging")
         {
             using var initializer = await client.GetAsync("/swagger/index.js");
             var configuration = await initializer.Content.ReadAsStringAsync();

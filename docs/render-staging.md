@@ -101,6 +101,8 @@ The frontend team and stakeholders accept the following constraints of Render Fr
 ## Frontend Integration Handoff
 
 - **Staging API Base URL**: `https://nexora-backend-q32b.onrender.com/api/v1`
+- **Swagger UI (Interactive API Explorer)**: `https://nexora-backend-q32b.onrender.com/swagger`
+- **OpenAPI v1 Document**: `https://nexora-backend-q32b.onrender.com/openapi/v1.json`
 - **Authentication**:
   - Access Token: Stored in frontend memory only. Sent via `Authorization: Bearer <token>`.
   - Refresh Token: Handled automatically via `HttpOnly`, `Secure`, `SameSite=None` cookie.
