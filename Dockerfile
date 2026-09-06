@@ -4,6 +4,9 @@ WORKDIR /src
 
 # Copy project files and restore dependencies
 COPY Nexora.slnx ./
+COPY Directory.Build.props ./
+COPY Directory.Packages.props ./
+COPY global.json ./
 COPY src/Nexora.Business/Nexora.Business.csproj src/Nexora.Business/
 COPY src/Nexora.Data/Nexora.Data.csproj src/Nexora.Data/
 COPY src/Nexora.Integrations/Nexora.Integrations.csproj src/Nexora.Integrations/
