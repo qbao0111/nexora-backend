@@ -103,7 +103,15 @@ builder.Services.AddCors(options => options.AddPolicy("Frontend", policy => poli
     .AllowAnyMethod()
     .AllowCredentials()));
 
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
 var app = builder.Build();
+app.UseForwardedHeaders();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<RequestTelemetryMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();

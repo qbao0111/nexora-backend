@@ -5,11 +5,13 @@ This is the short browser handoff for the internal Development API. The frontend
 ## Connection and auth
 
 ```text
-API origin: http://localhost:5088
+API origin: http://localhost:5088 (Local Development)
 API base:   http://localhost:5088/api/v1
+Staging:    https://<render-host>/api/v1 (Render Free Staging, see docs/render-staging.md)
 Swagger:    http://localhost:5088/swagger       (Development only)
 CORS:       http://localhost:3000, http://localhost:5173,
-            http://127.0.0.1:3000, http://127.0.0.1:5173
+            http://127.0.0.1:3000, http://127.0.0.1:5173,
+            https://nexora-staging.vercel.app (when deployed)
 ```
 
 Use one hostname consistently (`localhost` is recommended). Browser requests use `credentials: "include"`, including register, login, refresh and logout. The response contains a short-lived `accessToken`; keep it in memory only and send it as `Authorization: Bearer <accessToken>`. The refresh token is an HttpOnly cookie and is never read or stored by JavaScript.
