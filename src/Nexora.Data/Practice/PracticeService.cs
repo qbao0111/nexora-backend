@@ -941,10 +941,10 @@ public sealed partial class PracticeService(
             };
 
         var behavioral = string.Equals(interviewType.Trim(), "behavioral", StringComparison.OrdinalIgnoreCase) || LooksBehavioralQuestion(question);
-        var situation = ValidateStarComponent(star.Situation);
-        var task = ValidateStarComponent(star.Task);
-        var action = ValidateStarComponent(star.Action);
-        var result = ValidateStarComponent(star.Result);
+        var situation = ValidateStarComponent(star.Situation, "situation");
+        var task = ValidateStarComponent(star.Task, "task");
+        var action = ValidateStarComponent(star.Action, "action");
+        var result = ValidateStarComponent(star.Result, "result");
         if (!behavioral) throw InvalidAiOutput();
 
         var missing = new[] { ("situation", situation), ("task", task), ("action", action), ("result", result) }
@@ -968,11 +968,15 @@ public sealed partial class PracticeService(
         };
     }
 
-    private static StarComponentEvaluation ValidateStarComponent(StarComponentEvaluation? component)
+    private static StarComponentEvaluation ValidateStarComponent(StarComponentEvaluation? component, string name)
     {
-        if (component is null || component.Score is < 0 or > 100 || string.IsNullOrWhiteSpace(component.Feedback)) throw InvalidAiOutput();
-        if (component.Detected && string.IsNullOrWhiteSpace(component.Evidence)) throw InvalidAiOutput();
-        return component with { Evidence = Trim(component.Evidence), Feedback = Trim(component.Feedback) };
+        if (component is null)
+            return new StarComponentEvaluation(0, false, string.Empty, $"Thiếu nội dung {name}.");
+        var score = Math.Clamp(component.Score, 0, 100);
+        var feedback = string.IsNullOrWhiteSpace(component.Feedback) ? $"Đánh giá {name}." : Trim(component.Feedback);
+        var evidence = Trim(component.Evidence);
+        var detected = component.Detected || (!string.IsNullOrWhiteSpace(evidence) && score >= 50);
+        return new StarComponentEvaluation(score, detected, evidence, feedback);
     }
 
     private static bool LooksBehavioralQuestion(string question)

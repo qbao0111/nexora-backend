@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Nexora.Business.Ai;
+using Nexora.Business.Practice;
 using Nexora.Integrations.Ai;
 
 namespace Nexora.UnitTests.Ai;
@@ -85,6 +86,50 @@ public sealed class GeminiAiProviderTests
 
         Assert.Equal(AiProviderFailureKind.InvalidResponse, exception.Kind);
         Assert.Equal(2, attempts);
+    }
+
+    [Fact]
+    public async Task GenerateStructuredAsyncIncludesStarInstructionsAndLanguageRequirementInPrompt()
+    {
+        string? requestBody = null;
+        var handler = new StubHandler(async (request, cancellationToken) =>
+        {
+            requestBody = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return Json(HttpStatusCode.OK, """{"candidates":[{"content":{"parts":[{"text":"{\"applicable\":true,\"overallScore\":85,\"situation\":{\"score\":85,\"detected\":true,\"evidence\":\"ev\",\"feedback\":\"fb\"},\"task\":{\"score\":85,\"detected\":true,\"evidence\":\"ev\",\"feedback\":\"fb\"},\"action\":{\"score\":85,\"detected\":true,\"evidence\":\"ev\",\"feedback\":\"fb\"},\"result\":{\"score\":85,\"detected\":true,\"evidence\":\"ev\",\"feedback\":\"fb\"},\"missingElements\":[],\"strengths\":[\"good\"],\"coachingTips\":[\"tip\"]}"}]}}]}""");
+        });
+        using var schema = JsonDocument.Parse("{}");
+        var provider = CreateProvider(handler);
+
+        var result = await provider.GenerateStructuredAsync<StarEvaluation>(Request("star.evaluate", schema), CancellationToken.None);
+
+        Assert.True(result.Applicable);
+        Assert.Equal(85, result.OverallScore);
+        using var requestJson = JsonDocument.Parse(requestBody!);
+        var prompt = requestJson.RootElement.GetProperty("contents")[0].GetProperty("parts")[0].GetProperty("text").GetString();
+        Assert.Contains("STAR methodology", prompt, StringComparison.Ordinal);
+        Assert.Contains("Language requirement", prompt, StringComparison.Ordinal);
+        Assert.Contains("Vietnamese", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GenerateStructuredAsyncIncludesScenarioInstructionsInPrompt()
+    {
+        string? requestBody = null;
+        var handler = new StubHandler(async (request, cancellationToken) =>
+        {
+            requestBody = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return Json(HttpStatusCode.OK, """{"candidates":[{"content":{"parts":[{"text":"{\"overallScore\":80,\"dimensions\":[{\"criterion\":\"analysis\",\"score\":80,\"evidence\":\"ev\",\"feedback\":\"fb\"}],\"strengths\":[\"str\"],\"gaps\":[\"gap\"],\"recommendedApproach\":[\"rec\"],\"feedback\":\"fb\"}"}]}}]}""");
+        });
+        using var schema = JsonDocument.Parse("{}");
+        var provider = CreateProvider(handler);
+
+        var result = await provider.GenerateStructuredAsync<ScenarioEvaluationResult>(Request("scenario.evaluate", schema), CancellationToken.None);
+
+        Assert.Equal(80, result.OverallScore);
+        using var requestJson = JsonDocument.Parse(requestBody!);
+        var prompt = requestJson.RootElement.GetProperty("contents")[0].GetProperty("parts")[0].GetProperty("text").GetString();
+        Assert.Contains("scenario requirements", prompt, StringComparison.Ordinal);
+        Assert.Contains("overallScore", prompt, StringComparison.Ordinal);
     }
 
     private static GeminiAiProvider CreateProvider(HttpMessageHandler handler, int maxAttempts = 1) => new(
