@@ -60,7 +60,7 @@ The frontend team and stakeholders accept the following constraints of Render Fr
 | **Service Type** | Web Service |
 | **Runtime** | Docker (Multi-stage .NET 10) |
 | **Plan** | Free |
-| **Region** | Singapore (`singapore`) |
+| **Region** | Oregon (`oregon`) |
 | **Auto-Deploy** | Disabled during initial branch validation; enabled on `main` post-merge |
 | **Health Check Route** | `/api/v1/health` |
 | **Readiness Route** | `/health/live` |

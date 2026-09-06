@@ -4,7 +4,7 @@ services:
     repo: https://github.com/qbao0111/nexora-backend
     runtime: docker
     plan: free
-    region: singapore
+    region: oregon
     branch: deploy/render-free-staging
     autoDeploy: false
     healthCheckPath: /api/v1/health
