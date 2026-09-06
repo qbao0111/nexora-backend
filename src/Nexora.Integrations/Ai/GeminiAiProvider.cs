@@ -148,6 +148,8 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
             "Return exactly four general scores with criterion values correctness, structure, completeness, and clarity. Also return star.applicable. STAR applies only when the actual question asks for behavioral or situational evidence. When applicable, evaluate Situation, Task, Action, and Result from the user's answer only; never invent missing evidence, mark missing parts, and keep coaching concise. Use 0-100 integer component scores. When not applicable, set star.applicable=false and omit component details.",
         "interview.report" =>
             "Return exactly four scores with criterion values correctness, structure, completeness, and clarity. Each score is an integer from 0 to 100 and includes non-empty evidence. Do not calculate STAR arithmetic; the server aggregates persisted STAR evaluations.",
+        "star.evaluate" =>
+            "Evaluate the candidate's answer using the STAR framework (Situation, Task, Action, Result). Set applicable=true if the question invites behavioral/situational evidence. When applicable=true, you MUST provide full objects for situation, task, action, and result with integer scores between 0 and 100 (where 0 means absent and 100 means exceptional), non-empty feedback string, and non-empty evidence (or empty string if not detected). Do not return 1-5 scale scores; always use 0-100 integers.",
         _ => "Follow the Nexora-owned response schema."
     };
 

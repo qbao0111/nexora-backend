@@ -491,7 +491,7 @@ public sealed partial class ScenarioStarService(
             catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
             {
                 await FailJobAsync(job, exception, cancellationToken);
-                JobFailed(logger, job.Id, job.Type, job.AggregateId, exception.GetType().Name);
+                JobFailed(logger, exception, job.Id, job.Type, job.AggregateId);
             }
         }
         return claimedCount;
@@ -608,9 +608,14 @@ public sealed partial class ScenarioStarService(
 
     private static StarComponentEvaluation ValidateComponent(StarComponentEvaluation? component, string name)
     {
-        if (component is null || component.Score is < 0 or > 100 || string.IsNullOrWhiteSpace(component.Feedback))
-            throw InvalidAiOutput();
-        return component;
+        if (component is null)
+            return new StarComponentEvaluation(0, false, string.Empty, $"Thiếu nội dung {name}.");
+        var score = component.Score;
+        // If LLM returned a 1-5 scale score instead of 0-100, normalize it
+        if (score is > 0 and <= 5) score *= 20;
+        score = Math.Clamp(score, 0, 100);
+        var feedback = string.IsNullOrWhiteSpace(component.Feedback) ? $"Đánh giá {name}." : component.Feedback.Trim();
+        return component with { Score = score, Feedback = feedback, Evidence = component.Evidence ?? string.Empty };
     }
 
     private static int? ParseScenarioScore(string? evaluationJson)
@@ -676,6 +681,6 @@ public sealed partial class ScenarioStarService(
 
     [LoggerMessage(LogLevel.Information, "Job {JobId} ({JobType}/{AggregateId}) completed")]
     private static partial void JobCompleted(ILogger logger, Guid jobId, string jobType, Guid aggregateId);
-    [LoggerMessage(LogLevel.Error, "Job {JobId} ({JobType}/{AggregateId}) failed with {ExceptionType}")]
-    private static partial void JobFailed(ILogger logger, Guid jobId, string jobType, Guid aggregateId, string exceptionType);
+    [LoggerMessage(LogLevel.Error, "Job {JobId} ({JobType}/{AggregateId}) failed")]
+    private static partial void JobFailed(ILogger logger, Exception exception, Guid jobId, string jobType, Guid aggregateId);
 }
