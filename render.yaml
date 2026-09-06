@@ -1,0 +1,55 @@
+services:
+  - type: web
+    name: nexora-staging
+    repo: https://github.com/qbao0111/nexora-backend
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: deploy/render-free-staging
+    autoDeploy: false
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Staging
+      - key: DOTNET_ENVIRONMENT
+        value: Staging
+      - key: Features__Ai
+        value: "true"
+      - key: Features__Payment
+        value: "true"
+      - key: Features__Upload
+        value: "true"
+      - key: Storage__Local__RootPath
+        value: /tmp/nexora-storage
+      - key: Authentication__Jwt__Issuer
+        value: Nexora.Api
+      - key: Authentication__Jwt__Audience
+        value: Nexora.Frontend
+      - key: Authentication__RefreshCookie__SameSite
+        value: None
+      - key: Authentication__RefreshCookie__Secure
+        value: "true"
+      - key: Billing__Payment__Provider
+        value: sepay
+      - key: Billing__Sepay__Environment
+        value: Sandbox
+      - key: ConnectionStrings__Postgres
+        sync: false
+      - key: Authentication__Jwt__SigningKey
+        sync: false
+      - key: Ai__Gemini__ApiKey
+        sync: false
+      - key: Ai__Gemini__Model
+        sync: false
+      - key: Billing__Sepay__MerchantId
+        sync: false
+      - key: Billing__Sepay__SecretKey
+        sync: false
+      - key: Frontend__AllowedOrigins__0
+        value: http://localhost:3000
+      - key: Frontend__AllowedOrigins__1
+        value: http://localhost:5173
+      - key: Frontend__AllowedOrigins__2
+        value: http://127.0.0.1:3000
+      - key: Frontend__AllowedOrigins__3
+        value: http://127.0.0.1:5173

@@ -150,7 +150,11 @@ git diff --check
 
 Update `project_log.md` after a completed verified slice, commit, push and create a PR. Merge only after the PR is conflict-free and required checks pass. Never commit user-secrets or `.nexora-local/` runtime data.
 
-## 8. Common problems
+## 8. Staging deployment (Render Free)
+
+For deployed testing and frontend team integration without running a local backend, see [`docs/render-staging.md`](render-staging.md). Staging runs on Render Free (`https://<render-host>/api/v1`) using a co-located Docker container for API and Worker with ephemeral local storage.
+
+## 9. Common problems
 
 | Symptom | Check |
 | --- | --- |
