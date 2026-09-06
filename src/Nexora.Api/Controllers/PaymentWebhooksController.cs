@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Nexora.Business.Billing;
@@ -11,9 +13,16 @@ public sealed class PaymentWebhooksController(IBillingService billingService) : 
     private const int MaximumPayloadBytes = 64 * 1024;
 
     [AllowAnonymous, HttpPost("fake")]
-    public async Task<IActionResult> ReceiveFake(CancellationToken cancellationToken)
+    public async Task<IActionResult> ReceiveFake(
+        [FromHeader(Name = "X-Payment-Signature")] string? signature,
+        [FromHeader(Name = "X-Payment-Timestamp")] string? timestamp,
+        [FromBody] JsonElement? body,
+        CancellationToken cancellationToken)
     {
-        var body = await ReadBodyAsync(cancellationToken);
+        var rawBytes = body.HasValue && body.Value.ValueKind != JsonValueKind.Undefined && body.Value.ValueKind != JsonValueKind.Null
+            ? Encoding.UTF8.GetBytes(body.Value.GetRawText())
+            : await ReadBodyAsync(cancellationToken);
+
         await billingService.ProcessPaymentWebhookAsync(
             "fake",
             new PaymentCallbackRequest(
@@ -21,18 +30,24 @@ public sealed class PaymentWebhooksController(IBillingService billingService) : 
                 new Dictionary<string, string>(StringComparer.Ordinal),
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    ["X-Payment-Signature"] = Request.Headers["X-Payment-Signature"].ToString(),
-                    ["X-Payment-Timestamp"] = Request.Headers["X-Payment-Timestamp"].ToString()
+                    ["X-Payment-Signature"] = signature ?? Request.Headers["X-Payment-Signature"].ToString(),
+                    ["X-Payment-Timestamp"] = timestamp ?? Request.Headers["X-Payment-Timestamp"].ToString()
                 },
-                body),
+                rawBytes),
             cancellationToken);
         return NoContent();
     }
 
     [AllowAnonymous, HttpPost("sepay")]
-    public async Task<IActionResult> ReceiveSepay(CancellationToken cancellationToken)
+    public async Task<IActionResult> ReceiveSepay(
+        [FromHeader(Name = "X-Secret-Key")] string? secretKey,
+        [FromBody] JsonElement? body,
+        CancellationToken cancellationToken)
     {
-        var body = await ReadBodyAsync(cancellationToken);
+        var rawBytes = body.HasValue && body.Value.ValueKind != JsonValueKind.Undefined && body.Value.ValueKind != JsonValueKind.Null
+            ? Encoding.UTF8.GetBytes(body.Value.GetRawText())
+            : await ReadBodyAsync(cancellationToken);
+
         await billingService.ProcessPaymentWebhookAsync(
             "sepay",
             new PaymentCallbackRequest(
@@ -40,9 +55,9 @@ public sealed class PaymentWebhooksController(IBillingService billingService) : 
                 new Dictionary<string, string>(StringComparer.Ordinal),
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    ["X-Secret-Key"] = Request.Headers["X-Secret-Key"].ToString()
+                    ["X-Secret-Key"] = secretKey ?? Request.Headers["X-Secret-Key"].ToString()
                 },
-                body),
+                rawBytes),
             cancellationToken);
         return Ok(new { success = true });
     }
