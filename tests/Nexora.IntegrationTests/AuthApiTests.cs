@@ -94,6 +94,55 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
         Assert.Equal(HttpStatusCode.Unauthorized, refresh.StatusCode);
     }
 
+    [Fact]
+    public async Task SameOriginAuthMutationIsPermittedForInternalClients()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"sameorigin-{Guid.NewGuid():N}@example.test";
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/register")
+        {
+            Content = JsonContent.Create(new { email, password = "Strong!Pass123", displayName = "Same Origin" })
+        };
+        request.Headers.Add("Origin", "https://localhost");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task WhitelistedFrontendOriginIsPermitted()
+    {
+        await using var factory = new NexoraApiFactory(new Dictionary<string, string?>
+        {
+            ["Frontend:AllowedOrigins:0"] = "http://localhost:5173"
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var email = $"whitelisted-{Guid.NewGuid():N}@example.test";
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/register")
+        {
+            Content = JsonContent.Create(new { email, password = "Strong!Pass123", displayName = "Allowed Origin" })
+        };
+        request.Headers.Add("Origin", "http://localhost:5173");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UntrustedOriginIsRejectedWithCsrfForbiddenEnvelope()
+    {
+        using var client = _factory.CreateHttpsClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
+        {
+            Content = JsonContent.Create(new { email = "test@example.com", password = "Password123!" })
+        };
+        request.Headers.Add("Origin", "https://malicious-phishing.example");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var error = json.RootElement.GetProperty("error");
+        Assert.Equal("CSRF_ORIGIN_INVALID", error.GetProperty("code").GetString());
+    }
+
     private static async Task<string> ReadAccessTokenAsync(HttpResponseMessage response)
     {
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());

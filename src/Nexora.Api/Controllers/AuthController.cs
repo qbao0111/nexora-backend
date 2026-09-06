@@ -102,10 +102,23 @@ public sealed class AuthController(
     {
         var origin = Request.Headers.Origin.ToString();
         if (string.IsNullOrWhiteSpace(origin)) return;
+        if (IsSameOrigin(origin)) return;
         var allowedOrigins = configuration.GetSection("Frontend:AllowedOrigins").Get<string[]>() ?? [];
         if (!allowedOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase))
             throw new BusinessException("CSRF_ORIGIN_INVALID", "Nguồn trình duyệt không được phép.", BusinessErrorKind.Forbidden);
     }
+
+    private bool IsSameOrigin(string origin)
+    {
+        if (Uri.TryCreate(origin, UriKind.Absolute, out var originUri) &&
+            Uri.TryCreate($"{Request.Scheme}://{Request.Host}", UriKind.Absolute, out var hostUri))
+        {
+            return string.Equals(originUri.Scheme, hostUri.Scheme, StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(originUri.Authority, hostUri.Authority, StringComparison.OrdinalIgnoreCase);
+        }
+        return false;
+    }
+
     private static AuthSessionResponse MapSession(AuthSession session) =>
         new(session.AccessToken, session.AccessTokenExpiresAt, new UserResponse(session.User.Id, session.User.Email, session.User.DisplayName, session.User.Roles));
 }

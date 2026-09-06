@@ -53,3 +53,5 @@ services:
         value: http://127.0.0.1:3000
       - key: Frontend__AllowedOrigins__3
         value: http://127.0.0.1:5173
+      - key: Frontend__AllowedOrigins__4
+        value: https://nexora-backend-q32b.onrender.com

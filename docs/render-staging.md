@@ -87,6 +87,7 @@ The frontend team and stakeholders accept the following constraints of Render Fr
 - `Frontend__AllowedOrigins__1=http://localhost:5173`
 - `Frontend__AllowedOrigins__2=http://127.0.0.1:3000`
 - `Frontend__AllowedOrigins__3=http://127.0.0.1:5173`
+- `Frontend__AllowedOrigins__4=https://nexora-backend-q32b.onrender.com`
 
 ### Secure Secrets (Configure in Render Dashboard or CLI)
 - `ConnectionStrings__Postgres`: Non-production Neon connection string (`sslmode=require`).
