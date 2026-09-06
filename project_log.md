@@ -332,12 +332,19 @@ This log records completed implementation milestones and verification evidence. 
 
 ## 2026-09-07 — Render Free staging deployment for frontend integration
 
-- Added deployment infrastructure for Render Free hosting (`nexora-staging` Web Service on Docker runtime in Singapore region).
+- Added deployment infrastructure for Render Free hosting (`nexora-staging` Web Service on Docker runtime in Oregon region).
 - Packaging: Multi-stage .NET 10 Dockerfile building `Nexora.Api`, `Nexora.Worker`, and EF Core migration bundle (`/app/nexora-migrate`).
 - Co-location topology: API and Worker run as separate .NET executables inside the same container managed by `scripts/render-entrypoint.sh`.
 - Architecture rationale: Current implementation uses `LocalStorageProvider`; co-location enables both API and Worker to share the same local filesystem (`/tmp/nexora-storage`).
 - Storage is intentionally ephemeral: raw uploaded files are not durable across container restarts/spin-downs; Neon PostgreSQL data remains persistent.
 - Production topology remains deferred: Production requires implementing shared durable object storage before splitting API and Worker into separate services.
-- Environment & Adapters: `ASPNETCORE_ENVIRONMENT=Staging`, non-production Neon PostgreSQL, Google Gemini staging (`Features__Ai=true`), SePay Sandbox (`Features__Payment=true`).
-- Security & CORS: Explicit CORS for local origins (`http://localhost:3000`, `http://localhost:5173`, `127.0.0.1`), cross-site refresh cookie (`SameSite=None; Secure=true; HttpOnly=true`).
-- Quality gates: 62/62 unit tests passed, 68/68 integration tests passed, 0 EF Core pending model changes. Render Blueprint validated successfully.
+- Environment & Adapters: `ASPNETCORE_ENVIRONMENT=Staging`, non-production Neon PostgreSQL, Google Gemini staging (`gemini-3.5-flash-lite`, `Features__Ai=true`), SePay Sandbox (`Features__Payment=true`).
+- Security, Reverse Proxy & CORS: Added `ForwardedHeadersOptions` to recognize client IP behind Render's reverse proxy for rate limiting; explicit CORS for local origins (`http://localhost:3000`, `http://localhost:5173`, `127.0.0.1`), cross-site refresh cookie (`SameSite=None; Secure=true; HttpOnly=true`).
+- Quality gates: 62/62 unit tests passed, 68/68 integration tests passed, 0 EF Core pending model changes.
+- Remote verification suite passed 100% on `https://nexora-backend-q32b.onrender.com`:
+  - Health checks: `/health/live` and `/api/v1/health` return HTTP 200 Healthy.
+  - Auth: user registration, `HttpOnly; Secure; SameSite=None` cookie handling, `GET /api/v1/me`.
+  - Scenarios: 12 scenario-library seed records verified.
+  - Shared Filesystem: presigned upload -> raw PUT -> worker outbox pickup -> extraction -> resume `ready` completed in 15 seconds.
+  - SePay Checkout: Basic plan checkout session generated pending order with `https://pay-sandbox.sepay.vn` redirect URL and no secret leakage.
+  - Gemini AI Evaluation: interactive interview created, question generated, candidate answer submitted and evaluated live with rubric scores and follow-up question.
