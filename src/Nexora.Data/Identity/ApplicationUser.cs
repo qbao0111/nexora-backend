@@ -8,6 +8,7 @@ public sealed class ApplicationUser : IdentityUser<Guid>
     public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? DeletionRequestedAt { get; set; }
     public DateTimeOffset? DeletedAt { get; set; }
+    public bool IsActive { get; set; } = true;
     public UserProfile? Profile { get; set; }
     public ICollection<RefreshToken> RefreshTokens { get; } = [];
 }

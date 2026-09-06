@@ -313,3 +313,19 @@ This log records completed implementation milestones and verification evidence. 
 - Seeding is strictly idempotent by scenario slug; existing slugs are skipped by default and safely updated with `-UpdateExisting`.
 - Frontend remains strictly API-driven via `GET /api/v1/scenarios` with no hardcoded content; updated integration guidelines for empty/loading/error states.
 - No schema migration or EF model changes introduced.
+
+## 2026-09-06 — Identity, default user onboarding, and admin account management
+
+- Added canonical `RoleNames.User = "User"` and `RoleNames.Admin = "Admin"` with seeded deterministic IDs (`50000000-0000-0000-0000-000000000001` and `50000000-0000-0000-0000-000000000002`).
+- Added `ApplicationUser.IsActive` (boolean NOT NULL, default true).
+- Created single migration `20260906101017_IdentityAdminFoundation` seeding the roles and backfilling existing users to the `User` role (`asp_net_user_roles`).
+- Implemented default user onboarding: registration automatically assigns `User` role, claims `User` in JWT, provisions 100-year Free Plan entitlement with 1 mock interview quota and subscription without external payment/orders.
+- Implemented active paid coexistence: active paid entitlements take precedence over `"free"` in `/api/v1/me`, `FeatureEntitlementService`, and `AdminService`.
+- Account status enforcement: inactive accounts (`IsActive == false`) fail login, refresh, and immediate token validation via `JwtBearerEvents.OnTokenValidated`.
+- Added authenticated password change: `POST /api/v1/me/password` validates current password, enforces 10-128 character policy, revokes active refresh tokens, and rotates security stamp.
+- Added Admin account management endpoints:
+  - `GET /api/v1/admin/roles`: returns system roles catalogue.
+  - `PUT /api/v1/admin/users/{userId}/roles`: assign roles with guardrails (cannot remove self admin, cannot remove user role, reason required).
+  - `PUT /api/v1/admin/users/{userId}/status`: activate/deactivate accounts with guardrails (cannot deactivate self, cannot deactivate last admin, immediate session revocation and security stamp rotation on deactivation).
+  - `GET /api/v1/admin/users`: added `search` alias, case-insensitive email/displayName matching, role filter, active planCode and entitlementState filtering, and cursor pagination fix (`lastId`).
+- Automated test coverage: verified 60/60 unit tests pass, 68/68 integration tests pass (including 8 comprehensive identity/admin tests in `IdentityAdminApiTests`). EF Core model has 0 pending changes.

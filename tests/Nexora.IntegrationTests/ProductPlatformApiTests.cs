@@ -259,7 +259,7 @@ public sealed class ProductPlatformApiTests
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        var ef = await db.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(item => item.Entitlement.UserId == account.UserId && item.FeatureCode == FeatureValues.CvAnalysis);
+        var ef = await db.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(item => item.Entitlement.UserId == account.UserId && item.Entitlement.PlanCodeSnapshot != "free" && item.FeatureCode == FeatureValues.CvAnalysis);
         Assert.Equal(0, ef.Adjustment);
     }
 
@@ -441,7 +441,7 @@ public sealed class ProductPlatformApiTests
 
         using var scope2 = factory.Services.CreateScope();
         var db2 = scope2.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        var ef = await db2.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(item => item.Entitlement.UserId == account.UserId && item.FeatureCode == FeatureValues.CvAnalysis);
+        var ef = await db2.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(item => item.Entitlement.UserId == account.UserId && item.Entitlement.PlanCodeSnapshot != "free" && item.FeatureCode == FeatureValues.CvAnalysis);
         Assert.Equal(1, ef.Reserved);
         Assert.Equal(0, ef.Consumed);
 
@@ -449,7 +449,7 @@ public sealed class ProductPlatformApiTests
 
         using var scope3 = factory.Services.CreateScope();
         var db3 = scope3.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        var efAfter = await db3.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(item => item.Entitlement.UserId == account.UserId && item.FeatureCode == FeatureValues.CvAnalysis);
+        var efAfter = await db3.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(item => item.Entitlement.UserId == account.UserId && item.Entitlement.PlanCodeSnapshot != "free" && item.FeatureCode == FeatureValues.CvAnalysis);
         Assert.Equal(0, efAfter.Reserved);
         Assert.Equal(1, efAfter.Consumed);
         var analysis = await db3.ResumeAnalyses.SingleAsync(item => item.UserId == account.UserId);
@@ -801,7 +801,7 @@ public sealed class ProductPlatformApiTests
         Assert.Equal(1, totalAnalyses);
 
         var ef = await db2.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(
-            item => item.Entitlement.UserId == account.UserId && item.FeatureCode == FeatureValues.CvAnalysis);
+            item => item.Entitlement.UserId == account.UserId && item.Entitlement.PlanCodeSnapshot != "free" && item.FeatureCode == FeatureValues.CvAnalysis);
         Assert.Equal(1, ef.Reserved);
     }
 

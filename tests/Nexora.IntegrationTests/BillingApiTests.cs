@@ -82,7 +82,7 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Equal(1, await db.PaymentEvents.CountAsync(item => item.OrderId == checkout.OrderId));
         Assert.Equal(1, await db.Subscriptions.CountAsync(item => item.OrderId == checkout.OrderId));
-        Assert.Equal(1, await db.Entitlements.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(1, await db.Entitlements.CountAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free"));
         Assert.Equal(BillingValues.Fulfilled, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
 
         using var me = await client.GetAsync("/api/v1/me");
@@ -108,7 +108,7 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Empty(await db.PaymentEvents.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
-        Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId).ToListAsync());
+        Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free").ToListAsync());
         Assert.Equal(BillingValues.Pending, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
     }
 
@@ -128,7 +128,7 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Empty(await db.PaymentEvents.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
-        Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId).ToListAsync());
+        Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free").ToListAsync());
     }
 
     [Fact]
@@ -174,7 +174,7 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
 
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        var entitlement = await db.Entitlements.SingleAsync(item => item.UserId == account.UserId);
+        var entitlement = await db.Entitlements.SingleAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free");
         Assert.Equal(0, entitlement.Reserved);
         Assert.Equal(1, entitlement.Consumed);
         Assert.Equal(1, entitlement.Adjustment);

@@ -59,11 +59,18 @@ public sealed record AdminEntitlementView(
 public sealed record AdminUserPage(Guid? LastId, IReadOnlyCollection<AdminUserSummaryView> Users);
 
 public sealed record AdminGrantResult(Guid EntitlementId, string PlanCode, DateTimeOffset StartsAt, DateTimeOffset EndsAt);
-
 public sealed record AdminAdjustmentResult(string FeatureCode, int Quantity, int? Available);
+
+public sealed record AdminRoleView(string Name);
+public sealed record AdminUpdateRolesCommand(IReadOnlyCollection<string> Roles, string Reason);
+public sealed record AdminUpdateStatusCommand(bool Active, string Reason);
 
 public interface IAdminService
 {
+    Task<IReadOnlyCollection<AdminRoleView>> GetRolesAsync(CancellationToken cancellationToken);
+    Task<AdminUserDetailView> UpdateUserRolesAsync(Guid adminUserId, Guid targetUserId, AdminUpdateRolesCommand command, CancellationToken cancellationToken);
+    Task<AdminUserDetailView> UpdateUserStatusAsync(Guid adminUserId, Guid targetUserId, AdminUpdateStatusCommand command, CancellationToken cancellationToken);
+
     Task<IReadOnlyCollection<AdminPlanView>> GetPlansAsync(CancellationToken cancellationToken);
     Task<AdminPlanView> CreatePlanAsync(Guid adminUserId, string code, string name, string? description, string? badge, bool isHighlighted, CancellationToken cancellationToken);
     Task<AdminPlanView> UpdatePlanAsync(Guid adminUserId, Guid planId, string name, string? description, string? badge, bool isHighlighted, bool isActive, CancellationToken cancellationToken);

@@ -13,6 +13,7 @@ public sealed class AdminUsersController(IAdminService adminService) : Controlle
     [HttpGet]
     public async Task<ActionResult<ApiResponse<AdminUserPageResponse>>> List(
         [FromQuery] string? query,
+        [FromQuery] string? search,
         [FromQuery] string? role,
         [FromQuery] string? planCode,
         [FromQuery] string? entitlementState,
@@ -20,7 +21,8 @@ public sealed class AdminUsersController(IAdminService adminService) : Controlle
         [FromQuery] int pageSize = 20,
         CancellationToken cancellationToken = default)
     {
-        var page = await adminService.GetUsersAsync(query, role, planCode, entitlementState, cursor, pageSize, cancellationToken);
+        var searchQuery = string.IsNullOrWhiteSpace(search) ? query : search;
+        var page = await adminService.GetUsersAsync(searchQuery, role, planCode, entitlementState, cursor, pageSize, cancellationToken);
         return Ok(new ApiResponse<AdminUserPageResponse>(new AdminUserPageResponse(page.LastId, page.Users.Select(Map).ToArray())));
     }
 
@@ -29,6 +31,34 @@ public sealed class AdminUsersController(IAdminService adminService) : Controlle
     {
         var user = await adminService.GetUserAsync(userId, cancellationToken);
         return Ok(new ApiResponse<AdminUserDetailResponse>(MapDetail(user)));
+    }
+
+    [HttpPut("{userId:guid}/roles")]
+    public async Task<ActionResult<ApiResponse<AdminUserDetailResponse>>> UpdateRoles(
+        Guid userId,
+        AdminUpdateRolesRequest request,
+        CancellationToken cancellationToken)
+    {
+        var updated = await adminService.UpdateUserRolesAsync(
+            User.GetRequiredUserId(),
+            userId,
+            new AdminUpdateRolesCommand(request.Roles, request.Reason),
+            cancellationToken);
+        return Ok(new ApiResponse<AdminUserDetailResponse>(MapDetail(updated)));
+    }
+
+    [HttpPut("{userId:guid}/status")]
+    public async Task<ActionResult<ApiResponse<AdminUserDetailResponse>>> UpdateStatus(
+        Guid userId,
+        AdminUpdateStatusRequest request,
+        CancellationToken cancellationToken)
+    {
+        var updated = await adminService.UpdateUserStatusAsync(
+            User.GetRequiredUserId(),
+            userId,
+            new AdminUpdateStatusCommand(request.Active, request.Reason),
+            cancellationToken);
+        return Ok(new ApiResponse<AdminUserDetailResponse>(MapDetail(updated)));
     }
 
     [HttpPost("{userId:guid}/plan-grants"), EnableRateLimiting(RateLimitPolicies.AiJob)]

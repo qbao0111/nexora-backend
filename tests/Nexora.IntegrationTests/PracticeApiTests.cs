@@ -62,7 +62,7 @@ public sealed class PracticeApiTests
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        var entitlement = await db.Entitlements.SingleAsync(item => item.UserId == account.UserId);
+        var entitlement = await db.Entitlements.SingleAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free");
         Assert.Equal(0, entitlement.Reserved);
         Assert.Equal(0, entitlement.Consumed);
         Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Void));
@@ -124,7 +124,7 @@ public sealed class PracticeApiTests
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        var entitlement = await db.Entitlements.SingleAsync(item => item.UserId == account.UserId);
+        var entitlement = await db.Entitlements.SingleAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free");
         Assert.Equal(0, entitlement.Reserved);
         Assert.Equal(1, entitlement.Consumed);
         Assert.Equal(1, await db.InterviewReports.CountAsync(item => item.InterviewSessionId == interviewId));
@@ -180,7 +180,7 @@ public sealed class PracticeApiTests
         {
             var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
             Assert.Equal(PracticeValues.Completing, (await db.InterviewSessions.SingleAsync(item => item.Id == interviewId)).Status);
-            Assert.Equal(1, (await db.Entitlements.SingleAsync(item => item.UserId == account.UserId)).Adjustment);
+            Assert.Equal(1, (await db.Entitlements.SingleAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free")).Adjustment);
             Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.Action == BillingValues.Adjustment && item.SourceType == "report_failure"));
         }
 
@@ -191,8 +191,8 @@ public sealed class PracticeApiTests
         Assert.Equal(PracticeValues.Completed, completed.GetProperty("status").GetString());
         using var finalScope = factory.Services.CreateScope();
         var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        Assert.Equal(1, (await finalDb.Entitlements.SingleAsync(item => item.UserId == account.UserId)).Consumed);
-        Assert.Equal(1, (await finalDb.Entitlements.SingleAsync(item => item.UserId == account.UserId)).Adjustment);
+        Assert.Equal(1, (await finalDb.Entitlements.SingleAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free")).Consumed);
+        Assert.Equal(1, (await finalDb.Entitlements.SingleAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free")).Adjustment);
         Assert.Equal(1, await finalDb.InterviewReports.CountAsync(item => item.InterviewSessionId == interviewId));
     }
 

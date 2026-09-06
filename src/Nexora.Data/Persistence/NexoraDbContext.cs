@@ -56,6 +56,26 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
         {
             entity.Property(user => user.CreatedAt).IsRequired();
             entity.Property(user => user.UpdatedAt).IsRequired();
+            entity.Property(user => user.IsActive).IsRequired().HasDefaultValue(true);
+        });
+        builder.Entity<IdentityRole<Guid>>(entity =>
+        {
+            entity.HasData(
+                new IdentityRole<Guid>
+                {
+                    Id = Guid.Parse("50000000-0000-0000-0000-000000000001"),
+                    Name = Nexora.Business.Authorization.RoleNames.User,
+                    NormalizedName = Nexora.Business.Authorization.RoleNames.User.ToUpperInvariant(),
+                    ConcurrencyStamp = "50000000-0000-0000-0000-000000000001"
+                },
+                new IdentityRole<Guid>
+                {
+                    Id = Guid.Parse("50000000-0000-0000-0000-000000000002"),
+                    Name = Nexora.Business.Authorization.RoleNames.Admin,
+                    NormalizedName = Nexora.Business.Authorization.RoleNames.Admin.ToUpperInvariant(),
+                    ConcurrencyStamp = "50000000-0000-0000-0000-000000000002"
+                }
+            );
         });
         builder.Entity<UserProfile>(entity =>
         {

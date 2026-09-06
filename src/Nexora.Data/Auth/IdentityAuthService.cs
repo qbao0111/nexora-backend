@@ -40,11 +40,16 @@ public sealed class IdentityAuthService(
             Email = email,
             CreatedAt = now,
             UpdatedAt = now,
+            IsActive = true,
             SecurityStamp = Guid.NewGuid().ToString("N")
         };
         await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
         var result = await userManager.CreateAsync(user, command.Password);
         if (!result.Succeeded) throw IdentityValidation(result);
+
+        var roleResult = await userManager.AddToRoleAsync(user, Nexora.Business.Authorization.RoleNames.User);
+        if (!roleResult.Succeeded) throw IdentityValidation(roleResult);
+
         dbContext.UserProfiles.Add(new UserProfile
         {
             Id = Guid.NewGuid(),
@@ -53,6 +58,63 @@ public sealed class IdentityAuthService(
             CreatedAt = now,
             UpdatedAt = now
         });
+
+        // Provision default Free plan entitlement snapshot matching canonical Free PlanPrice
+        var freePlanPrice = await dbContext.PlanPrices
+            .Include(p => p.Plan)
+            .Include(p => p.Features)
+            .ThenInclude(pf => pf.FeatureDefinition)
+            .SingleOrDefaultAsync(p => p.Plan.Code == "free" && p.IsActive, cancellationToken);
+
+        if (freePlanPrice is not null)
+        {
+            var startsAt = now;
+            var endsAt = now.AddYears(100);
+            var subscription = new Nexora.Data.Billing.Subscription
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                OrderId = null,
+                Status = Nexora.Business.Billing.BillingValues.Active,
+                StartsAt = startsAt,
+                EndsAt = endsAt,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            var entitlement = new Nexora.Data.Billing.Entitlement
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                SubscriptionId = subscription.Id,
+                PlanCodeSnapshot = freePlanPrice.Plan.Code,
+                Status = Nexora.Business.Billing.BillingValues.Active,
+                InterviewLimit = freePlanPrice.InterviewQuota,
+                StartsAt = startsAt,
+                EndsAt = endsAt,
+                CreatedAt = now,
+                UpdatedAt = now,
+                ConcurrencyToken = Guid.NewGuid()
+            };
+            dbContext.Subscriptions.Add(subscription);
+            dbContext.Entitlements.Add(entitlement);
+
+            foreach (var pf in freePlanPrice.Features.Where(pf => !string.Equals(pf.FeatureDefinition.Code, Nexora.Business.Billing.FeatureValues.Interview, StringComparison.OrdinalIgnoreCase)))
+            {
+                dbContext.EntitlementFeatures.Add(new Nexora.Data.Billing.EntitlementFeature
+                {
+                    Id = Guid.NewGuid(),
+                    EntitlementId = entitlement.Id,
+                    FeatureDefinitionId = pf.FeatureDefinitionId,
+                    FeatureCode = pf.FeatureDefinition.Code,
+                    IsEnabled = pf.IsEnabled,
+                    Limit = pf.Limit,
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    ConcurrencyToken = Guid.NewGuid()
+                });
+            }
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return await CreateSessionAsync(user, cancellationToken);
@@ -61,7 +123,7 @@ public sealed class IdentityAuthService(
     public async Task<AuthSession> LoginAsync(LoginUserCommand command, CancellationToken cancellationToken)
     {
         var user = await userManager.FindByEmailAsync(NormalizeEmail(command.Email));
-        if (user is null || user.DeletionRequestedAt is not null || user.DeletedAt is not null ||
+        if (user is null || !user.IsActive || user.DeletionRequestedAt is not null || user.DeletedAt is not null ||
             !(await signInManager.CheckPasswordSignInAsync(user, command.Password, true)).Succeeded)
         {
             throw new BusinessException("INVALID_CREDENTIALS", "Email hoặc mật khẩu không đúng.", BusinessErrorKind.Unauthorized);
@@ -75,7 +137,7 @@ public sealed class IdentityAuthService(
         var hash = HashToken(refreshToken);
         var existing = await dbContext.RefreshTokens.Include(token => token.User)
             .SingleOrDefaultAsync(token => token.TokenHash == hash, cancellationToken);
-        if (existing is null || existing.ExpiresAt <= now || existing.User.DeletionRequestedAt is not null || existing.User.DeletedAt is not null)
+        if (existing is null || existing.ExpiresAt <= now || !existing.User.IsActive || existing.User.DeletionRequestedAt is not null || existing.User.DeletedAt is not null)
             throw InvalidRefreshToken();
 
         var replacement = CreateRefreshToken(existing.UserId, now);
@@ -114,14 +176,14 @@ public sealed class IdentityAuthService(
     public async Task<AuthenticatedUser> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken)
     {
         var user = await dbContext.Users.AsNoTracking().Include(item => item.Profile)
-            .SingleOrDefaultAsync(item => item.Id == userId && item.DeletionRequestedAt == null && item.DeletedAt == null, cancellationToken) ?? throw UserNotFound();
+            .SingleOrDefaultAsync(item => item.Id == userId && item.IsActive && item.DeletionRequestedAt == null && item.DeletedAt == null, cancellationToken) ?? throw UserNotFound();
         return await MapUserAsync(user);
     }
 
     public async Task<AuthenticatedUser> UpdateProfileAsync(Guid userId, string? displayName, CancellationToken cancellationToken)
     {
         var user = await dbContext.Users.Include(item => item.Profile)
-            .SingleOrDefaultAsync(item => item.Id == userId && item.DeletionRequestedAt == null && item.DeletedAt == null, cancellationToken) ?? throw UserNotFound();
+            .SingleOrDefaultAsync(item => item.Id == userId && item.IsActive && item.DeletionRequestedAt == null && item.DeletedAt == null, cancellationToken) ?? throw UserNotFound();
         var now = timeProvider.GetUtcNow();
         user.Profile ??= new UserProfile { Id = Guid.NewGuid(), UserId = user.Id, CreatedAt = now };
         user.Profile.DisplayName = NormalizeDisplayName(displayName);
@@ -129,6 +191,35 @@ public sealed class IdentityAuthService(
         user.UpdatedAt = now;
         await dbContext.SaveChangesAsync(cancellationToken);
         return await MapUserAsync(user);
+    }
+
+    public async Task ChangePasswordAsync(Guid userId, string currentPassword, string newPassword, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(currentPassword) || string.IsNullOrWhiteSpace(newPassword))
+            throw new BusinessException("INVALID_PASSWORD", "Mật khẩu không được để trống.", BusinessErrorKind.Validation);
+        if (newPassword.Length < 10 || newPassword.Length > 128)
+            throw new BusinessException("PASSWORD_LENGTH_INVALID", "Mật khẩu mới phải từ 10 đến 128 ký tự.", BusinessErrorKind.Validation);
+
+        var user = await userManager.FindByIdAsync(userId.ToString());
+        if (user is null || !user.IsActive || user.DeletionRequestedAt is not null || user.DeletedAt is not null)
+            throw UserNotFound();
+
+        var changeResult = await userManager.ChangePasswordAsync(user, currentPassword, newPassword);
+        if (!changeResult.Succeeded)
+        {
+            var isCurrentPasswordIncorrect = changeResult.Errors.Any(e => e.Code == "PasswordMismatch");
+            if (isCurrentPasswordIncorrect)
+                throw new BusinessException("INCORRECT_CURRENT_PASSWORD", "Mật khẩu hiện tại không chính xác.", BusinessErrorKind.Unauthorized);
+            throw IdentityValidation(changeResult);
+        }
+
+        // Revoke all existing sessions and refresh tokens on password change
+        var now = timeProvider.GetUtcNow();
+        await dbContext.RefreshTokens.Where(token => token.UserId == userId && token.RevokedAt == null)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(token => token.RevokedAt, now), cancellationToken);
+        var stampResult = await userManager.UpdateSecurityStampAsync(user);
+        if (!stampResult.Succeeded)
+            throw new BusinessException("SESSION_REVOCATION_FAILED", "Không thể cập nhật bảo mật sau khi đổi mật khẩu.", BusinessErrorKind.ExternalFailure);
     }
 
     private async Task<AuthSession> CreateSessionAsync(ApplicationUser user, CancellationToken cancellationToken)

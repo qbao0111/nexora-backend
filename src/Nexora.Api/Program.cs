@@ -74,7 +74,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
             var stamp = context.Principal?.FindFirstValue(IdentityAuthService.SecurityStampClaim);
             var manager = context.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
             var user = string.IsNullOrWhiteSpace(subject) ? null : await manager.FindByIdAsync(subject);
-            if (user is null || user.DeletionRequestedAt is not null || user.DeletedAt is not null ||
+            if (user is null || !user.IsActive || user.DeletionRequestedAt is not null || user.DeletedAt is not null ||
                 string.IsNullOrWhiteSpace(stamp) || !string.Equals(user.SecurityStamp, stamp, StringComparison.Ordinal))
                 context.Fail("Token has been revoked.");
         },
@@ -89,7 +89,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy(AuthorizationPolicies.Admin, policy => policy.RequireAssertion(context =>
-        context.User.IsInRole("Admin") || context.User.HasClaim("role", "Admin") || context.User.HasClaim(ClaimTypes.Role, "Admin")));
+        context.User.IsInRole(Nexora.Business.Authorization.RoleNames.Admin) ||
+        context.User.HasClaim("role", Nexora.Business.Authorization.RoleNames.Admin) ||
+        context.User.HasClaim(ClaimTypes.Role, Nexora.Business.Authorization.RoleNames.Admin)));
     options.AddPolicy(AuthorizationPolicies.Owner, policy => policy.Requirements.Add(new OwnerRequirement()));
 });
 builder.Services.AddSingleton<IAuthorizationHandler, OwnerAuthorizationHandler>();

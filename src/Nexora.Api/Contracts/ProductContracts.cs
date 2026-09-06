@@ -53,9 +53,22 @@ public sealed record AdminUserDetailResponse(
     DateTimeOffset CreatedAt,
     EntitlementDetailResponse? CurrentEntitlement,
     IReadOnlyCollection<OrderResponse> RecentOrders);
+public sealed record AdminRoleResponse(string Name);
 public sealed record AdminGrantResponse(Guid EntitlementId, string PlanCode, DateTimeOffset StartsAt, DateTimeOffset EndsAt);
 public sealed record AdminAdjustmentResponse(string FeatureCode, int Quantity, int? Available);
 public sealed record AdminFeatureDefinitionResponse(Guid Id, string Code, string Name, string Description, bool IsActive, int SortOrder);
+
+public sealed class AdminUpdateRolesRequest
+{
+    [Required] public string[] Roles { get; init; } = [];
+    [Required, MaxLength(500)] public string Reason { get; init; } = string.Empty;
+}
+
+public sealed class AdminUpdateStatusRequest
+{
+    public bool Active { get; init; }
+    [Required, MaxLength(500)] public string Reason { get; init; } = string.Empty;
+}
 
 public sealed class AdminPlanCreateRequest
 {

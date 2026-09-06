@@ -5,7 +5,7 @@ namespace Nexora.Business.Authorization;
 public static class AuthorizationPolicies
 {
     public const string Owner = "Owner";
-    public const string Admin = "Admin";
+    public const string Admin = RoleNames.Admin;
 }
 
 public interface IUserOwnedResource { Guid UserId { get; } }
