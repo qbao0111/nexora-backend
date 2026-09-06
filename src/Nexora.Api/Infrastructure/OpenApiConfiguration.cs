@@ -36,7 +36,10 @@ internal static class OpenApiConfiguration
             if (context.Description.HttpMethod == "POST" && path is
                 "api/v1/checkout-sessions" or "api/v1/resume-analyses" or "api/v1/interviews" or
                 "api/v1/interviews/{id}/answers" or "api/v1/interviews/{id}/complete" or
-                "api/v1/me/deletion-requests" or "api/v1/dev/resume-analysis")
+                "api/v1/me/deletion-requests" or "api/v1/dev/resume-analysis" or
+                "api/v1/star-attempts" or
+                "api/v1/scenario-attempts" or "api/v1/scenario-attempts/{id}/submit" or
+                "api/v1/admin/users/{userId}/plan-grants" or "api/v1/admin/users/{userId}/feature-adjustments")
             {
                 operation.Parameters ??= [];
                 operation.Parameters.Add(new OpenApiParameter
