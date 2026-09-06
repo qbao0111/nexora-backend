@@ -21,6 +21,12 @@ namespace Nexora.Data.Persistence.Migrations
                 nullable: false,
                 defaultValue: true);
 
+            migrationBuilder.Sql(
+                """
+                DELETE FROM asp_net_user_roles WHERE "RoleId" NOT IN ('50000000-0000-0000-0000-000000000001', '50000000-0000-0000-0000-000000000002');
+                DELETE FROM asp_net_roles WHERE "Id" NOT IN ('50000000-0000-0000-0000-000000000001', '50000000-0000-0000-0000-000000000002');
+                """);
+
             migrationBuilder.InsertData(
                 table: "asp_net_roles",
                 columns: new[] { "Id", "ConcurrencyStamp", "Name", "NormalizedName" },
