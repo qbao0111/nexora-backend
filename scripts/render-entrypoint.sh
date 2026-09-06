@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
+# Default to Staging environment
+export ASPNETCORE_ENVIRONMENT="${ASPNETCORE_ENVIRONMENT:-Staging}"
+export DOTNET_ENVIRONMENT="${DOTNET_ENVIRONMENT:-Staging}"
+
 # Ensure storage directory exists
 STORAGE_PATH="${Storage__Local__RootPath:-/tmp/nexora-storage}"
 mkdir -p "$STORAGE_PATH"

@@ -45,6 +45,8 @@ RUN dotnet publish src/Nexora.Worker/Nexora.Worker.csproj \
 # Runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
+ENV ASPNETCORE_ENVIRONMENT=Staging
+ENV DOTNET_ENVIRONMENT=Staging
 
 # Install bash and curl for health checks and entrypoint
 RUN apt-get update && apt-get install -y --no-install-recommends bash curl && rm -rf /var/lib/apt/lists/*
