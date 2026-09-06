@@ -106,7 +106,16 @@ public static class HardeningExtensions
         }));
     }
 
-    private static string ByIp(HttpContext context) => context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    private static string ByIp(HttpContext context)
+    {
+        var forwarded = context.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(forwarded))
+        {
+            var first = forwarded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(first)) return first;
+        }
+        return context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    }
     private static string ByUser(HttpContext context) => context.User.FindFirstValue("sub") ?? ByIp(context);
     private static string ByRefreshSession(HttpContext context)
     {

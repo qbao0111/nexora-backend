@@ -93,7 +93,7 @@ The frontend team and stakeholders accept the following constraints of Render Fr
 - `ConnectionStrings__Postgres`: Non-production Neon connection string (`sslmode=require`).
 - `Authentication__Jwt__SigningKey`: 64+ character cryptographically secure key.
 - `Ai__Gemini__ApiKey`: Google Gemini API key.
-- `Ai__Gemini__Model`: `gemini-2.5-flash`.
+- `Ai__Gemini__Model`: `gemini-3.5-flash-lite`.
 - `Billing__Sepay__MerchantId`: SePay Sandbox Merchant ID.
 - `Billing__Sepay__SecretKey`: SePay Sandbox Secret Key.
 
@@ -101,9 +101,9 @@ The frontend team and stakeholders accept the following constraints of Render Fr
 
 ## Frontend Integration Handoff
 
-- **Staging API Base URL**: `https://<render-host>/api/v1`
+- **Staging API Base URL**: `https://nexora-backend-q32b.onrender.com/api/v1`
 - **Authentication**:
   - Access Token: Stored in frontend memory only. Sent via `Authorization: Bearer <token>`.
   - Refresh Token: Handled automatically via `HttpOnly`, `Secure`, `SameSite=None` cookie.
   - Required Request Header: `credentials: "include"` on all `fetch`/`axios` requests.
-- **SePay IPN Webhook URL**: `https://<render-host>/api/v1/webhooks/payments/sepay`
+- **SePay IPN Webhook URL**: `https://nexora-backend-q32b.onrender.com/api/v1/webhooks/payments/sepay`
