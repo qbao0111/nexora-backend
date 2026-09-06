@@ -62,8 +62,7 @@ The frontend team and stakeholders accept the following constraints of Render Fr
 | **Plan** | Free |
 | **Region** | Oregon (`oregon`) |
 | **Auto-Deploy** | Disabled during initial branch validation; enabled on `main` post-merge |
-| **Health Check Route** | `/api/v1/health` |
-| **Readiness Route** | `/health/live` |
+| **Health Check Route** | `/health/live` (Readiness: `/api/v1/health`) |
 | **Local Storage Path** | `/tmp/nexora-storage` |
 | **EF Core Migrations** | Pre-run bundle `/app/nexora-migrate` via `scripts/render-entrypoint.sh` |
 

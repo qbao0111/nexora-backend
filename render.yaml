@@ -7,7 +7,7 @@ services:
     region: oregon
     branch: deploy/render-free-staging
     autoDeploy: false
-    healthCheckPath: /api/v1/health
+    healthCheckPath: /health/live
     envVars:
       - key: ASPNETCORE_ENVIRONMENT
         value: Staging
