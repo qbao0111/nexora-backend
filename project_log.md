@@ -348,3 +348,36 @@ This log records completed implementation milestones and verification evidence. 
   - Shared Filesystem: presigned upload -> raw PUT -> worker outbox pickup -> extraction -> resume `ready` completed in 15 seconds.
   - SePay Checkout: Basic plan checkout session generated pending order with `https://pay-sandbox.sepay.vn` redirect URL and no secret leakage.
   - Gemini AI Evaluation: interactive interview created, question generated, candidate answer submitted and evaluated live with rubric scores and follow-up question.
+
+## 2026-09-07 — AI contract reliability, structured execution layer, and error recovery
+
+- Investigated Render Staging incident: `POST /api/v1/interviews/{id}/answers` -> HTTP 503 `AI_OUTPUT_INVALID` on request `31f4242115f74208bcf482ca7fe3b673`.
+  - Root cause: Gemini returned valid HTTP 200 after 5.54s, but server semantic validation failed due to fragile criteria casing/presence checks and inconsistent STAR applicability expectations on non-behavioral questions.
+  - Follow-up generation was tightly coupled with answer persistence; any subsequent AI error dropped evaluated answer persistence.
+  - Nested retries between provider adapter and calling services multiplied slow external calls.
+- Implemented provider-neutral structured execution layer:
+  - Added `IStructuredAiExecutor` and `StructuredAiExecutor` enforcing a strict global retry budget of at most 2 provider calls per purpose (1 initial call + 1 repair/retry).
+  - Reduced `GeminiOptions.MaxAttempts` default from 2 to 1 to eliminate nested retry multiplication.
+  - Added `AiOperationCatalog` with definitions for all 8 AI operations: `interview.question.generate`, `interview.answer.evaluate`, `interview.followup`, `interview.report`, `resume.profile`, `resume.analyze`, `scenario.evaluate`, `star.evaluate`.
+  - Added semantic repair cycle: attempt 1 semantic failures inject a focused repair prompt specifying the exact contract violation; non-repairable failures fail fast.
+- Hardened answer evaluation & rubric validation:
+  - Canonical 4 criteria (`correctness`, `structure`, `completeness`, `clarity`) normalized to trimmed lowercase with 0–100 integer scores and non-blank evidence.
+  - Server-authoritative STAR normalization: non-behavioral questions with model-returned STAR are normalized to `applicable = false` without failing; behavioral questions missing STAR attempt repair once; standalone `star.evaluate` requires `applicable = true`.
+- Isolated follow-up question generation:
+  - Follow-up question generation failure (AI error/timeout/rate-limit) never fails or discards an evaluated candidate answer.
+  - When follow-up AI fails, `PracticeService` falls back to a deterministic, Nexora-owned follow-up question (<= 2,000 chars) and persists the answer successfully.
+- Hardened context budgeting in `ResumeContextBuilder`:
+  - Prioritizes candidate answer text, question text, and metadata above background context; compacts JD and resume profile summaries to prevent crowding out candidate input.
+- Privacy & Logging Invariants:
+  - Used high-performance `[LoggerMessage]` source generators without CA1848/CA1873 violations.
+  - Safe internal diagnostics logged only (`failureReason`, `stage`, `attempt`, `correlationId`); candidate answer text, prompt bodies, and raw provider responses are never logged.
+- Quality Gates & Test Verification:
+  - `dotnet build Nexora.slnx --nologo`: 0 Warning(s), 0 Error(s).
+  - `dotnet test tests/Nexora.UnitTests/Nexora.UnitTests.csproj`: 87 passed, 0 failed, 0 skipped.
+  - `tests/Nexora.UnitTests/Ai/CanonicalRubricValidatorTests.cs`: 6 tests covering missing/duplicate criteria, scores, evidence.
+  - `tests/Nexora.UnitTests/Ai/AiOperationCatalogTests.cs`: 7 tests covering STAR normalization and repair prompts.
+  - `tests/Nexora.UnitTests/Ai/StructuredAiExecutorTests.cs`: 7 tests covering retry budget, repair recovery, and error mapping.
+  - `dotnet test tests/Nexora.IntegrationTests/Nexora.IntegrationTests.csproj`: 75 passed, 0 failed, 0 skipped.
+  - `tests/Nexora.IntegrationTests/AiContractReliabilityTests.cs`: 4 end-to-end tests reproducing staging incident, proving non-behavioral STAR normalization, follow-up fallback isolation, 2-call repair budget, and terminal failure behavior with 0 persistence.
+  - `dotnet ef migrations has-pending-model-changes`: No pending changes to EF Core model.
+  - Automated tests run 100% offline with zero live Gemini calls using enhanced `TestAiProvider`.
