@@ -11,7 +11,8 @@ public sealed record AiRequest(
     string UntrustedInput,
     JsonDocument OutputSchema,
     int MaxOutputTokens,
-    string CorrelationId);
+    string CorrelationId,
+    string? Instructions = null);
 
 public interface IAiProvider
 {
@@ -52,7 +53,8 @@ public sealed record StarEvaluation(
     StarComponentEvaluation? Result,
     IReadOnlyCollection<string> MissingElements,
     IReadOnlyCollection<string> Strengths,
-    IReadOnlyCollection<string> CoachingTips);
+    IReadOnlyCollection<string> CoachingTips,
+    string? ScoreScale = "0-100");
 public sealed record StarComponentAverages(int Situation, int Task, int Action, int Result);
 public sealed record StarReportSummary(
     int ApplicableAnswers,
@@ -62,9 +64,57 @@ public sealed record StarReportSummary(
     string WeakestComponent,
     IReadOnlyCollection<string> RecurringIssues,
     IReadOnlyCollection<string> CoachingPriorities);
-public sealed record AnswerEvaluation(IReadOnlyCollection<RubricScore> Scores, string Feedback, StarEvaluation? Star = null);
+public sealed record AnswerEvaluation(
+    IReadOnlyCollection<RubricScore> Scores,
+    string Feedback,
+    StarEvaluation? Star = null,
+    string? ScoreScale = "0-100");
 public sealed record InterviewReportOutput(
     IReadOnlyCollection<RubricScore> Scores,
     IReadOnlyCollection<string> Strengths,
     IReadOnlyCollection<string> Gaps,
-    IReadOnlyCollection<string> ActionPlan);
+    IReadOnlyCollection<string> ActionPlan,
+    string? ScoreScale = "0-100");
+
+public sealed record AiValidationResult<T>(
+    bool IsValid,
+    T? NormalizedValue,
+    string? FailureReason = null,
+    string? ValidationStage = null,
+    bool Repairable = false)
+{
+#pragma warning disable CA1000
+    public static AiValidationResult<T> Success(T value) =>
+        new(true, value);
+
+    public static AiValidationResult<T> Failure(string failureReason, string validationStage, bool repairable = false) =>
+        new(false, default, failureReason, validationStage, repairable);
+#pragma warning restore CA1000
+}
+
+public sealed record AiOperationContext(
+    string CorrelationId,
+    Guid? UserId = null,
+    bool? ExpectedStar = null,
+    string? InterviewType = null,
+    int? TargetQuestionCount = null,
+    IReadOnlyDictionary<string, string>? Metadata = null);
+
+public sealed record AiExecutionResult<T>(
+    T Value,
+    string ModelVersion,
+    string PromptVersion,
+    string SchemaVersion,
+    string RubricVersion,
+    bool RepairUsed,
+    int Attempts,
+    long LatencyMs);
+
+public interface IStructuredAiExecutor
+{
+    Task<AiExecutionResult<T>> ExecuteAsync<T>(
+        AiOperationDefinition<T> operation,
+        string untrustedInput,
+        AiOperationContext context,
+        CancellationToken cancellationToken);
+}

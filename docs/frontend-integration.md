@@ -156,6 +156,8 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
    ```
 
    Render `data.nextQuestion` when present; stop collecting answers when `data.isComplete` is `true`.
+   - **Score Scale**: All evaluation scores (rubric `correctness`, `structure`, `completeness`, `clarity` and STAR components) use a uniform `0-100` integer scale with server-computed weighted averages.
+   - **Follow-up Reliability**: Even if AI follow-up generation encounters a transient failure or rate limit, the evaluated answer is guaranteed to be persisted and a deterministic Nexora-owned fallback follow-up question is provided in `data.nextQuestion`.
 
    Behavioral answers include structured STAR coaching at `data.answer.evaluation.star`:
 

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Nexora.Business.Ai;
 using Nexora.Business.Practice;
 
@@ -9,11 +10,70 @@ namespace Nexora.IntegrationTests;
 /// </summary>
 internal sealed class TestAiProvider : IAiProvider
 {
-    public string ModelVersion => "test-gemini-model";
+    public string ModelVersion { get; set; } = "test-gemini-model";
+
+    private readonly ConcurrentQueue<AiRequest> _invocations = new();
+    private readonly ConcurrentDictionary<string, int> _callCounts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Queue<Func<AiRequest, object>>> _scriptedResponses = new(StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlyCollection<AiRequest> Invocations => _invocations.ToArray();
+
+    public int GetCallCount(string purpose) => _callCounts.TryGetValue(purpose, out var count) ? count : 0;
+    public int TotalCalls => _invocations.Count;
+
+    public void EnqueueResponse(string purpose, object responseOrException)
+    {
+        var queue = _scriptedResponses.GetOrAdd(purpose, _ => new Queue<Func<AiRequest, object>>());
+        lock (queue)
+        {
+            queue.Enqueue(_ => responseOrException);
+        }
+    }
+
+    public void EnqueueHandler(string purpose, Func<AiRequest, object> handler)
+    {
+        var queue = _scriptedResponses.GetOrAdd(purpose, _ => new Queue<Func<AiRequest, object>>());
+        lock (queue)
+        {
+            queue.Enqueue(handler);
+        }
+    }
+
+    public void Reset()
+    {
+        _invocations.Clear();
+        _callCounts.Clear();
+        _scriptedResponses.Clear();
+    }
 
     public Task<T> GenerateStructuredAsync<T>(AiRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        _invocations.Enqueue(request);
+        _callCounts.AddOrUpdate(request.Purpose, 1, (_, current) => current + 1);
+
+        if (_scriptedResponses.TryGetValue(request.Purpose, out var queue))
+        {
+            Func<AiRequest, object>? handler = null;
+            lock (queue)
+            {
+                if (queue.Count > 0)
+                {
+                    handler = queue.Dequeue();
+                }
+            }
+
+            if (handler is not null)
+            {
+                var outcome = handler(request);
+                if (outcome is Exception exception)
+                {
+                    return Task.FromException<T>(exception);
+                }
+                return Task.FromResult((T)outcome);
+            }
+        }
+
         var behavioral = request.UntrustedInput.Contains("interview-type: behavioral", StringComparison.OrdinalIgnoreCase);
         object result = typeof(T) switch
         {
@@ -37,17 +97,17 @@ internal sealed class TestAiProvider : IAiProvider
                     new StarComponentEvaluation(80, true, "Có nêu bối cảnh vấn đề.", "Bối cảnh rõ."),
                     new StarComponentEvaluation(70, true, "Có trách nhiệm xử lý.", "Nên tách rõ trách nhiệm cá nhân hơn."),
                     new StarComponentEvaluation(75, true, "Có hành động phân tích và phối hợp.", "Hành động cá nhân tương đối rõ."),
-                    new StarComponentEvaluation(45, false, string.Empty, "Cần nêu kết quả cụ thể hơn."),
+                    new StarComponentEvaluation(0, false, string.Empty, "Cần nêu kết quả cụ thể hơn."),
                     ["result"],
                     ["Có hành động xử lý rõ"],
                     ["Kết thúc câu trả lời bằng kết quả và tác động cụ thể."]) : new StarEvaluation(false, null, null, null, null, null, [], [], [])),
             var type when type == typeof(StarEvaluation) => new StarEvaluation(
                 true,
-                75,
+                56,
                 new StarComponentEvaluation(80, true, "Có bối cảnh tình huống.", "Bối cảnh rõ."),
                 new StarComponentEvaluation(70, true, "Có nhiệm vụ cụ thể.", "Nhiệm vụ rõ."),
                 new StarComponentEvaluation(75, true, "Có hành động xử lý.", "Hành động cá nhân rõ."),
-                new StarComponentEvaluation(50, false, string.Empty, "Cần nêu kết quả cụ thể hơn."),
+                new StarComponentEvaluation(0, false, string.Empty, "Cần nêu kết quả cụ thể hơn."),
                 ["result"],
                 ["Có hành động xử lý rõ"],
                 ["Kết thúc câu trả lời bằng kết quả và tác động cụ thể."]),

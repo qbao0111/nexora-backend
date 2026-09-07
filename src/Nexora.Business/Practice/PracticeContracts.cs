@@ -92,7 +92,8 @@ public sealed record DocumentOcrResult(
     string ExtractedText,
     ResumeProfile Profile,
     int PageCount,
-    IReadOnlyCollection<string> Warnings);
+    IReadOnlyCollection<string> Warnings,
+    string? SchemaVersion = null);
 
 public interface IDocumentOcrProvider
 {
@@ -136,7 +137,17 @@ public interface IResumeContextBuilder
     string BuildProfileExtractionContext(string rawExtractedText);
     string BuildResumeAnalysisContext(ResumeProfile profile, string jobDescription);
     string BuildInterviewQuestionContext(string role, string seniority, string interviewType, string difficulty, string? jobDescription, ResumeProfile? profile);
-    string BuildAnswerEvaluationContext(string role, string seniority, string interviewType, string? jobDescription, string question, string answer, ResumeProfile? profile);
+    string BuildAnswerEvaluationContext(
+        string role,
+        string seniority,
+        string interviewType,
+        string? jobDescription,
+        string question,
+        string answer,
+        ResumeProfile? profile,
+        int questionSequence = 1,
+        bool isFollowUp = false,
+        IReadOnlyCollection<string>? followupTargetElements = null);
     string BuildFollowupQuestionContext(string role, string seniority, string interviewType, string? jobDescription, string question, string answer, StarEvaluation? star, ResumeProfile? profile);
     string BuildReportContext(string transcript, ResumeProfile? profile);
 }

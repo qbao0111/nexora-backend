@@ -9,7 +9,8 @@ public sealed record ScenarioEvaluationResult(
     IReadOnlyCollection<string> Strengths,
     IReadOnlyCollection<string> Gaps,
     IReadOnlyCollection<string> RecommendedApproach,
-    string Feedback);
+    string Feedback,
+    string? ScoreScale = "0-100");
 
 public static class PracticeFeatureValues
 {

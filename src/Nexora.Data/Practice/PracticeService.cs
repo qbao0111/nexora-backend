@@ -23,6 +23,7 @@ public sealed partial class PracticeService(
     IDocumentOcrProvider documentOcrProvider,
     IResumeContextBuilder resumeContextBuilder,
     IAiProvider aiProvider,
+    IStructuredAiExecutor structuredAiExecutor,
     IBillingService billingService,
     IFeatureEntitlementService featureEntitlementService,
     TimeProvider timeProvider,
@@ -348,29 +349,100 @@ public sealed partial class PracticeService(
         var question = snapshot.Questions.SingleOrDefault(item => item.Id == questionId) ?? throw NotFound();
         if (snapshot.Answers.Any(item => item.QuestionId == questionId)) throw Conflict("ANSWER_ALREADY_EXISTS", "Câu hỏi đã có câu trả lời chính thức.");
 
+        var isFollowUp = question.Sequence > 1;
+        string[]? previousMissingElements = null;
+        if (isFollowUp)
+        {
+            var previousAnswer = snapshot.Answers
+                .Where(a => a.QuestionId != questionId)
+                .OrderByDescending(a => a.CreatedAt)
+                .FirstOrDefault();
+
+            if (previousAnswer?.Evaluation is not null)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(previousAnswer.Evaluation);
+                    if (doc.RootElement.TryGetProperty("star", out var starProp) &&
+                        starProp.TryGetProperty("missingElements", out var missingProp) &&
+                        missingProp.ValueKind == JsonValueKind.Array)
+                    {
+                        previousMissingElements = missingProp.EnumerateArray()
+                            .Select(e => e.GetString())
+                            .Where(s => !string.IsNullOrWhiteSpace(s))
+                            .Select(s => s!)
+                            .ToArray();
+                    }
+                }
+                catch
+                {
+                    // safe fallback
+                }
+            }
+        }
+
         AnswerEvaluation evaluation;
         GeneratedQuestion? generated = null;
         var profile = TryReadResumeProfile(snapshot.Resume?.StructuredProfile);
         var answerContext = resumeContextBuilder.BuildAnswerEvaluationContext(
-            snapshot.Role, snapshot.Seniority, snapshot.InterviewType, snapshot.JobDescription?.Content, question.Content, content.Trim(), profile);
+            snapshot.Role,
+            snapshot.Seniority,
+            snapshot.InterviewType,
+            snapshot.JobDescription?.Content,
+            question.Content,
+            content.Trim(),
+            profile,
+            question.Sequence,
+            isFollowUp,
+            previousMissingElements);
         try
         {
-            evaluation = await aiProvider.GenerateStructuredAsync<AnswerEvaluation>(Request("interview.evaluate", answerContext, interviewId), cancellationToken);
-            evaluation = evaluation with { Star = ValidateAndNormalizeStar(evaluation.Star, snapshot.InterviewType, question.Content) };
+            var isBehavioral = string.Equals(snapshot.InterviewType.Trim(), "behavioral", StringComparison.OrdinalIgnoreCase)
+                || LooksBehavioralQuestion(question.Content);
+            var metadata = new Dictionary<string, string>
+            {
+                ["questionSequence"] = question.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["isFollowup"] = isFollowUp ? "true" : "false"
+            };
+            if (previousMissingElements is not null && previousMissingElements.Length > 0)
+            {
+                metadata["followupTargetElements"] = string.Join(",", previousMissingElements);
+            }
+            var evalResult = await structuredAiExecutor.ExecuteAsync(
+                AiOperations.InterviewEvaluate,
+                answerContext,
+                new AiOperationContext(interviewId.ToString("N"), userId, ExpectedStar: isBehavioral, Metadata: metadata),
+                cancellationToken);
+            evaluation = evalResult.Value;
+
             if (snapshot.Questions.Count < 2)
             {
-                var followupContext = resumeContextBuilder.BuildFollowupQuestionContext(
-                    snapshot.Role, snapshot.Seniority, snapshot.InterviewType, snapshot.JobDescription?.Content,
-                    question.Content, content.Trim(), evaluation.Star, profile);
-                generated = await aiProvider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.followup", followupContext, interviewId), cancellationToken);
+                try
+                {
+                    var followupContext = resumeContextBuilder.BuildFollowupQuestionContext(
+                        snapshot.Role, snapshot.Seniority, snapshot.InterviewType, snapshot.JobDescription?.Content,
+                        question.Content, content.Trim(), evaluation.Star, profile);
+                    var followupResult = await structuredAiExecutor.ExecuteAsync(
+                        AiOperations.InterviewFollowup,
+                        followupContext,
+                        new AiOperationContext(interviewId.ToString("N"), userId),
+                        cancellationToken);
+                    generated = followupResult.Value;
+                }
+                catch (Exception exception)
+                {
+                    FollowupQuestionFallbackUsed(logger, exception, interviewId);
+                    generated = GenerateFallbackFollowupQuestion(snapshot.Role, snapshot.Seniority, snapshot.InterviewType, question.Content, evaluation.Star);
+                }
             }
         }
         catch (AiProviderException exception)
         {
             throw AiUnavailable(exception);
         }
-        ValidateScores(evaluation.Scores);
-        if (generated is not null && string.IsNullOrWhiteSpace(generated.Content)) throw InvalidAiOutput();
+
+        if (generated is not null && string.IsNullOrWhiteSpace(generated.Content))
+            generated = GenerateFallbackFollowupQuestion(snapshot.Role, snapshot.Seniority, snapshot.InterviewType, question.Content, evaluation.Star);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         prior = await FindIdempotentAsync(userId, "interview.answer", key, fingerprint, cancellationToken);
@@ -391,14 +463,14 @@ public sealed partial class PracticeService(
             CreatedAt = now
         };
         InterviewQuestion? nextQuestion = null;
-        if (generated is not null)
+        if (generated is not null && !string.IsNullOrWhiteSpace(generated.Content))
         {
             nextQuestion = new InterviewQuestion
             {
                 Id = Guid.NewGuid(),
                 InterviewSessionId = session.Id,
                 Sequence = session.Questions.Count + 1,
-                Content = generated.Content.Trim(),
+                Content = generated.Content.Trim()[..Math.Min(generated.Content.Trim().Length, 2_000)],
                 PromptVersion = PromptVersion,
                 ModelVersion = CurrentModelVersion,
                 CreatedAt = now
@@ -408,8 +480,19 @@ public sealed partial class PracticeService(
         session.Version++;
         session.UpdatedAt = now;
         dbContext.AddRange(answer, Idempotency(userId, "interview.answer", key, fingerprint, answer.Id, now));
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await CommitAsync(transaction, cancellationToken);
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(transaction, cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
+            dbContext.ChangeTracker.Clear();
+            prior = await FindIdempotentAsync(userId, "interview.answer", key, fingerprint, cancellationToken);
+            if (prior is not null) return await MapExistingAnswerAsync(userId, interviewId, prior.ResourceId, cancellationToken);
+            throw Conflict("CONCURRENT_SUBMISSION", "Câu trả lời đang được xử lý hoặc đã được nộp.");
+        }
         return new AnswerResult(MapAnswer(answer), nextQuestion is null ? null : MapQuestion(nextQuestion), nextQuestion is null);
     }
 
@@ -605,15 +688,18 @@ public sealed partial class PracticeService(
         ResumeProfile profile;
         try
         {
-            profile = await aiProvider.GenerateStructuredAsync<ResumeProfile>(
-                Request("resume.profile", context, correlationId), cancellationToken);
+            var execResult = await structuredAiExecutor.ExecuteAsync(
+                AiOperations.ResumeProfile,
+                context,
+                new AiOperationContext(correlationId.ToString("N")),
+                cancellationToken);
+            profile = execResult.Value;
         }
         catch (AiProviderException exception)
         {
             throw AiUnavailable(exception);
         }
 
-        ValidateResumeProfile(profile);
         resume.StructuredProfile = JsonSerializer.Serialize(profile, JsonOptions);
         resume.ProfileModelVersion = CurrentModelVersion;
         resume.ProfilePromptVersion = ProfilePromptVersion;
@@ -642,17 +728,10 @@ public sealed partial class PracticeService(
         if (!IsResumeProfileValid(profile)) throw InvalidAiOutput();
     }
 
-    private static bool IsResumeProfileValid(ResumeProfile? profile)
+    private static bool IsResumeProfileValid(ResumeProfile profile)
     {
-        if (profile is null) return false;
-        var hasContent = !string.IsNullOrWhiteSpace(profile.Summary) ||
-            (profile.Skills?.Count ?? 0) > 0 ||
-            (profile.Experiences?.Count ?? 0) > 0 ||
-            (profile.Education?.Count ?? 0) > 0 ||
-            (profile.Projects?.Count ?? 0) > 0 ||
-            (profile.Certifications?.Count ?? 0) > 0 ||
-            (profile.Languages?.Count ?? 0) > 0;
-        return hasContent &&
+        return !string.IsNullOrWhiteSpace(profile.Summary) &&
+            profile.Summary.Trim().Length <= 3_000 &&
             (profile.Skills?.Count ?? 0) <= 100 &&
             (profile.Experiences?.Count ?? 0) <= 30 &&
             (profile.Education?.Count ?? 0) <= 20 &&
@@ -670,8 +749,12 @@ public sealed partial class PracticeService(
         await dbContext.SaveChangesAsync(cancellationToken);
         var profile = await EnsureResumeProfileAsync(analysis.Resume, analysis.Id, cancellationToken);
         var input = resumeContextBuilder.BuildResumeAnalysisContext(profile, analysis.JobDescription.Content);
-        var result = await aiProvider.GenerateStructuredAsync<ResumeAnalysisOutput>(Request("resume.analysis", input, analysis.Id), cancellationToken);
-        if (result.Strengths.Count == 0 || result.Gaps.Count == 0 || result.Recommendations.Count == 0) throw InvalidAiOutput();
+        var execResult = await structuredAiExecutor.ExecuteAsync(
+            AiOperations.ResumeAnalysis,
+            input,
+            new AiOperationContext(analysis.Id.ToString("N"), analysis.UserId),
+            cancellationToken);
+        var result = execResult.Value;
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         analysis.Result = JsonSerializer.Serialize(result, JsonOptions);
@@ -692,8 +775,12 @@ public sealed partial class PracticeService(
         var profile = snapshot.Resume is null ? null : await EnsureResumeProfileAsync(snapshot.Resume, snapshot.Id, cancellationToken);
         var context = resumeContextBuilder.BuildInterviewQuestionContext(
             snapshot.Role, snapshot.Seniority, snapshot.InterviewType, snapshot.Difficulty, snapshot.JobDescription?.Content, profile);
-        var generated = await aiProvider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.first-question", context, snapshot.Id), cancellationToken);
-        if (string.IsNullOrWhiteSpace(generated.Content) || generated.Content.Length > 2_000) throw InvalidAiOutput();
+        var execResult = await structuredAiExecutor.ExecuteAsync(
+            AiOperations.InterviewFirstQuestion,
+            context,
+            new AiOperationContext(snapshot.Id.ToString("N"), snapshot.UserId),
+            cancellationToken);
+        var generated = execResult.Value;
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         var session = await dbContext.InterviewSessions.SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
@@ -706,7 +793,7 @@ public sealed partial class PracticeService(
             Id = Guid.NewGuid(),
             InterviewSessionId = session.Id,
             Sequence = 1,
-            Content = generated.Content.Trim(),
+            Content = generated.Content.Trim()[..Math.Min(generated.Content.Trim().Length, 2_000)],
             PromptVersion = PromptVersion,
             ModelVersion = CurrentModelVersion,
             CreatedAt = now
@@ -730,7 +817,12 @@ public sealed partial class PracticeService(
             .Select(item => $"Q: {item.Content}\nA: {item.Answer?.Content}"));
         var reportContext = resumeContextBuilder.BuildReportContext(
             transcript, TryReadResumeProfile(snapshot.Resume?.StructuredProfile));
-        var output = await aiProvider.GenerateStructuredAsync<InterviewReportOutput>(Request("interview.report", reportContext, snapshot.Id), cancellationToken);
+        var execResult = await structuredAiExecutor.ExecuteAsync(
+            AiOperations.InterviewReport,
+            reportContext,
+            new AiOperationContext(snapshot.Id.ToString("N"), snapshot.UserId),
+            cancellationToken);
+        var output = execResult.Value;
         ValidateScores(output.Scores);
         if (output.Strengths.Count == 0 || output.Gaps.Count == 0 || output.ActionPlan.Count == 0) throw InvalidAiOutput();
         var overall = WeightedScore(output.Scores);
@@ -911,6 +1003,37 @@ public sealed partial class PracticeService(
         await transaction.CommitAsync(cancellationToken);
     }
 
+    private static GeneratedQuestion GenerateFallbackFollowupQuestion(
+        string role, string seniority, string interviewType, string previousQuestion, StarEvaluation? star)
+    {
+        if (star?.Applicable == true && star.MissingElements is { Count: > 0 } missing)
+        {
+            if (missing.Contains("result", StringComparer.OrdinalIgnoreCase))
+            {
+                return new GeneratedQuestion("Bạn có thể chia sẻ cụ thể hơn về kết quả định lượng hoặc tác động đo lường được sau những hành động đó không?");
+            }
+            if (missing.Contains("action", StringComparer.OrdinalIgnoreCase))
+            {
+                return new GeneratedQuestion("Trong tình huống vừa nêu, bạn đã trực tiếp thực hiện những bước hành động cụ thể nào để giải quyết vấn đề?");
+            }
+            if (missing.Contains("task", StringComparer.OrdinalIgnoreCase))
+            {
+                return new GeneratedQuestion("Mục tiêu hoặc nhiệm vụ chính mà bạn cần hoàn thành trong tình huống đó cụ thể là gì?");
+            }
+            if (missing.Contains("situation", StringComparer.OrdinalIgnoreCase))
+            {
+                return new GeneratedQuestion("Bối cảnh và nguyên nhân trực tiếp dẫn đến tình huống phát sinh lúc đó là gì?");
+            }
+        }
+
+        if (string.Equals(interviewType.Trim(), "behavioral", StringComparison.OrdinalIgnoreCase))
+        {
+            return new GeneratedQuestion("Nếu đối mặt với một tình huống tương tự trong tương lai, bạn sẽ thay đổi hoặc cải thiện điểm gì so với cách xử lý trước đây?");
+        }
+
+        return new GeneratedQuestion($"Dựa trên câu trả lời vừa rồi, bạn có thể phân tích sâu hơn về một thách thức quan trọng mà bạn đã giải quyết trong vai trò {role.Trim()} không?");
+    }
+
     private static void ValidateInterview(StartInterviewCommand command)
     {
         if (new[] { command.Role, command.Seniority, command.InterviewType, command.Difficulty }
@@ -922,61 +1045,6 @@ public sealed partial class PracticeService(
         var required = new[] { "correctness", "structure", "completeness", "clarity" };
         if (scores.Count != required.Length || required.Any(name => scores.Count(item => item.Criterion == name) != 1) ||
             scores.Any(item => item.Score is < 0 or > 100 || string.IsNullOrWhiteSpace(item.Evidence))) throw InvalidAiOutput();
-    }
-
-    private static StarEvaluation ValidateAndNormalizeStar(StarEvaluation? star, string interviewType, string question)
-    {
-        if (star is null) throw InvalidAiOutput();
-        if (!star.Applicable)
-            return star with
-            {
-                OverallScore = null,
-                Situation = null,
-                Task = null,
-                Action = null,
-                Result = null,
-                MissingElements = [],
-                Strengths = [],
-                CoachingTips = star.CoachingTips?.Take(3).Where(NotBlank).Select(Trim).ToArray() ?? []
-            };
-
-        var behavioral = string.Equals(interviewType.Trim(), "behavioral", StringComparison.OrdinalIgnoreCase) || LooksBehavioralQuestion(question);
-        var situation = ValidateStarComponent(star.Situation, "situation");
-        var task = ValidateStarComponent(star.Task, "task");
-        var action = ValidateStarComponent(star.Action, "action");
-        var result = ValidateStarComponent(star.Result, "result");
-        if (!behavioral) throw InvalidAiOutput();
-
-        var missing = new[] { ("situation", situation), ("task", task), ("action", action), ("result", result) }
-            .Where(item => !item.Item2.Detected || item.Item2.Score < 60)
-            .Select(item => item.Item1)
-            .Concat(star.MissingElements ?? [])
-            .Where(value => value is "situation" or "task" or "action" or "result")
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-
-        return star with
-        {
-            OverallScore = WeightedStarScore(situation, task, action, result),
-            Situation = situation,
-            Task = task,
-            Action = action,
-            Result = result,
-            MissingElements = missing,
-            Strengths = star.Strengths?.Where(NotBlank).Select(Trim).Take(3).ToArray() ?? [],
-            CoachingTips = star.CoachingTips?.Where(NotBlank).Select(Trim).Take(3).ToArray() ?? []
-        };
-    }
-
-    private static StarComponentEvaluation ValidateStarComponent(StarComponentEvaluation? component, string name)
-    {
-        if (component is null)
-            return new StarComponentEvaluation(0, false, string.Empty, $"Thiếu nội dung {name}.");
-        var score = Math.Clamp(component.Score, 0, 100);
-        var feedback = string.IsNullOrWhiteSpace(component.Feedback) ? $"Đánh giá {name}." : Trim(component.Feedback);
-        var evidence = Trim(component.Evidence);
-        var detected = component.Detected || (!string.IsNullOrWhiteSpace(evidence) && score >= 50);
-        return new StarComponentEvaluation(score, detected, evidence, feedback);
     }
 
     private static bool LooksBehavioralQuestion(string question)
@@ -1084,6 +1152,9 @@ public sealed partial class PracticeService(
 
     [LoggerMessage(LogLevel.Information, "Resume {ResumeId} entered document OCR fallback after {LocalQuality} local quality")]
     private static partial void OcrFallbackStarted(ILogger logger, Guid resumeId, string localQuality);
+
+    [LoggerMessage(LogLevel.Warning, "Followup question generation failed for interview {InterviewId}. Using fallback question.")]
+    private static partial void FollowupQuestionFallbackUsed(ILogger logger, Exception exception, Guid interviewId);
 
     private static ResumeView MapResume(ResumeRecord resume) => new(
         resume.Id,

@@ -348,3 +348,65 @@ This log records completed implementation milestones and verification evidence. 
   - Shared Filesystem: presigned upload -> raw PUT -> worker outbox pickup -> extraction -> resume `ready` completed in 15 seconds.
   - SePay Checkout: Basic plan checkout session generated pending order with `https://pay-sandbox.sepay.vn` redirect URL and no secret leakage.
   - Gemini AI Evaluation: interactive interview created, question generated, candidate answer submitted and evaluated live with rubric scores and follow-up question.
+
+## 2026-09-07 — AI contract reliability, structured execution layer, and error recovery
+
+- Investigated Render Staging incident: `POST /api/v1/interviews/{id}/answers` -> HTTP 503 `AI_OUTPUT_INVALID` on request `31f4242115f74208bcf482ca7fe3b673`.
+  - Root cause: Gemini returned valid HTTP 200 after 5.54s, but server semantic validation failed due to fragile criteria casing/presence checks and inconsistent STAR applicability expectations on non-behavioral questions.
+  - Follow-up generation was tightly coupled with answer persistence; any subsequent AI error dropped evaluated answer persistence.
+  - Nested retries between provider adapter and calling services multiplied slow external calls.
+- Implemented provider-neutral structured execution layer:
+  - Added `IStructuredAiExecutor` and `StructuredAiExecutor` enforcing a strict global retry budget of at most 2 provider calls per purpose (1 initial call + 1 repair/retry).
+  - Reduced `GeminiOptions.MaxAttempts` default from 2 to 1 to eliminate nested retry multiplication.
+  - Added `AiOperationCatalog` with definitions for all 8 AI operations: `interview.question.generate`, `interview.answer.evaluate`, `interview.followup`, `interview.report`, `resume.profile`, `resume.analyze`, `scenario.evaluate`, `star.evaluate`.
+  - Added semantic repair cycle: attempt 1 semantic failures inject a focused repair prompt specifying the exact contract violation; non-repairable failures fail fast.
+- Hardened answer evaluation & rubric validation:
+  - Canonical 4 criteria (`correctness`, `structure`, `completeness`, `clarity`) normalized to trimmed lowercase with 0–100 integer scores and non-blank evidence.
+  - Server-authoritative STAR normalization: non-behavioral questions with model-returned STAR are normalized to `applicable = false` without failing; behavioral questions missing STAR attempt repair once; standalone `star.evaluate` requires `applicable = true`.
+- Isolated follow-up question generation:
+  - Follow-up question generation failure (AI error/timeout/rate-limit) never fails or discards an evaluated candidate answer.
+  - When follow-up AI fails, `PracticeService` falls back to a deterministic, Nexora-owned follow-up question (<= 2,000 chars) and persists the answer successfully.
+- Hardened context budgeting in `ResumeContextBuilder`:
+  - Prioritizes candidate answer text, question text, and metadata above background context; compacts JD and resume profile summaries to prevent crowding out candidate input.
+- Privacy & Logging Invariants:
+  - Used high-performance `[LoggerMessage]` source generators without CA1848/CA1873 violations.
+  - Safe internal diagnostics logged only (`failureReason`, `stage`, `attempt`, `correlationId`); candidate answer text, prompt bodies, and raw provider responses are never logged.
+- Quality Gates & Test Verification:
+  - `dotnet build Nexora.slnx --nologo`: 0 Warning(s), 0 Error(s).
+  - `dotnet test tests/Nexora.UnitTests/Nexora.UnitTests.csproj`: 87 passed, 0 failed, 0 skipped.
+  - `tests/Nexora.UnitTests/Ai/CanonicalRubricValidatorTests.cs`: 6 tests covering missing/duplicate criteria, scores, evidence.
+  - `tests/Nexora.UnitTests/Ai/AiOperationCatalogTests.cs`: 7 tests covering STAR normalization and repair prompts.
+  - `tests/Nexora.UnitTests/Ai/StructuredAiExecutorTests.cs`: 7 tests covering retry budget, repair recovery, and error mapping.
+  - `dotnet test tests/Nexora.IntegrationTests/Nexora.IntegrationTests.csproj`: 75 passed, 0 failed, 0 skipped.
+  - `tests/Nexora.IntegrationTests/AiContractReliabilityTests.cs`: 4 end-to-end tests reproducing staging incident, proving non-behavioral STAR normalization, follow-up fallback isolation, 2-call repair budget, and terminal failure behavior with 0 persistence.
+  - `dotnet ef migrations has-pending-model-changes`: No pending changes to EF Core model.
+  - Automated tests run 100% offline with zero live Gemini calls using enhanced `TestAiProvider`.
+
+## 2026-09-07 — Canonical STAR semantic contract, evidence-first extraction, and follow-up aware context
+
+- Investigated Render Staging regression on behavioral interview evaluation:
+  - Gemini correctly recognized and quoted Action and Result in the general rubric criteria (scores 95 and 90), but marked `action.detected = false, score = 0, feedback = "Thiếu nội dung action"` and `result.detected = false, score = 0, feedback = "Thiếu nội dung result"` inside the structured STAR component evaluation.
+  - Root cause: Divergent instructions between `interview.evaluate` and `star.evaluate`, question-focus bias causing LLM to only look for components mentioned in the question prompt (e.g. asking for Task causing Action/Result to be missed), lack of domain-specific technical examples (indexing, caching, log analysis, latency drops), and absence of strict evidence-first extraction rules.
+- Unified canonical STAR semantic contract:
+  - Created `StarSemantics.CanonicalInstructions` as a single shared constant defining Situation, Task, Action, and Result with concrete technical and behavioral examples (e.g., connection pool exhaustion, log/EXPLAIN analysis, adding B-tree index, Redis caching, latency reduction, post-mortem).
+  - Enforced question-focus detachment: the LLM must scan the entire answer for all four components, irrespective of how the question was framed.
+  - Embedded `StarSemantics.CanonicalInstructions` into both `interview.answer.evaluate` (`interview-eval-v4`) and `star.evaluate` (`star-eval-v3`).
+- Hardened evidence-first extraction & server-side validation:
+  - For every component: if concrete evidence exists in candidate text, model must return `detected = true`, quote exact evidence, and score 1..100. If absent, `detected = false`, `evidence = ""`, and `score = 0`.
+  - Added `StarComponentValidator.Validate` in `AiOperationCatalog` ensuring invariants: `detected == false` strictly requires `score == 0`, and `detected == true` requires non-blank evidence and `score > 0`.
+  - Server-authoritatively recomputes `overallScore` (Situation 20%, Task 20%, Action 35%, Result 25%) and evaluates `missingElements` (`!detected || score < 60`).
+  - Added targeted repair prompts when model violates component invariants or detection-score parity.
+- Implemented follow-up aware evaluation context:
+  - Extended `IResumeContextBuilder.BuildAnswerEvaluationContext` and `ResumeContextBuilder` to pass `question-sequence`, `is-follow-up`, and `followup-target-elements` (populated from previous answer's missing elements).
+  - Forwarded follow-up metadata through `PracticeService.SubmitAnswerAsync` into `AiOperationContext.Metadata`.
+  - Added explicit instructions directing the model to evaluate all present components while recognizing when follow-up answers focus specifically on missing elements.
+- Quality Gates & Test Verification:
+  - `dotnet build Nexora.slnx --nologo`: 0 Warning(s), 0 Error(s).
+  - `dotnet test tests/Nexora.UnitTests/Nexora.UnitTests.csproj`: 93 passed, 0 failed, 0 skipped.
+    - Added tests for `StarComponentValidator`: Test A (`detected=false, score=60` fails), Test B (`detected=true, evidence=""` fails), Test C (valid undetected `score=0, evidence=""`), Test D (valid detected `score=90, evidence="quote"`).
+    - Added prompt contract test (Test L) verifying both operations share `StarSemantics.CanonicalInstructions`.
+    - Verified repair instruction generation for component invariant violations.
+  - `dotnet test tests/Nexora.IntegrationTests/Nexora.IntegrationTests.csproj`: 77 passed, 0 failed, 0 skipped.
+    - Added Test M verifying context builder includes question sequence, follow-up flag, and target missing elements.
+    - Added regression fixture verifying follow-up aware evaluation preserves all detected STAR components.
+    - Updated `TestAiProvider` to adhere to zero-score for undetected components invariant.

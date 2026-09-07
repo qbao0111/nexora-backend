@@ -1,7 +1,7 @@
 # AI Integration Specification — Nexora
 
 **Status:** Approved implementation baseline; production provider/budgets deferred  
-**Last updated:** 2026-08-25
+**Last updated:** 2026-09-07
 
 ## 1. Allowed AI capabilities in MVP
 
@@ -13,7 +13,7 @@
 
 Nexora is a practice product: AI output is coaching guidance, not hiring truth or real-interview covert assistance.
 
-## 2. Provider contract
+## 2. Provider contract and structured execution layer
 
 ```csharp
 public interface IAiProvider
@@ -26,18 +26,35 @@ public interface IAiProvider
 }
 ```
 
-`AiRequest` contains purpose, approved prompt template version, untrusted user text delimiters, expected JSON schema, max tokens and correlation ID. Adapter normalises provider errors; provider-specific SDK types never escape to controller/business API.
+`AiRequest` contains purpose, approved prompt template version, untrusted user text delimiters, expected JSON schema, optional per-operation instructions, max tokens and correlation ID. Provider-specific SDK types never escape to controller/business API.
+
+### 2.1 Structured AI execution layer (`IStructuredAiExecutor`)
+
+Business logic interacts with AI operations through `IStructuredAiExecutor` and definitions from `AiOperationCatalog`:
+
+```csharp
+public interface IStructuredAiExecutor
+{
+    Task<AiExecutionResult<T>> ExecuteAsync<T>(
+        AiOperationDefinition<T> operation,
+        AiOperationContext context,
+        CancellationToken cancellationToken);
+}
+```
+
+- **Global Retry Budget**: At most **two** provider calls per AI purpose (1 initial call + at most 1 repair or rate-limit retry). Provider adapter default `MaxAttempts` is set to 1 to eliminate nested retry multiplication.
+- **Repair Cycle**: If attempt 1 fails server semantic validation with a repairable issue, attempt 2 injects a focused repair prompt specifying the exact contract violation and instructions to correct it.
+- **Non-Repairable Failures**: Syntax parsing failures, malformed JSON, unrecoverable semantic violations, or non-transient HTTP errors fail fast without a second call.
+- **Error Normalization**: Maps failures to canonical `BusinessException` with `BusinessErrorKind.ExternalFailure` and safe error codes (`AI_OUTPUT_INVALID`, `AI_RATE_LIMITED`, `AI_PROVIDER_UNAVAILABLE`).
 
 Current internal implementation:
 
 - `GeminiAiProvider` là provider AI của application cho Development/internal testing bằng development API key/quota. Gemini SDK/HTTP types chỉ ở `Nexora.Integrations`; model identifier từ configuration; key từ secret configuration; output map sang Nexora-owned schema.
-- Automated tests that need deterministic provider behavior may register a test-project-only provider; no test double is part of the application runtime or normal development configuration.
+- Automated tests that need deterministic provider behavior register a test-project-only provider (`TestAiProvider`); no test double is part of the application runtime or normal development configuration.
 
 Gemini không phải production choice mặc định. DEC-01 vẫn quyết định production provider/model và budgets.
 
-Provider failures use Nexora-owned categories (`configuration`, `authentication`, `rate-limited`, `timeout`, `unavailable`, `invalid-response`) and safe messages. The adapter must not copy a provider response body, credential, or SDK exception text into an API response. Retry only transient or invalid structured responses, use a configured overall timeout and cap attempts at three.
-
-Normal internal validation uses the real browser/API/Worker/Gemini path with owner-supplied data. Automated tests remain network-free by replacing the adapter inside the test project where a critical state invariant needs deterministic output. Gemini development traffic is separate from production enablement and does not resolve DEC-01.
+The adapter and executor must never copy a provider response body, credential, prompt, or candidate answer text into an API response or log. Only safe diagnostics (`failureReason`, `stage`, `attempt`, `correlationId`) are recorded.
 
 Document fallback is a separate `IDocumentOcrProvider` boundary. `GeminiDocumentOcrProvider` receives the original document only after the local extraction quality gate is suspicious/failed, and returns faithful extracted text plus the compact resume profile in one document-understanding response. It is not used for normal text PDF/DOCX extraction and is not a production OCR decision.
 
@@ -53,15 +70,34 @@ Document fallback is a separate `IDocumentOcrProvider` boundary. `GeminiDocument
 
 StartInterview retries must not duplicate session, question, usage event or job effect. Consumption is determined by successful question persistence plus `starting → active`, not browser receipt. After activation, disconnect/refresh/navigation/no answer or later AI/report failure does not automatically void usage; terminal report failure retains the BR-08 adjustment/support rule.
 
-## 4. Output quality and safety rules
+## 4. Output quality, safety and recovery rules
 
-- Structured output must pass JSON schema + server semantic validation (exact rubric criteria `correctness`, `structure`, `completeness`, `clarity`; score 0–100; required grounded evidence; no missing criterion).
-- Behavioral answer evaluation also returns `star.applicable`. When true, Situation/Task/Action/Result components use 0–100 scores with grounded evidence and concise coaching. When false, STAR component details remain null/empty; technical explanations must keep the generic rubric only.
-- The server computes STAR overall score with Situation 20%, Task 20%, Action 35% and Result 25%, and aggregates final report `starSummary` from persisted answer evaluations rather than asking the model to perform arithmetic.
-- Preserve candidate facts: if a metric/result is absent, suggest how to quantify it; never fabricate achievements.
-- Keep `evidence` references to answer spans where possible. If no evidence exists, classify feedback as suggestion, not fact.
-- Treat CV/JD/answer as untrusted input: delimiter, instruction hierarchy, no tool access, no secrets in prompt, max input size.
-- On invalid output/timeout, retry boundedly then mark job failed with user-friendly message; do not expose raw provider error.
+- **Canonical Rubric Validation**: Structured evaluation output must pass JSON schema + server semantic validation:
+  - Exact four rubric criteria: `correctness`, `structure`, `completeness`, `clarity` (case-insensitive matching from provider, normalized lowercase and trimmed).
+  - Sub-scores bounded strictly to 0–100 with non-blank grounded evidence.
+  - Overall score computed server-side via canonical weights (Relevance/Correctness 40%, Structure 25%, Completeness 20%, Clarity 15%).
+- **Server-Authoritative STAR Normalization & Semantic Contract**:
+  - Non-behavioral questions: `star.applicable` is server-normalized to `false` without failing evaluation; STAR component details are suppressed.
+  - Behavioral questions: If model omits STAR or returns `applicable = false`, the executor marks the issue repairable and attempts repair once.
+  - Standalone `star.evaluate` (Scenario/STAR feature): strictly requires `applicable = true`.
+  - **Canonical STAR Instructions (`StarSemantics.CanonicalInstructions`)**: Unified single source of truth embedded in both `interview.answer.evaluate` (`interview-eval-v4`) and `star.evaluate` (`star-eval-v3`). Defines clear technical examples for Situation (system state/incident), Task (candidate's specific duty/ownership), Action (investigation/profiling/indexing/caching/code changes), and Result (latency reduction, recovery, metrics, lessons).
+  - **Question-Focus Detachment**: Evaluator must scan the entire answer for all four components. Phrasing of the interview question must not constrain component detection.
+  - **Evidence-First Extraction**: For every component:
+    - If concrete evidence exists: `detected = true`, `evidence = "<exact quote>"`, `score = 1..100`.
+    - If absent: `detected = false`, `evidence = ""`, `score = 0`.
+    - Invariant: `detected = false` with `score > 0` or `detected = true` with empty evidence is strictly rejected by `StarComponentValidator`.
+  - **Server-Authoritative Calculation**: Server recomputes `overallScore` using canonical weights (Situation 20%, Task 20%, Action 35%, Result 25%) and determines `missingElements` (`!detected || score < 60`).
+- **Follow-up Aware Evaluation Context**:
+  - `ResumeContextBuilder` supplies `question-sequence`, `is-follow-up`, and `followup-target-elements` derived from previous missing elements.
+  - When `is-follow-up: true`, the evaluator evaluates all present components while giving special attention to how targeted missing elements from prior answers are addressed.
+- **Follow-up Failure Isolation**:
+  - Follow-up question generation failure must **never** fail or discard an already-evaluated candidate answer.
+  - When follow-up question generation fails (AI rate-limit, invalid JSON, provider timeout), `PracticeService` falls back to a deterministic, Nexora-owned follow-up question (<= 2,000 chars) and persists the evaluation successfully.
+- **Context Budgeting**:
+  - `ResumeContextBuilder` prioritizes candidate answer text, question text, and metadata above background context.
+  - Target JD and resume profile summaries are compacted to ensure the candidate's answer is never crowded out or truncated.
+- **Preserve candidate facts**: If a metric/result is absent, suggest how to quantify it; never fabricate achievements.
+- **Privacy & Logging Invariants**: Treat CV/JD/answer as untrusted input. Never log candidate answer text, prompt bodies, or raw provider responses.
 
 ## 5. Rubric baseline
 
