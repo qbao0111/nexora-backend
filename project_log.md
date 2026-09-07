@@ -459,3 +459,11 @@ This log records completed implementation milestones and verification evidence. 
 - Tightened `StructuredAiExecutor` so the reasoning override requires both `AiProviderRetryHint.LowerReasoningEffort` and `AiProviderFailureKind.InvalidResponse`; timeout/rate-limit/unavailable hints cannot schedule a LOW override.
 - Added offline regressions for low-policy hint suppression, low-to-low retry, and non-`InvalidResponse` hint rejection. Defaults, token budgets, provider `MaxAttempts=1`, semantic repair, STAR behavior and configuration remain unchanged.
 - Verification: 192 unit tests passed, 86 integration tests passed, build 0 warnings/0 errors, EF reports no pending model changes, and no live paid AI request was made.
+
+## 2026-09-08 — Hardened DeepSeek reasoning fallback regressions
+
+- Corrected the low-policy retry regression to use the `resume.analysis` operation budget (`1,500` tokens) and to distinguish provider usage/exhaustion telemetry from structured-executor retry telemetry.
+- Added request recording to prove the high-policy fallback changes only the per-attempt reasoning effort while preserving input, trusted instructions/schema, messages and `max_tokens`; low-to-low retries keep both `AiRequest.ReasoningEffortOverride` values null.
+- Expanded provider-neutral retry-hint coverage for timeout, rate-limit and unavailable failures, preserving exactly two executor attempts with `RepairUsed=false` and no reasoning override.
+- Verification: focused DeepSeek/executor unit tests passed (52 tests); a mutation removing the provider high-policy guard made the low-policy test fail on an unexpected `Low` override, then the guard was restored with no production diff. No live AI request was made.
+- Lead verification: `dotnet restore`; solution build (0 warnings/errors); full unit suite (194 passed, 0 failed/skipped); integration suite (86 passed, 0 failed/skipped); scoped `dotnet format --verify-no-changes`; EF pending-model check (none); `git diff --check`. Only the two AI test files and this log changed.

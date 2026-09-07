@@ -136,13 +136,15 @@ public sealed class DeepSeekAiProviderTests
     public async Task StructuredExecutorDowngradesDeepSeekAfterConfirmedReasoningExhaustion()
     {
         var responses = new Queue<HttpResponseMessage>([
-            ExhaustedResponse(),
+            ExhaustedResponse(AiOperations.InterviewEvaluate.MaxOutputTokens),
             SuccessResponse(ValidInterviewEvaluationContent())
         ]);
-        var logger = new RecordingLogger();
+        var providerLogger = new RecordingLogger<DeepSeekAiProvider>();
+        var executorLogger = new RecordingLogger<StructuredAiExecutor>();
         var handler = new RecordingHandler(_ => responses.Dequeue());
-        var provider = CreateProvider(handler, logger: logger);
-        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+        var provider = CreateProvider(handler, logger: providerLogger);
+        var recordingProvider = new RecordingAiProvider(provider);
+        var executor = new StructuredAiExecutor(recordingProvider, executorLogger);
 
         var result = await executor.ExecuteAsync(
             AiOperations.InterviewEvaluate,
@@ -153,25 +155,41 @@ public sealed class DeepSeekAiProviderTests
         Assert.False(result.RepairUsed);
         Assert.Equal(2, result.Attempts);
         Assert.Equal(2, handler.Calls);
+        Assert.Equal(2, recordingProvider.Requests.Count);
         using var firstRequest = RequestBody(handler, 0);
         using var secondRequest = RequestBody(handler, 1);
         Assert.Equal("high", firstRequest.RootElement.GetProperty("reasoning_effort").GetString());
         Assert.Equal("low", secondRequest.RootElement.GetProperty("reasoning_effort").GetString());
-        Assert.Equal(6_000, firstRequest.RootElement.GetProperty("max_tokens").GetInt32());
-        Assert.Equal(6_000, secondRequest.RootElement.GetProperty("max_tokens").GetInt32());
-        Assert.Contains(logger.Messages, message =>
-            message.Contains("outcome=reasoning_budget_exhausted", StringComparison.Ordinal) &&
-            message.Contains("configuredEffort=high", StringComparison.Ordinal) &&
-            message.Contains("reasoningTokens=6000", StringComparison.Ordinal) &&
-            message.Contains("maxOutputTokens=6000", StringComparison.Ordinal));
+        Assert.Equal(AiOperations.InterviewEvaluate.MaxOutputTokens, firstRequest.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.Equal(firstRequest.RootElement.GetProperty("max_tokens").GetInt32(), secondRequest.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.Equal(firstRequest.RootElement.GetProperty("messages").GetRawText(), secondRequest.RootElement.GetProperty("messages").GetRawText());
+        Assert.Equal(firstRequest.RootElement.GetProperty("thinking").GetRawText(), secondRequest.RootElement.GetProperty("thinking").GetRawText());
+        Assert.Equal(firstRequest.RootElement.GetProperty("response_format").GetRawText(), secondRequest.RootElement.GetProperty("response_format").GetRawText());
+        Assert.Null(recordingProvider.Requests[0].ReasoningEffortOverride);
+        Assert.Equal(AiReasoningEffortOverride.Low, recordingProvider.Requests[1].ReasoningEffortOverride);
+        Assert.Equal(recordingProvider.Requests[0].Purpose, recordingProvider.Requests[1].Purpose);
+        Assert.Equal(recordingProvider.Requests[0].UntrustedInput, recordingProvider.Requests[1].UntrustedInput);
+        Assert.Equal(recordingProvider.Requests[0].Instructions, recordingProvider.Requests[1].Instructions);
+        Assert.Equal(recordingProvider.Requests[0].OutputSchema.RootElement.GetRawText(), recordingProvider.Requests[1].OutputSchema.RootElement.GetRawText());
+        Assert.Equal(recordingProvider.Requests[0].MaxOutputTokens, recordingProvider.Requests[1].MaxOutputTokens);
+        Assert.Contains(executorLogger.Messages, message =>
+            message.Contains("effectiveEffort=low", StringComparison.Ordinal) &&
+            message.Contains("retryReason=reasoning_budget_exhausted", StringComparison.Ordinal));
+        var providerExhaustionMessages = providerLogger.Messages
+            .Where(message => message.Contains("outcome=reasoning_budget_exhausted", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Single(providerExhaustionMessages);
+        Assert.Contains("configuredEffort=high", providerExhaustionMessages[0], StringComparison.Ordinal);
+        Assert.Contains("reasoningTokens=6000", providerExhaustionMessages[0], StringComparison.Ordinal);
+        Assert.Contains("maxOutputTokens=6000", providerExhaustionMessages[0], StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task StructuredExecutorStopsAfterLowFallbackFailure()
     {
         var responses = new Queue<HttpResponseMessage>([
-            ExhaustedResponse(),
-            ExhaustedResponse()
+            ExhaustedResponse(AiOperations.InterviewEvaluate.MaxOutputTokens),
+            ExhaustedResponse(AiOperations.InterviewEvaluate.MaxOutputTokens)
         ]);
         var handler = new RecordingHandler(_ => responses.Dequeue());
         using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
@@ -192,12 +210,12 @@ public sealed class DeepSeekAiProviderTests
     [Fact]
     public async Task LowReasoningExhaustionDoesNotEmitLowerReasoningHint()
     {
-        var handler = new RecordingHandler(_ => ExhaustedResponse());
+        var handler = new RecordingHandler(_ => ExhaustedResponse(AiOperations.ResumeAnalysis.MaxOutputTokens));
         using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
         var provider = CreateProvider(handler);
 
         var exception = await Assert.ThrowsAsync<AiProviderException>(() => provider.GenerateStructuredAsync<GeneratedQuestion>(
-            Request(AiPurposes.ResumeAnalysis, schema, maxOutputTokens: 6_000),
+            Request(AiPurposes.ResumeAnalysis, schema, maxOutputTokens: AiOperations.ResumeAnalysis.MaxOutputTokens),
             CancellationToken.None));
 
         Assert.Equal(AiProviderFailureKind.InvalidResponse, exception.Kind);
@@ -211,14 +229,16 @@ public sealed class DeepSeekAiProviderTests
     public async Task LowReasoningExhaustionRetriesAtConfiguredLowWithoutFallbackTelemetry()
     {
         var responses = new Queue<HttpResponseMessage>([
-            ExhaustedResponse(),
+            ExhaustedResponse(AiOperations.ResumeAnalysis.MaxOutputTokens),
             SuccessResponse(ValidResumeAnalysisContent())
         ]);
-        var logger = new RecordingLogger();
+        var providerLogger = new RecordingLogger<DeepSeekAiProvider>();
+        var executorLogger = new RecordingLogger<StructuredAiExecutor>();
         var handler = new RecordingHandler(_ => responses.Dequeue());
         using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
-        var provider = CreateProvider(handler, logger: logger);
-        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+        var provider = CreateProvider(handler, logger: providerLogger);
+        var recordingProvider = new RecordingAiProvider(provider);
+        var executor = new StructuredAiExecutor(recordingProvider, executorLogger);
 
         var result = await executor.ExecuteAsync(
             AiOperations.ResumeAnalysis,
@@ -229,11 +249,22 @@ public sealed class DeepSeekAiProviderTests
         Assert.Equal(2, result.Attempts);
         Assert.False(result.RepairUsed);
         Assert.Equal(2, handler.Calls);
+        Assert.Equal(2, recordingProvider.Requests.Count);
+        Assert.All(recordingProvider.Requests, request => Assert.Null(request.ReasoningEffortOverride));
         using var firstRequest = RequestBody(handler, 0);
         using var secondRequest = RequestBody(handler, 1);
         Assert.Equal("low", firstRequest.RootElement.GetProperty("reasoning_effort").GetString());
         Assert.Equal("low", secondRequest.RootElement.GetProperty("reasoning_effort").GetString());
-        Assert.DoesNotContain(logger.Messages, message =>
+        Assert.Contains(providerLogger.Messages, message =>
+            message.Contains("DeepSeek usage telemetry", StringComparison.Ordinal) &&
+            message.Contains("purpose=resume.analysis", StringComparison.Ordinal));
+        Assert.DoesNotContain(providerLogger.Messages, message =>
+            message.Contains("outcome=reasoning_budget_exhausted", StringComparison.Ordinal));
+        Assert.Contains(executorLogger.Messages, message =>
+            message.Contains("AI structured execution succeeded", StringComparison.Ordinal) &&
+            message.Contains("purpose=resume.analysis", StringComparison.Ordinal) &&
+            message.Contains("attempt=2", StringComparison.Ordinal));
+        Assert.DoesNotContain(executorLogger.Messages, message =>
             message.Contains("retryReason=reasoning_budget_exhausted", StringComparison.Ordinal));
     }
 
@@ -434,7 +465,7 @@ public sealed class DeepSeekAiProviderTests
     [Fact]
     public async Task ParsesSafeUsageTelemetryAndMissingUsageIsAllowed()
     {
-        var logger = new RecordingLogger();
+        var logger = new RecordingLogger<DeepSeekAiProvider>();
         var handler = new RecordingHandler(_ => SuccessResponse(
             "{\"choices\":[{\"message\":{\"content\":\"{\\\"content\\\":\\\"ok\\\"}\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"prompt_cache_hit_tokens\":3,\"prompt_cache_miss_tokens\":9,\"completion_tokens\":20,\"completion_tokens_details\":{\"reasoning_tokens\":7},\"total_tokens\":32}}"));
         using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
@@ -484,7 +515,7 @@ public sealed class DeepSeekAiProviderTests
     private static DeepSeekAiProvider CreateProvider(
         RecordingHandler handler,
         DeepSeekOptions? options = null,
-        RecordingLogger? logger = null) =>
+        RecordingLogger<DeepSeekAiProvider>? logger = null) =>
         new(new HttpClient(handler), Options.Create(options ?? CreateOptions()), logger);
 
     private static DeepSeekOptions CreateOptions() => new()
@@ -535,10 +566,20 @@ public sealed class DeepSeekAiProviderTests
         ["Gap"],
         ["Recommendation"]));
 
-    private static HttpResponseMessage ExhaustedResponse() => new(HttpStatusCode.OK)
+    private static HttpResponseMessage ExhaustedResponse(int maxOutputTokens) => new(HttpStatusCode.OK)
     {
         Content = new StringContent(
-            "{\"choices\":[{\"message\":{\"content\":\"not-json\"},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":2679,\"completion_tokens\":6000,\"completion_tokens_details\":{\"reasoning_tokens\":6000},\"total_tokens\":8679}}",
+            JsonSerializer.Serialize(new
+            {
+                choices = new[] { new { message = new { content = "not-json" }, finish_reason = "length" } },
+                usage = new
+                {
+                    prompt_tokens = 2679,
+                    completion_tokens = maxOutputTokens,
+                    completion_tokens_details = new { reasoning_tokens = maxOutputTokens },
+                    total_tokens = 2679 + maxOutputTokens
+                }
+            }),
             Encoding.UTF8,
             "application/json")
     };
@@ -595,7 +636,19 @@ public sealed class DeepSeekAiProviderTests
         }
     }
 
-    private sealed class RecordingLogger : ILogger<DeepSeekAiProvider>
+    private sealed class RecordingAiProvider(IAiProvider inner) : IAiProvider
+    {
+        public string ModelVersion => inner.ModelVersion;
+        public List<AiRequest> Requests { get; } = [];
+
+        public Task<T> GenerateStructuredAsync<T>(AiRequest request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request);
+            return inner.GenerateStructuredAsync<T>(request, cancellationToken);
+        }
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
     {
         public List<string> Messages { get; } = [];
 
