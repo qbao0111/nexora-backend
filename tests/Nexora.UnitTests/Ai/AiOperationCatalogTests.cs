@@ -231,6 +231,31 @@ public sealed class AiOperationCatalogTests
     }
 
     [Fact]
+    public void StarComponentValidatorTestENullComponentNormalizesGracefullyAsUndetected()
+    {
+        var result = StarComponentValidator.Validate(null, "task");
+
+        Assert.True(result.IsValid);
+        Assert.NotNull(result.NormalizedValue);
+        Assert.False(result.NormalizedValue.Detected);
+        Assert.Equal(0, result.NormalizedValue.Score);
+        Assert.Equal(string.Empty, result.NormalizedValue.Evidence);
+        Assert.Contains("task", result.NormalizedValue.Feedback);
+    }
+
+    [Fact]
+    public void StarComponentValidatorTestFBlankFeedbackNormalizesGracefully()
+    {
+        var component = new StarComponentEvaluation(0, false, "", "   ");
+        var result = StarComponentValidator.Validate(component, "situation");
+
+        Assert.True(result.IsValid);
+        Assert.NotNull(result.NormalizedValue);
+        Assert.False(result.NormalizedValue.Detected);
+        Assert.False(string.IsNullOrWhiteSpace(result.NormalizedValue.Feedback));
+    }
+
+    [Fact]
     public void PromptContractTestLInterviewEvaluateAndStarEvaluateShareCanonicalStarSemantics()
     {
         var interviewInstructions = AiOperations.InterviewEvaluate.Instructions;
