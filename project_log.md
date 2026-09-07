@@ -436,3 +436,11 @@ This log records completed implementation milestones and verification evidence. 
 - Added offline fake-handler tests for endpoint/auth/request contract, all eight policies, configuration fail-closed behavior, response/error mapping, cancellation, usage parsing and provider selection. No live paid DeepSeek request was made.
 - Verification: `dotnet restore`, `dotnet build Nexora.slnx --nologo` (0 warnings, 0 errors), 178 unit tests passed, 82 integration tests passed, `dotnet ef migrations has-pending-model-changes` reported no pending changes, and `git diff --check` is clean.
 - This branch is for Development/local owner evaluation only. DEC-01 (production AI provider/model and budgets) remains deferred and is not a blocker for Phases 0–3 or local testing.
+
+## 2026-09-08 — Story-level STAR report summary aggregation
+
+- Corrected `report.starSummary` to treat question sequence 1 plus all follow-ups as one behavioral story under the current interview model.
+- Report components now merge the strongest valid grounded evidence across the chain, recompute the server-authoritative STAR score with 20/20/35/25 weights, and never average or trust per-answer overall scores.
+- Recomputed unresolved `recurringIssues` from merged component state instead of unioning historical `missingElements`; follow-ups can resolve earlier gaps without stale issues.
+- Coaching priorities now use feedback attached to the merged weak components in deterministic order (distinct, max three) rather than flattening historical coaching tips.
+- Report retrieval loads question sequence metadata with the session answers using a fixed split query; no `ParentQuestionId`, migration, or additional AI call was added. Realtime per-answer STAR evaluation remains unchanged.

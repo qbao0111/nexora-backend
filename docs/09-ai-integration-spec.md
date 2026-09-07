@@ -1,7 +1,7 @@
 # AI Integration Specification — Nexora
 
 **Status:** Approved implementation baseline; production provider/budgets deferred  
-**Last updated:** 2026-09-07
+**Last updated:** 2026-09-08
 
 ## 1. Allowed AI capabilities in MVP
 
@@ -130,6 +130,12 @@ StartInterview retries must not duplicate session, question, usage event or job 
 - **Follow-up Failure Isolation**:
   - Follow-up question generation failure must **never** fail or discard an already-evaluated candidate answer.
   - When follow-up question generation fails (AI rate-limit, invalid JSON, provider timeout), `PracticeService` falls back to a deterministic, Nexora-owned follow-up question (<= 2,000 chars) and persists the evaluation successfully.
+- **Report STAR story summary**:
+  - Realtime answer evaluation remains independent per answer for immediate coaching. `report.starSummary` is a deterministic story-level view built from the persisted evaluations; it does not trigger another AI operation.
+  - Under the current interview flow, question sequence 1 and every follow-up (sequence > 1) form one behavioral story chain. The report loads question sequence metadata with the session answers and does not require a `ParentQuestionId` or schema migration.
+  - For each Situation/Task/Action/Result component, only valid `detected = true` evaluations with nonblank evidence contribute. The merged component keeps the highest grounded score across the chain; if none is available it is `score = 0`, `detected = false`. A follow-up can strengthen a component but cannot lower unrelated primary-story evidence.
+  - `componentAverages` keeps its existing API name but contains the four merged story component scores. `applicableAnswers` remains the count of valid applicable answer evaluations contributing to the summary (not the number of independent stories). The story `averageScore` is recomputed server-side with the canonical 20/20/35/25 STAR weights; persisted per-answer `overallScore` values are not averaged.
+  - `recurringIssues` is recomputed from the merged components (`detected = false` or `score < 60`); raw per-answer `missingElements` are never unioned, so a follow-up can resolve an earlier missing component. Coaching priorities use feedback attached to the selected merged/weak component evidence, in deterministic weakness order, distinct and capped at three; historical `coachingTips` are not concatenated.
 - **Context Budgeting**:
   - `ResumeContextBuilder` prioritizes candidate answer text, question text, and metadata above background context.
   - Target JD and resume profile summaries are compacted to ensure the candidate's answer is never crowded out or truncated.
