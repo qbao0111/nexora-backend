@@ -53,6 +53,18 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                 if (validation.IsValid)
                 {
                     LogExecutionSucceeded(logger, operation.Purpose, attempt, isRepairAttempt, stopwatch.ElapsedMilliseconds, correlationId);
+                    if (isRepairAttempt)
+                    {
+                        LogOutputRepaired(logger, operation.Purpose, attempt, correlationId);
+                    }
+
+                    if (validation.NormalizedValue is AnswerEvaluation eval && eval.Star?.Applicable == true)
+                    {
+                        if (eval.Scores.All(s => s.Score >= 75) && eval.Star.Action?.Detected == false && eval.Star.Result?.Detected == false)
+                        {
+                            LogCrossFieldSuspicious(logger, operation.Purpose, correlationId);
+                        }
+                    }
 
                     return new AiExecutionResult<T>(
                         validation.NormalizedValue!,
@@ -121,4 +133,10 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
     [LoggerMessage(LogLevel.Error, "AI provider request failed terminal: purpose={Purpose}, failureKind={FailureKind}, attempt={Attempt}, outcome=failed, correlationId={CorrelationId}")]
     private static partial void LogProviderTerminalFailure(ILogger logger, string purpose, string failureKind, int attempt, string correlationId);
+
+    [LoggerMessage(LogLevel.Information, "AI output repaired successfully: purpose={Purpose}, attempt={Attempt}, correlationId={CorrelationId}")]
+    private static partial void LogOutputRepaired(ILogger logger, string purpose, int attempt, string correlationId);
+
+    [LoggerMessage(LogLevel.Warning, "AI cross-field evaluation suspicious: general rubric strong but multiple STAR components absent: purpose={Purpose}, correlationId={CorrelationId}")]
+    private static partial void LogCrossFieldSuspicious(ILogger logger, string purpose, string correlationId);
 }

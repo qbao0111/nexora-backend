@@ -349,19 +349,69 @@ public sealed partial class PracticeService(
         var question = snapshot.Questions.SingleOrDefault(item => item.Id == questionId) ?? throw NotFound();
         if (snapshot.Answers.Any(item => item.QuestionId == questionId)) throw Conflict("ANSWER_ALREADY_EXISTS", "Câu hỏi đã có câu trả lời chính thức.");
 
+        var isFollowUp = question.Sequence > 1;
+        string[]? previousMissingElements = null;
+        if (isFollowUp)
+        {
+            var previousAnswer = snapshot.Answers
+                .Where(a => a.QuestionId != questionId)
+                .OrderByDescending(a => a.CreatedAt)
+                .FirstOrDefault();
+
+            if (previousAnswer?.Evaluation is not null)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(previousAnswer.Evaluation);
+                    if (doc.RootElement.TryGetProperty("star", out var starProp) &&
+                        starProp.TryGetProperty("missingElements", out var missingProp) &&
+                        missingProp.ValueKind == JsonValueKind.Array)
+                    {
+                        previousMissingElements = missingProp.EnumerateArray()
+                            .Select(e => e.GetString())
+                            .Where(s => !string.IsNullOrWhiteSpace(s))
+                            .Select(s => s!)
+                            .ToArray();
+                    }
+                }
+                catch
+                {
+                    // safe fallback
+                }
+            }
+        }
+
         AnswerEvaluation evaluation;
         GeneratedQuestion? generated = null;
         var profile = TryReadResumeProfile(snapshot.Resume?.StructuredProfile);
         var answerContext = resumeContextBuilder.BuildAnswerEvaluationContext(
-            snapshot.Role, snapshot.Seniority, snapshot.InterviewType, snapshot.JobDescription?.Content, question.Content, content.Trim(), profile);
+            snapshot.Role,
+            snapshot.Seniority,
+            snapshot.InterviewType,
+            snapshot.JobDescription?.Content,
+            question.Content,
+            content.Trim(),
+            profile,
+            question.Sequence,
+            isFollowUp,
+            previousMissingElements);
         try
         {
             var isBehavioral = string.Equals(snapshot.InterviewType.Trim(), "behavioral", StringComparison.OrdinalIgnoreCase)
                 || LooksBehavioralQuestion(question.Content);
+            var metadata = new Dictionary<string, string>
+            {
+                ["questionSequence"] = question.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["isFollowup"] = isFollowUp ? "true" : "false"
+            };
+            if (previousMissingElements is not null && previousMissingElements.Length > 0)
+            {
+                metadata["followupTargetElements"] = string.Join(",", previousMissingElements);
+            }
             var evalResult = await structuredAiExecutor.ExecuteAsync(
                 AiOperations.InterviewEvaluate,
                 answerContext,
-                new AiOperationContext(interviewId.ToString("N"), userId, ExpectedStar: isBehavioral),
+                new AiOperationContext(interviewId.ToString("N"), userId, ExpectedStar: isBehavioral, Metadata: metadata),
                 cancellationToken);
             evaluation = evalResult.Value;
 

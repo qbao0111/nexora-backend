@@ -76,10 +76,20 @@ StartInterview retries must not duplicate session, question, usage event or job 
   - Exact four rubric criteria: `correctness`, `structure`, `completeness`, `clarity` (case-insensitive matching from provider, normalized lowercase and trimmed).
   - Sub-scores bounded strictly to 0–100 with non-blank grounded evidence.
   - Overall score computed server-side via canonical weights (Relevance/Correctness 40%, Structure 25%, Completeness 20%, Clarity 15%).
-- **Server-Authoritative STAR Normalization**:
+- **Server-Authoritative STAR Normalization & Semantic Contract**:
   - Non-behavioral questions: `star.applicable` is server-normalized to `false` without failing evaluation; STAR component details are suppressed.
   - Behavioral questions: If model omits STAR or returns `applicable = false`, the executor marks the issue repairable and attempts repair once.
   - Standalone `star.evaluate` (Scenario/STAR feature): strictly requires `applicable = true`.
+  - **Canonical STAR Instructions (`StarSemantics.CanonicalInstructions`)**: Unified single source of truth embedded in both `interview.answer.evaluate` (`interview-eval-v4`) and `star.evaluate` (`star-eval-v3`). Defines clear technical examples for Situation (system state/incident), Task (candidate's specific duty/ownership), Action (investigation/profiling/indexing/caching/code changes), and Result (latency reduction, recovery, metrics, lessons).
+  - **Question-Focus Detachment**: Evaluator must scan the entire answer for all four components. Phrasing of the interview question must not constrain component detection.
+  - **Evidence-First Extraction**: For every component:
+    - If concrete evidence exists: `detected = true`, `evidence = "<exact quote>"`, `score = 1..100`.
+    - If absent: `detected = false`, `evidence = ""`, `score = 0`.
+    - Invariant: `detected = false` with `score > 0` or `detected = true` with empty evidence is strictly rejected by `StarComponentValidator`.
+  - **Server-Authoritative Calculation**: Server recomputes `overallScore` using canonical weights (Situation 20%, Task 20%, Action 35%, Result 25%) and determines `missingElements` (`!detected || score < 60`).
+- **Follow-up Aware Evaluation Context**:
+  - `ResumeContextBuilder` supplies `question-sequence`, `is-follow-up`, and `followup-target-elements` derived from previous missing elements.
+  - When `is-follow-up: true`, the evaluator evaluates all present components while giving special attention to how targeted missing elements from prior answers are addressed.
 - **Follow-up Failure Isolation**:
   - Follow-up question generation failure must **never** fail or discard an already-evaluated candidate answer.
   - When follow-up question generation fails (AI rate-limit, invalid JSON, provider timeout), `PracticeService` falls back to a deterministic, Nexora-owned follow-up question (<= 2,000 chars) and persists the evaluation successfully.

@@ -83,6 +83,89 @@ public static class CanonicalRubricValidator
     }
 }
 
+public static class StarSemantics
+{
+    public const string CanonicalInstructions = """
+        STAR COMPONENT DEFINITIONS & EXTRACTION RULES:
+        - SITUATION: Context, background, problem, or event in which the candidate acted.
+          Examples: production incident, system degradation, conflict, deadline, failure, unexpected operational problem.
+        - TASK: The candidate's personal responsibility, ownership, goal, or expected outcome.
+          Examples: on-call responsibility, root-cause ownership, delivery target, deadline, assigned scope.
+        - ACTION: Concrete steps actually performed by the candidate.
+          Technical Action includes, but is NOT limited to:
+          inspecting logs, querying metrics, running EXPLAIN ANALYZE, investigating pg_stat_statements, debugging, profiling, changing configuration, writing code, adding an index, implementing Redis/cache, writing migrations/scripts, deploying/rolling back, testing, mitigating an incident, making technical trade-offs, coordinating with Tech Lead, coordinating with DBA, coordinating with QA, communicating during an incident, documenting remediation.
+          IMPORTANT: Technical verbs and implementation details MUST NOT be absorbed into Task just because the question asks about responsibility.
+        - RESULT: Observed outcome caused by the actions.
+          Examples: latency improved, error rate reduced, throughput increased, system recovered, incident resolved, release completed successfully, downtime avoided, data loss avoided, recovery happened within N minutes/hours, measurable metric improvement, RCA/runbook/documentation completed, operational/process improvement. A result does NOT have to be monetary.
+
+        QUESTION FOCUS & SCANNING:
+        - The focus of the interview question determines what should receive special attention, but it does NOT limit STAR extraction.
+        - For EVERY behavioral answer: scan the ENTIRE current candidate answer for Situation, Task, Action, and Result, even when the question or follow-up focuses on only one component (e.g. if the question asks about responsibility, still detect Action and Result if present in the answer).
+        - Do NOT mark Action or Result absent merely because the question primarily asked about Task.
+        - Do not require artificial signpost words like 'Action:' or 'Result:'. Normal natural language technical answers must be detected directly.
+
+        EVIDENCE-FIRST STAR EXTRACTION:
+        For EACH component (situation, task, action, result):
+        1. Search the candidate answer for direct evidence matching the component semantic.
+        2. If direct evidence exists:
+           - detected = true
+           - evidence = "<concise direct quote from candidate answer>"
+           - score = integer 1..100 according to specificity and quality:
+             * 1-39: very weak/implicit evidence
+             * 40-59: present but vague or incomplete
+             * 60-79: clear and relevant evidence
+             * 80-89: specific evidence with strong ownership/detail
+             * 90-100: highly specific, concrete and measurable evidence
+        3. If no qualifying evidence exists:
+           - detected = false
+           - evidence = ""
+           - score = 0
+        4. Write constructive feedback based on that result.
+        INVARIANTS:
+        - Never output detected=false with score > 0.
+        - Never output detected=true with empty evidence.
+        - Do not award score merely because the general rubric is high. STAR components are judged using their own evidence.
+        """;
+}
+
+public static class StarComponentValidator
+{
+    public static AiValidationResult<StarComponentEvaluation> Validate(StarComponentEvaluation? c, string name)
+    {
+        if (c is null)
+            return AiValidationResult<StarComponentEvaluation>.Failure("star.component_invalid", "semantic", repairable: true);
+
+        if (c.Score is < 0 or > 100)
+            return AiValidationResult<StarComponentEvaluation>.Failure("star.score_out_of_range", "semantic", repairable: true);
+
+        var feedback = c.Feedback?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(feedback))
+            return AiValidationResult<StarComponentEvaluation>.Failure("star.component_invalid", "semantic", repairable: true);
+
+        var evidence = c.Evidence?.Trim() ?? string.Empty;
+
+        if (!c.Detected)
+        {
+            if (c.Score > 0)
+                return AiValidationResult<StarComponentEvaluation>.Failure("star.component_detected_score_mismatch", "semantic", repairable: true);
+
+            if (!string.IsNullOrWhiteSpace(evidence))
+                return AiValidationResult<StarComponentEvaluation>.Failure("star.component_detected_score_mismatch", "semantic", repairable: true);
+
+            return AiValidationResult<StarComponentEvaluation>.Success(new StarComponentEvaluation(0, false, string.Empty, feedback));
+        }
+
+        // Detected is true
+        if (c.Score == 0)
+            return AiValidationResult<StarComponentEvaluation>.Failure("star.component_detected_score_mismatch", "semantic", repairable: true);
+
+        if (string.IsNullOrWhiteSpace(evidence))
+            return AiValidationResult<StarComponentEvaluation>.Failure("star.component_detected_without_evidence", "semantic", repairable: true);
+
+        return AiValidationResult<StarComponentEvaluation>.Success(new StarComponentEvaluation(c.Score, true, evidence, feedback));
+    }
+}
+
 public static class AiOperations
 {
     public static readonly ResumeProfileOperation ResumeProfile = new();
@@ -304,10 +387,10 @@ public sealed class InterviewFollowupOperation : AiOperationDefinition<Generated
 public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEvaluation>
 {
     public override string Purpose => AiPurposes.InterviewEvaluate;
-    public override string PromptVersion => "interview-eval-v3";
-    public override string SchemaVersion => "interview-eval-v3";
+    public override string PromptVersion => "interview-eval-v4";
+    public override string SchemaVersion => "interview-eval-v4";
     public override string RubricVersion => "rubric-v2";
-    public override int MaxOutputTokens => 2_000;
+    public override int MaxOutputTokens => 2_500;
 
     public override JsonDocument OutputSchema { get; } = JsonDocument.Parse("""
         {
@@ -331,7 +414,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
               "type": "object",
               "properties": {
                 "applicable": { "type": "boolean" },
-                "overallScore": { "type": "integer", "nullable": true },
+                "overallScore": { "type": "integer", "minimum": 0, "maximum": 100, "nullable": true },
                 "situation": {
                   "type": "object",
                   "properties": {
@@ -388,7 +471,19 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         """);
 
     public override string Instructions =>
-        "Evaluate the candidate's answer against the job and question requirements. Set scoreScale to '0-100'. Return exactly four rubric scores for criteria: correctness, structure, completeness, clarity (scores 0-100 with non-empty evidence quote). If the question is behavioral, set star.applicable=true and provide situation, task, action, and result details with scores 0-100. If the question is technical or non-behavioral, set star.applicable=false and omit component details. Write in the same language as the interview.";
+        $"""
+        Evaluate the candidate's answer against the job and question requirements.
+        Set scoreScale to '0-100'.
+        Return exactly four rubric scores for criteria: correctness, structure, completeness, clarity (scores 0-100 with non-empty evidence quote).
+        Write in the same language as the interview.
+
+        If the question is technical or non-behavioral:
+        Set star.applicable = false, omit component details.
+
+        If the question is behavioral:
+        Set star.applicable = true.
+        {StarSemantics.CanonicalInstructions}
+        """;
 
     public override AiValidationResult<AnswerEvaluation> NormalizeAndValidate(AnswerEvaluation? raw, AiOperationContext context)
     {
@@ -430,24 +525,34 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
             if (!raw.Star.Applicable)
                 return AiValidationResult<AnswerEvaluation>.Failure("star.applicability_mismatch", "semantic", repairable: true);
 
-            var sit = ValidateStarComponent(raw.Star.Situation, "situation");
-            var task = ValidateStarComponent(raw.Star.Task, "task");
-            var act = ValidateStarComponent(raw.Star.Action, "action");
-            var res = ValidateStarComponent(raw.Star.Result, "result");
+            var sitResult = StarComponentValidator.Validate(raw.Star.Situation, "situation");
+            if (!sitResult.IsValid)
+                return AiValidationResult<AnswerEvaluation>.Failure(sitResult.FailureReason!, sitResult.ValidationStage!, sitResult.Repairable);
 
-            if (sit is null || task is null || act is null || res is null)
-                return AiValidationResult<AnswerEvaluation>.Failure("star.component_invalid", "semantic", repairable: true);
+            var taskResult = StarComponentValidator.Validate(raw.Star.Task, "task");
+            if (!taskResult.IsValid)
+                return AiValidationResult<AnswerEvaluation>.Failure(taskResult.FailureReason!, taskResult.ValidationStage!, taskResult.Repairable);
 
-            if (sit.Score is < 0 or > 100 || task.Score is < 0 or > 100 || act.Score is < 0 or > 100 || res.Score is < 0 or > 100)
-                return AiValidationResult<AnswerEvaluation>.Failure("star.score_out_of_range", "semantic", repairable: true);
+            var actResult = StarComponentValidator.Validate(raw.Star.Action, "action");
+            if (!actResult.IsValid)
+                return AiValidationResult<AnswerEvaluation>.Failure(actResult.FailureReason!, actResult.ValidationStage!, actResult.Repairable);
 
+            var resResult = StarComponentValidator.Validate(raw.Star.Result, "result");
+            if (!resResult.IsValid)
+                return AiValidationResult<AnswerEvaluation>.Failure(resResult.FailureReason!, resResult.ValidationStage!, resResult.Repairable);
+
+            var sit = sitResult.NormalizedValue!;
+            var task = taskResult.NormalizedValue!;
+            var act = actResult.NormalizedValue!;
+            var res = resResult.NormalizedValue!;
+
+            // Authoritative server-computed overall score: Situation 20%, Task 20%, Action 35%, Result 25%
             var overallScore = (int)Math.Round(sit.Score * 0.20 + task.Score * 0.20 + act.Score * 0.35 + res.Score * 0.25);
+
+            // Recompute missingElements strictly from normalized server component state
             var missing = new[] { ("situation", sit), ("task", task), ("action", act), ("result", res) }
                 .Where(x => !x.Item2.Detected || x.Item2.Score < 60)
                 .Select(x => x.Item1)
-                .Concat(raw.Star.MissingElements ?? [])
-                .Where(x => x is "situation" or "task" or "action" or "result")
-                .Distinct(StringComparer.Ordinal)
                 .ToArray();
 
             normalizedStar = new StarEvaluation(
@@ -465,14 +570,28 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         return AiValidationResult<AnswerEvaluation>.Success(new AnswerEvaluation(rubricResult.NormalizedValue!, feedback, normalizedStar));
     }
 
-    private static StarComponentEvaluation? ValidateStarComponent(StarComponentEvaluation? c, string name)
+    public override string BuildRepairInstructions(AiValidationResult<AnswerEvaluation> priorResult, string originalInstructions)
     {
-        if (c is null) return null;
-        var score = Math.Clamp(c.Score, 0, 100);
-        var feedback = string.IsNullOrWhiteSpace(c.Feedback) ? $"Đánh giá {name}." : c.Feedback.Trim();
-        var evidence = c.Evidence?.Trim() ?? string.Empty;
-        var detected = c.Detected || (!string.IsNullOrWhiteSpace(evidence) && score >= 50);
-        return new StarComponentEvaluation(score, detected, evidence, feedback);
+        if (priorResult.FailureReason?.StartsWith("star.", StringComparison.Ordinal) == true)
+        {
+            return $"""
+                {originalInstructions}
+
+                IMPORTANT STAR CORRECTION INSTRUCTION:
+                The previous structured evaluation violated the STAR contract: '{priorResult.FailureReason}'.
+                Re-evaluate the ORIGINAL candidate answer.
+                Important:
+                - The question focus does not restrict STAR extraction; inspect the entire candidate answer.
+                - Extract evidence before assigning detected/score.
+                - Concrete technical actions (e.g. profiling, queries, coding, caching, indexing, coordinating) are Action.
+                - Measurable operational outcomes (e.g. latency, recovery, runbook, metrics) are Result.
+                - detected=false requires score=0 and empty evidence.
+                - detected=true requires score 1-100 and direct evidence quote.
+                Return a completely corrected object matching the schema.
+                """;
+        }
+
+        return base.BuildRepairInstructions(priorResult, originalInstructions);
     }
 }
 
@@ -614,10 +733,10 @@ public sealed class ScenarioEvaluateOperation : AiOperationDefinition<ScenarioEv
 public sealed class StarEvaluateOperation : AiOperationDefinition<StarEvaluation>
 {
     public override string Purpose => AiPurposes.StarEvaluate;
-    public override string PromptVersion => "star-eval-v2";
-    public override string SchemaVersion => "star-eval-v2";
+    public override string PromptVersion => "star-eval-v3";
+    public override string SchemaVersion => "star-eval-v3";
     public override string RubricVersion => "star-rubric-v2";
-    public override int MaxOutputTokens => 2_000;
+    public override int MaxOutputTokens => 2_500;
 
     public override JsonDocument OutputSchema { get; } = JsonDocument.Parse("""
         {
@@ -675,32 +794,51 @@ public sealed class StarEvaluateOperation : AiOperationDefinition<StarEvaluation
         """);
 
     public override string Instructions =>
-        "Evaluate the candidate's answer using the STAR methodology (Situation, Task, Action, Result). Set scoreScale to '0-100' and applicable to true. Thoroughly assess all four components with integer scores strictly between 0 and 100. Do NOT use 1-5 scale. overallScore must be an integer 0-100 reflecting the overall quality. missingElements must list component names that are absent or scored below 60. strengths: 1-3 specific strong points. coachingTips: 1-3 actionable improvement tips. Write in the same language as the answer.";
+        $"""
+        Evaluate the candidate's answer using the STAR methodology (Situation, Task, Action, Result).
+        Set scoreScale to '0-100' and applicable to true.
+        Write in the same language as the answer.
+        {StarSemantics.CanonicalInstructions}
+        strengths: 1-3 specific strong points.
+        coachingTips: 1-3 actionable improvement tips.
+        """;
 
     public override AiValidationResult<StarEvaluation> NormalizeAndValidate(StarEvaluation? raw, AiOperationContext context)
     {
-        if (raw is null || !raw.Applicable)
+        if (raw is null)
+            return AiValidationResult<StarEvaluation>.Failure("star.missing", "semantic", repairable: true);
+
+        if (!raw.Applicable)
             return AiValidationResult<StarEvaluation>.Failure("star.applicability_mismatch", "semantic", repairable: true);
 
-        var sit = ValidateComponent(raw.Situation, "situation");
-        var task = ValidateComponent(raw.Task, "task");
-        var act = ValidateComponent(raw.Action, "action");
-        var res = ValidateComponent(raw.Result, "result");
+        var sitResult = StarComponentValidator.Validate(raw.Situation, "situation");
+        if (!sitResult.IsValid)
+            return AiValidationResult<StarEvaluation>.Failure(sitResult.FailureReason!, sitResult.ValidationStage!, sitResult.Repairable);
 
-        if (sit is null || task is null || act is null || res is null)
-            return AiValidationResult<StarEvaluation>.Failure("star.component_invalid", "semantic", repairable: true);
+        var taskResult = StarComponentValidator.Validate(raw.Task, "task");
+        if (!taskResult.IsValid)
+            return AiValidationResult<StarEvaluation>.Failure(taskResult.FailureReason!, taskResult.ValidationStage!, taskResult.Repairable);
 
-        if (sit.Score is < 0 or > 100 || task.Score is < 0 or > 100 || act.Score is < 0 or > 100 || res.Score is < 0 or > 100)
-            return AiValidationResult<StarEvaluation>.Failure("star.score_out_of_range", "semantic", repairable: true);
+        var actResult = StarComponentValidator.Validate(raw.Action, "action");
+        if (!actResult.IsValid)
+            return AiValidationResult<StarEvaluation>.Failure(actResult.FailureReason!, actResult.ValidationStage!, actResult.Repairable);
 
+        var resResult = StarComponentValidator.Validate(raw.Result, "result");
+        if (!resResult.IsValid)
+            return AiValidationResult<StarEvaluation>.Failure(resResult.FailureReason!, resResult.ValidationStage!, resResult.Repairable);
+
+        var sit = sitResult.NormalizedValue!;
+        var task = taskResult.NormalizedValue!;
+        var act = actResult.NormalizedValue!;
+        var res = resResult.NormalizedValue!;
+
+        // Authoritative server-computed overall score: Situation 20%, Task 20%, Action 35%, Result 25%
         var overallScore = (int)Math.Round(sit.Score * 0.20 + task.Score * 0.20 + act.Score * 0.35 + res.Score * 0.25);
+
+        // Recompute missingElements strictly from normalized server component state
         var missing = new[] { ("situation", sit), ("task", task), ("action", act), ("result", res) }
             .Where(x => !x.Item2.Detected || x.Item2.Score < 60)
             .Select(x => x.Item1)
-            .Concat(raw.MissingElements ?? [])
-            .Where(x => x is "situation" or "task" or "action" or "result")
-            .Distinct(StringComparer.Ordinal)
-            .Take(4)
             .ToArray();
 
         var strengths = raw.Strengths?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [];
@@ -718,13 +856,22 @@ public sealed class StarEvaluateOperation : AiOperationDefinition<StarEvaluation
             coachingTips));
     }
 
-    private static StarComponentEvaluation? ValidateComponent(StarComponentEvaluation? c, string name)
+    public override string BuildRepairInstructions(AiValidationResult<StarEvaluation> priorResult, string originalInstructions)
     {
-        if (c is null) return null;
-        var score = Math.Clamp(c.Score, 0, 100);
-        var feedback = string.IsNullOrWhiteSpace(c.Feedback) ? $"Đánh giá {name}." : c.Feedback.Trim();
-        var evidence = c.Evidence?.Trim() ?? string.Empty;
-        var detected = c.Detected || (!string.IsNullOrWhiteSpace(evidence) && score >= 50);
-        return new StarComponentEvaluation(score, detected, evidence, feedback);
+        return $"""
+            {originalInstructions}
+
+            IMPORTANT STAR CORRECTION INSTRUCTION:
+            The previous structured evaluation violated the STAR contract: '{priorResult.FailureReason}'.
+            Re-evaluate the ORIGINAL candidate answer.
+            Important:
+            - Inspect the entire candidate answer.
+            - Extract evidence before assigning detected/score.
+            - Concrete technical actions (e.g. profiling, queries, coding, caching, indexing, coordinating) are Action.
+            - Measurable operational outcomes (e.g. latency, recovery, runbook, metrics) are Result.
+            - detected=false requires score=0 and empty evidence.
+            - detected=true requires score 1-100 and direct evidence quote.
+            Return a completely corrected object matching the schema.
+            """;
     }
 }

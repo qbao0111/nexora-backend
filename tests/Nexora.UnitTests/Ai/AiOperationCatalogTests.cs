@@ -183,6 +183,75 @@ public sealed class AiOperationCatalogTests
     }
 
     [Fact]
+    public void StarComponentValidatorTestADetectedFalseWithPositiveScoreFailsMismatch()
+    {
+        var component = new StarComponentEvaluation(60, false, "", "Some feedback");
+        var result = StarComponentValidator.Validate(component, "action");
+
+        Assert.False(result.IsValid);
+        Assert.Equal("star.component_detected_score_mismatch", result.FailureReason);
+        Assert.True(result.Repairable);
+    }
+
+    [Fact]
+    public void StarComponentValidatorTestBDetectedTrueWithBlankEvidenceFailsWithoutEvidence()
+    {
+        var component = new StarComponentEvaluation(80, true, "   ", "Some feedback");
+        var result = StarComponentValidator.Validate(component, "action");
+
+        Assert.False(result.IsValid);
+        Assert.Equal("star.component_detected_without_evidence", result.FailureReason);
+        Assert.True(result.Repairable);
+    }
+
+    [Fact]
+    public void StarComponentValidatorTestCDetectedFalseWithZeroScoreAndEmptyEvidenceIsValidAbsence()
+    {
+        var component = new StarComponentEvaluation(0, false, "", "Không có action");
+        var result = StarComponentValidator.Validate(component, "action");
+
+        Assert.True(result.IsValid);
+        Assert.NotNull(result.NormalizedValue);
+        Assert.False(result.NormalizedValue.Detected);
+        Assert.Equal(0, result.NormalizedValue.Score);
+        Assert.Equal(string.Empty, result.NormalizedValue.Evidence);
+    }
+
+    [Fact]
+    public void StarComponentValidatorTestDDetectedTrueWithPositiveScoreAndEvidenceIsValid()
+    {
+        var component = new StarComponentEvaluation(90, true, "candidate evidence quote", "Good action");
+        var result = StarComponentValidator.Validate(component, "action");
+
+        Assert.True(result.IsValid);
+        Assert.NotNull(result.NormalizedValue);
+        Assert.True(result.NormalizedValue.Detected);
+        Assert.Equal(90, result.NormalizedValue.Score);
+        Assert.Equal("candidate evidence quote", result.NormalizedValue.Evidence);
+    }
+
+    [Fact]
+    public void PromptContractTestLInterviewEvaluateAndStarEvaluateShareCanonicalStarSemantics()
+    {
+        var interviewInstructions = AiOperations.InterviewEvaluate.Instructions;
+        var starInstructions = AiOperations.StarEvaluate.Instructions;
+
+        Assert.Contains(StarSemantics.CanonicalInstructions, interviewInstructions);
+        Assert.Contains(StarSemantics.CanonicalInstructions, starInstructions);
+
+        // Verify key technical action and result definitions are included
+        Assert.Contains("EXPLAIN ANALYZE", interviewInstructions);
+        Assert.Contains("pg_stat_statements", interviewInstructions);
+        Assert.Contains("Redis", interviewInstructions);
+        Assert.Contains("index", interviewInstructions);
+        Assert.Contains("inspecting logs", interviewInstructions);
+        Assert.Contains("coordinating with Tech Lead", interviewInstructions);
+        Assert.Contains("coordinating with DBA", interviewInstructions);
+        Assert.Contains("latency improved", interviewInstructions);
+        Assert.Contains("system recovered", interviewInstructions);
+    }
+
+    [Fact]
     public void BuildRepairInstructionsAppendsSpecificFailureContext()
     {
         var validation = AiValidationResult<AnswerEvaluation>.Failure("rubric.criteria_missing", "semantic", repairable: true);
@@ -193,5 +262,18 @@ public sealed class AiOperationCatalogTests
         Assert.Contains("IMPORTANT CORRECTION INSTRUCTION", repairInstructions);
         Assert.Contains("rubric.criteria_missing", repairInstructions);
         Assert.Contains(original, repairInstructions);
+    }
+
+    [Fact]
+    public void BuildRepairInstructionsForStarAppendsStarCorrectionInstruction()
+    {
+        var validation = AiValidationResult<AnswerEvaluation>.Failure("star.component_detected_without_evidence", "semantic", repairable: true);
+        var original = "Evaluate the interview answer.";
+
+        var repairInstructions = AiOperations.InterviewEvaluate.BuildRepairInstructions(validation, original);
+
+        Assert.Contains("IMPORTANT STAR CORRECTION INSTRUCTION", repairInstructions);
+        Assert.Contains("star.component_detected_without_evidence", repairInstructions);
+        Assert.Contains("question focus does not restrict STAR extraction", repairInstructions, StringComparison.OrdinalIgnoreCase);
     }
 }

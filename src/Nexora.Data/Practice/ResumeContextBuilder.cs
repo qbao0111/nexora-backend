@@ -37,7 +37,16 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
     }
 
     public string BuildAnswerEvaluationContext(
-        string role, string seniority, string interviewType, string? jobDescription, string question, string answer, ResumeProfile? profile)
+        string role,
+        string seniority,
+        string interviewType,
+        string? jobDescription,
+        string question,
+        string answer,
+        ResumeProfile? profile,
+        int questionSequence = 1,
+        bool isFollowUp = false,
+        IReadOnlyCollection<string>? followupTargetElements = null)
     {
         // Section priority:
         // 1. Metadata
@@ -49,6 +58,13 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
         Append(builder, "role", role, 160);
         Append(builder, "seniority", seniority, 80);
         Append(builder, "interview-type", interviewType, 80);
+        Append(builder, "question-sequence", questionSequence.ToString(System.Globalization.CultureInfo.InvariantCulture), 40);
+        Append(builder, "is-follow-up", isFollowUp ? "true" : "false", 40);
+        if (isFollowUp && followupTargetElements is not null && followupTargetElements.Count > 0)
+        {
+            Append(builder, "followup-target-elements", string.Join("; ", followupTargetElements), 400);
+            builder.AppendLine("note: followup-target-elements indicates why the interviewer asked the question. Still detect every STAR element present in the current answer.");
+        }
         Append(builder, "question", question, 2_000);
         Append(builder, "answer", answer, 10_000);
 

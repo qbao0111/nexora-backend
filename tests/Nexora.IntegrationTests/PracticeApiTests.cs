@@ -86,7 +86,7 @@ public sealed class PracticeApiTests
         var firstAnswer = await AnswerAsync(client, interviewId, firstQuestion, "Tôi phân tích nguyên nhân, phối hợp đội và giảm 30% lỗi.", "answer-one");
         var firstStar = firstAnswer.GetProperty("answer").GetProperty("evaluation").GetProperty("star");
         Assert.True(firstStar.GetProperty("applicable").GetBoolean());
-        Assert.Equal(68, firstStar.GetProperty("overallScore").GetInt32());
+        Assert.Equal(56, firstStar.GetProperty("overallScore").GetInt32());
         Assert.False(firstStar.GetProperty("result").GetProperty("detected").GetBoolean());
         Assert.Contains(firstStar.GetProperty("missingElements").EnumerateArray(), item => item.GetString() == "result");
         var secondQuestion = firstAnswer.GetProperty("nextQuestion").GetProperty("id").GetGuid();
