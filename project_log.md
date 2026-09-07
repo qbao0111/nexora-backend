@@ -444,3 +444,11 @@ This log records completed implementation milestones and verification evidence. 
 - Recomputed unresolved `recurringIssues` from merged component state instead of unioning historical `missingElements`; follow-ups can resolve earlier gaps without stale issues.
 - Coaching priorities now use feedback attached to the merged weak components in deterministic order (distinct, max three) rather than flattening historical coaching tips.
 - Report retrieval loads question sequence metadata with the session answers using a fixed split query; no `ParentQuestionId`, migration, or additional AI call was added. Realtime per-answer STAR evaluation remains unchanged.
+
+## 2026-09-08 — DeepSeek reasoning-budget fallback
+
+- Added a provider-neutral `AiProviderRetryHint.LowerReasoningEffort` and per-attempt `AiReasoningEffortOverride.Low` on the Business AI contracts. `StructuredAiExecutor` remains the global two-call owner and keeps `RepairUsed` reserved for semantic repair.
+- `DeepSeekAiProvider` now emits the hint only for a positively confirmed exhaustion response: `finish_reason=length`, unusable structured content, and complete/reasoning usage at or above the request token budget with reasoning no smaller than completion. A usable JSON body remains a success, and inconclusive metadata keeps generic `InvalidResponse` behavior.
+- The one fallback retry preserves operation/input/schema/instructions/`MaxOutputTokens`, temporarily sends `reasoning_effort=low` only for an enabled policy, and does not mutate options or add provider-internal retries. Normal `interview.evaluate`/`star.evaluate` high defaults remain unchanged.
+- Added offline regressions for normal high success, the exact 6,000-token exhaustion incident, low-fallback terminal failure, semantic repair separation, generic invalid response, usable JSON with `finish_reason=length`, and disabled-reasoning fail-closed behavior. No live Gemini/DeepSeek request was made.
+- Verification: `dotnet restore`; `dotnet build Nexora.slnx --nologo` (0 warnings, 0 errors); 189 unit tests passed, 86 integration tests passed, 0 failed/skipped; `dotnet ef migrations has-pending-model-changes` reported no pending model changes; `git diff --check` is clean.

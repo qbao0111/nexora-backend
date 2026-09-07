@@ -118,7 +118,7 @@ public sealed partial class DeepSeekAiProvider(
     public async Task<T> GenerateStructuredAsync<T>(AiRequest request, CancellationToken cancellationToken)
     {
         var configuration = options.Value;
-        var policy = ValidateAndResolvePolicy(configuration, request.Purpose);
+        var policy = ValidateAndResolvePolicy(configuration, request.Purpose, request.ReasoningEffortOverride);
         var endpoint = CreateEndpoint(configuration.BaseUrl);
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -157,7 +157,10 @@ public sealed partial class DeepSeekAiProvider(
         }
     }
 
-    private static DeepSeekReasoningSelection ValidateAndResolvePolicy(DeepSeekOptions configuration, string purpose)
+    private static DeepSeekReasoningSelection ValidateAndResolvePolicy(
+        DeepSeekOptions configuration,
+        string purpose,
+        AiReasoningEffortOverride? reasoningOverride)
     {
         if (string.IsNullOrWhiteSpace(configuration.ApiKey) ||
             string.IsNullOrWhiteSpace(configuration.Model) ||
@@ -190,6 +193,15 @@ public sealed partial class DeepSeekAiProvider(
 
         var thinking = policy.Thinking.Trim().Equals("enabled", StringComparison.OrdinalIgnoreCase);
         var effort = thinking ? policy.Effort!.Trim().ToLowerInvariant() : null;
+        if (reasoningOverride is not null)
+        {
+            if (!thinking || reasoningOverride is not AiReasoningEffortOverride.Low)
+                throw new AiProviderException(AiProviderFailureKind.Configuration,
+                    "AI provider reasoning override is unsupported for this operation.");
+
+            effort = "low";
+        }
+
         return new DeepSeekReasoningSelection(thinking, effort);
     }
 
@@ -275,13 +287,11 @@ public sealed partial class DeepSeekAiProvider(
             message.ValueKind != JsonValueKind.Object ||
             !message.TryGetProperty("content", out var contentElement) ||
             contentElement.ValueKind != JsonValueKind.String)
-            throw new AiProviderException(AiProviderFailureKind.InvalidResponse,
-                "AI provider returned an invalid structured response.");
+            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason);
 
         var content = contentElement.GetString();
         if (string.IsNullOrWhiteSpace(content))
-            throw new AiProviderException(AiProviderFailureKind.InvalidResponse,
-                "AI provider returned an invalid structured response.");
+            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason);
 
         try
         {
@@ -290,10 +300,49 @@ public sealed partial class DeepSeekAiProvider(
         }
         catch (JsonException)
         {
-            throw new AiProviderException(AiProviderFailureKind.InvalidResponse,
-                "AI provider returned an invalid structured response.");
+            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason);
         }
     }
+
+    private AiProviderException CreateInvalidStructuredResponse(
+        AiRequest request,
+        DeepSeekReasoningSelection policy,
+        DeepSeekUsage? usage,
+        string? finishReason)
+    {
+        if (IsReasoningBudgetExhausted(usage, finishReason, request.MaxOutputTokens))
+        {
+            LogReasoningBudgetExhausted(
+                logger,
+                request.Purpose,
+                policy.ReasoningEffort ?? "none",
+                finishReason ?? "none",
+                usage?.ReasoningTokens,
+                usage?.CompletionTokens,
+                request.MaxOutputTokens,
+                request.CorrelationId);
+            return new AiProviderException(
+                AiProviderFailureKind.InvalidResponse,
+                "AI provider exhausted its reasoning budget before returning structured output.",
+                retryHint: AiProviderRetryHint.LowerReasoningEffort);
+        }
+
+        return new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "AI provider returned an invalid structured response.");
+    }
+
+    private static bool IsReasoningBudgetExhausted(
+        DeepSeekUsage? usage,
+        string? finishReason,
+        int maxOutputTokens) =>
+        maxOutputTokens > 0 &&
+        string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase) &&
+        usage?.CompletionTokens is long completionTokens &&
+        usage.ReasoningTokens is long reasoningTokens &&
+        completionTokens >= maxOutputTokens &&
+        reasoningTokens >= maxOutputTokens &&
+        reasoningTokens >= completionTokens;
 
     private void LogUsage(
         AiRequest request,
@@ -419,6 +468,20 @@ public sealed partial class DeepSeekAiProvider(
         long? reasoningTokens,
         long? totalTokens,
         string? finishReason);
+
+    [LoggerMessage(
+        EventId = 4102,
+        Level = LogLevel.Warning,
+        Message = "DeepSeek reasoning budget exhausted: purpose={Purpose} configuredEffort={ConfiguredEffort} finishReason={FinishReason} reasoningTokens={ReasoningTokens} completionTokens={CompletionTokens} maxOutputTokens={MaxOutputTokens} outcome=reasoning_budget_exhausted correlationId={CorrelationId}")]
+    private static partial void LogReasoningBudgetExhausted(
+        ILogger logger,
+        string purpose,
+        string configuredEffort,
+        string finishReason,
+        long? reasoningTokens,
+        long? completionTokens,
+        int maxOutputTokens,
+        string correlationId);
 
     private sealed record DeepSeekReasoningSelection(bool ThinkingEnabled, string? ReasoningEffort);
 

@@ -2,7 +2,7 @@
 
 **Status:** Approved implementation baseline  
 **Baseline:** Frozen for Phase 0 backend implementation  
-**Last updated:** 2026-09-07
+**Last updated:** 2026-09-08
 
 This is the concise implementation source of truth. Formal requirements and priorities remain in [SRS](docs/SRS.md); detailed contracts remain in the linked specifications.
 
@@ -138,6 +138,8 @@ public interface IAiProvider
 `AiRequest` is Nexora-owned and carries purpose, prompt/model/rubric/schema versions, bounded untrusted input, output schema, token budget and correlation metadata. Every result receives JSON schema and semantic validation before persistence. Provider failures map to stable internal categories and safe API errors.
 
 Development defaults to `GeminiAiProvider` through the `IAiProvider` boundary. The optional `DeepSeekAiProvider` can be selected with `Ai:Provider=deepseek` for local text-AI evaluation; `IDocumentOcrProvider` remains Gemini regardless of that selector. Deterministic AI test doubles, when needed, stay inside the test project. Gemini and DeepSeek remain internal-development integrations unless DEC-01 later selects a production provider: provider SDK/HTTP types stay in `Nexora.Integrations`, model IDs come from configuration, keys come from secret configuration, and outputs map to Nexora schemas. Details: [AI integration specification](docs/09-ai-integration-spec.md).
+
+The structured executor remains bounded to two provider calls. Only a positively detected DeepSeek reasoning-budget exhaustion may select one per-attempt `low` override; semantic repair remains on the configured policy and `RepairUsed` continues to mean semantic repair. See the [AI integration specification](docs/09-ai-integration-spec.md#221-confirmed-reasoning-budget-fallback) for detection and telemetry rules.
 
 ## 12. Billing and quota model
 

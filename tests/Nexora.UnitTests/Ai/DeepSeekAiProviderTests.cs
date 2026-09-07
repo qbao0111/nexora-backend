@@ -2,8 +2,10 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Nexora.Business.Ai;
+using Nexora.Business.Common;
 using Nexora.Integrations.Ai;
 
 namespace Nexora.UnitTests.Ai;
@@ -107,6 +109,143 @@ public sealed class DeepSeekAiProviderTests
 
         using var request = JsonDocument.Parse(handler.RequestBody!);
         Assert.Equal("max", request.RootElement.GetProperty("reasoning_effort").GetString());
+    }
+
+    [Fact]
+    public async Task StructuredExecutorKeepsConfiguredHighOnNormalSuccess()
+    {
+        var handler = new RecordingHandler(_ => SuccessResponse(ValidInterviewEvaluationContent()));
+        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
+        var provider = CreateProvider(handler);
+        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "candidate input",
+            new AiOperationContext("high-success", ExpectedStar: false),
+            CancellationToken.None);
+
+        Assert.False(result.RepairUsed);
+        Assert.Equal(1, result.Attempts);
+        Assert.Equal(1, handler.Calls);
+        using var request = JsonDocument.Parse(handler.RequestBody!);
+        Assert.Equal("high", request.RootElement.GetProperty("reasoning_effort").GetString());
+    }
+
+    [Fact]
+    public async Task StructuredExecutorDowngradesDeepSeekAfterConfirmedReasoningExhaustion()
+    {
+        var responses = new Queue<HttpResponseMessage>([
+            ExhaustedResponse(),
+            SuccessResponse(ValidInterviewEvaluationContent())
+        ]);
+        var logger = new RecordingLogger();
+        var handler = new RecordingHandler(_ => responses.Dequeue());
+        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
+        var provider = CreateProvider(handler, logger: logger);
+        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "candidate input",
+            new AiOperationContext("reasoning-exhaustion", ExpectedStar: false),
+            CancellationToken.None);
+
+        Assert.False(result.RepairUsed);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, handler.Calls);
+        using var firstRequest = RequestBody(handler, 0);
+        using var secondRequest = RequestBody(handler, 1);
+        Assert.Equal("high", firstRequest.RootElement.GetProperty("reasoning_effort").GetString());
+        Assert.Equal("low", secondRequest.RootElement.GetProperty("reasoning_effort").GetString());
+        Assert.Equal(6_000, firstRequest.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.Equal(6_000, secondRequest.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.Contains(logger.Messages, message =>
+            message.Contains("outcome=reasoning_budget_exhausted", StringComparison.Ordinal) &&
+            message.Contains("configuredEffort=high", StringComparison.Ordinal) &&
+            message.Contains("reasoningTokens=6000", StringComparison.Ordinal) &&
+            message.Contains("maxOutputTokens=6000", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task StructuredExecutorStopsAfterLowFallbackFailure()
+    {
+        var responses = new Queue<HttpResponseMessage>([
+            ExhaustedResponse(),
+            ExhaustedResponse()
+        ]);
+        var handler = new RecordingHandler(_ => responses.Dequeue());
+        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
+        var provider = CreateProvider(handler);
+        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "candidate input",
+            new AiOperationContext("reasoning-exhaustion-failure", ExpectedStar: false),
+            CancellationToken.None));
+
+        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
+        Assert.Equal(2, handler.Calls);
+        Assert.Equal("low", RequestBody(handler, 1).RootElement.GetProperty("reasoning_effort").GetString());
+    }
+
+    [Fact]
+    public async Task GenericInvalidResponseKeepsConfiguredHighOnRetry()
+    {
+        var responses = new Queue<HttpResponseMessage>([
+            SuccessResponse("{\"choices\":[{\"message\":{\"content\":\"not-json\"},\"finish_reason\":\"stop\"}]}"),
+            SuccessResponse(ValidInterviewEvaluationContent())
+        ]);
+        var handler = new RecordingHandler(_ => responses.Dequeue());
+        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
+        var provider = CreateProvider(handler);
+        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "candidate input",
+            new AiOperationContext("generic-invalid-response", ExpectedStar: false),
+            CancellationToken.None);
+
+        Assert.False(result.RepairUsed);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, handler.Calls);
+        Assert.Equal("high", RequestBody(handler, 0).RootElement.GetProperty("reasoning_effort").GetString());
+        Assert.Equal("high", RequestBody(handler, 1).RootElement.GetProperty("reasoning_effort").GetString());
+    }
+
+    [Fact]
+    public async Task LengthFinishReasonWithUsableJsonRemainsSuccess()
+    {
+        var handler = new RecordingHandler(_ => LengthResponse("{\"content\":\"ok\"}"));
+        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
+        var provider = CreateProvider(handler);
+
+        var result = await provider.GenerateStructuredAsync<GeneratedQuestion>(
+            Request(AiPurposes.InterviewEvaluate, schema, maxOutputTokens: 6_000),
+            CancellationToken.None);
+
+        Assert.Equal("ok", result.Content);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task DisabledReasoningRejectsLowOverrideWithoutHttpCall()
+    {
+        var handler = new RecordingHandler(_ => SuccessResponse("{\"content\":\"unexpected\"}"));
+        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
+        var provider = CreateProvider(handler);
+
+        var exception = await Assert.ThrowsAsync<AiProviderException>(() => provider.GenerateStructuredAsync<GeneratedQuestion>(
+            Request(
+                AiPurposes.InterviewFollowup,
+                schema,
+                reasoningEffortOverride: AiReasoningEffortOverride.Low),
+            CancellationToken.None));
+
+        Assert.Equal(AiProviderFailureKind.Configuration, exception.Kind);
+        Assert.Equal(0, handler.Calls);
     }
 
     [Fact]
@@ -315,7 +454,9 @@ public sealed class DeepSeekAiProviderTests
         string purpose,
         JsonDocument schema,
         string? instructions = null,
-        string? candidateInput = null) => new(
+        string? candidateInput = null,
+        int maxOutputTokens = 512,
+        AiReasoningEffortOverride? reasoningEffortOverride = null) => new(
         purpose,
         "prompt-v1",
         "model-v1",
@@ -323,9 +464,44 @@ public sealed class DeepSeekAiProviderTests
         "schema-v1",
         candidateInput ?? "candidate input",
         schema,
-        512,
+        maxOutputTokens,
         "correlation-id",
-        instructions);
+        instructions,
+        reasoningEffortOverride);
+
+    private static JsonDocument RequestBody(RecordingHandler handler, int index) =>
+        JsonDocument.Parse(handler.RequestBodies[index]);
+
+    private static string ValidInterviewEvaluationContent() => JsonSerializer.Serialize(new AnswerEvaluation(
+        [
+            new RubricScore("correctness", 80, "Correctness evidence."),
+            new RubricScore("structure", 80, "Structure evidence."),
+            new RubricScore("completeness", 80, "Completeness evidence."),
+            new RubricScore("clarity", 80, "Clarity evidence.")
+        ],
+        "Grounded feedback.",
+        new StarEvaluation(false, null, null, null, null, null, [], [], [], AiOperations.ScoreScale),
+        AiOperations.ScoreScale));
+
+    private static HttpResponseMessage ExhaustedResponse() => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent(
+            "{\"choices\":[{\"message\":{\"content\":\"not-json\"},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":2679,\"completion_tokens\":6000,\"completion_tokens_details\":{\"reasoning_tokens\":6000},\"total_tokens\":8679}}",
+            Encoding.UTF8,
+            "application/json")
+    };
+
+    private static HttpResponseMessage LengthResponse(string content) => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent(
+            JsonSerializer.Serialize(new
+            {
+                choices = new[] { new { message = new { content }, finish_reason = "length" } },
+                usage = new { completion_tokens = 6_000, completion_tokens_details = new { reasoning_tokens = 6_000 } }
+            }),
+            Encoding.UTF8,
+            "application/json")
+    };
 
     private static HttpResponseMessage SuccessResponse(string content) => new(HttpStatusCode.OK)
     {
@@ -344,6 +520,7 @@ public sealed class DeepSeekAiProviderTests
         public Uri? RequestUri { get; private set; }
         public string? Authorization { get; private set; }
         public string? RequestBody { get; private set; }
+        public List<string> RequestBodies { get; } = [];
         public string? LastExceptionText { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -352,6 +529,8 @@ public sealed class DeepSeekAiProviderTests
             RequestUri = request.RequestUri;
             Authorization = request.Headers.Authorization?.Parameter;
             RequestBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+            if (RequestBody is not null)
+                RequestBodies.Add(RequestBody);
             try
             {
                 return responder(request);

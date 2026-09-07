@@ -183,6 +183,8 @@ public sealed class StructuredAiExecutorTests
         Assert.Equal(2, result.Attempts);
         Assert.Equal(2, fakeProvider.CallCount);
         Assert.Contains("score.scale_invalid", fakeProvider.Requests[1].Instructions);
+        Assert.Null(fakeProvider.Requests[0].ReasoningEffortOverride);
+        Assert.Null(fakeProvider.Requests[1].ReasoningEffortOverride);
     }
 
     [Fact]

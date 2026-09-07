@@ -26,7 +26,7 @@ public interface IAiProvider
 }
 ```
 
-`AiRequest` contains purpose, approved prompt template version, untrusted user text delimiters, expected JSON schema, optional per-operation instructions, max tokens and correlation ID. Provider-specific SDK types never escape to controller/business API.
+`AiRequest` contains purpose, approved prompt template version, untrusted user text delimiters, expected JSON schema, optional per-operation instructions, max tokens, correlation ID and an optional provider-neutral per-attempt reasoning-effort override. Provider-specific SDK types never escape to controller/business API. Provider exceptions may carry a provider-neutral retry hint; the Business layer does not reference a concrete provider.
 
 ### 2.1 Structured AI execution layer (`IStructuredAiExecutor`)
 
@@ -43,9 +43,9 @@ public interface IStructuredAiExecutor
 }
 ```
 
-- **Global Retry Budget**: At most **two** provider calls per AI purpose (1 initial call + at most 1 repair or rate-limit retry). Provider adapter default `MaxAttempts` is set to 1 to eliminate nested retry multiplication.
+- **Global Retry Budget**: At most **two** provider calls per AI purpose (1 initial call + at most 1 bounded retry). A retry may be a semantic repair, an existing transient/provider retry, or the explicit reasoning-budget fallback described below. Provider adapter default `MaxAttempts` is set to 1 to eliminate nested retry multiplication.
 - **Repair Cycle**: If attempt 1 fails server semantic validation with a repairable issue, attempt 2 injects a focused repair prompt specifying the exact contract violation and instructions to correct it.
-- **Non-Repairable Failures**: Syntax parsing failures, malformed JSON, unrecoverable semantic violations, or non-transient HTTP errors fail fast without a second call.
+- **Provider Failure Retry**: Existing retryable provider failures retain the bounded retry behavior. A generic `InvalidResponse` retry keeps the configured reasoning policy; it is not automatically downgraded to low. Non-retryable HTTP, authentication and configuration failures remain terminal.
 - **Error Normalization**: Maps failures to canonical `BusinessException` with `BusinessErrorKind.ExternalFailure` and safe error codes (`AI_OUTPUT_INVALID`, `AI_RATE_LIMITED`, `AI_PROVIDER_UNAVAILABLE`).
 
 Current internal implementation:
@@ -74,11 +74,21 @@ DeepSeek uses one provider call per `IAiProvider.GenerateStructuredAsync` invoca
 
 This table is the authoritative cost-aware baseline for the provider. In particular, `interview.report` and `scenario.evaluate` use `low`; no older example or test label that says otherwise should override this Section 7 policy.
 
+#### 2.2.1 Confirmed reasoning-budget fallback
+
+The configured policy is always used for the first attempt. `interview.evaluate` and `star.evaluate` therefore remain **high** by default; this correction does not lower defaults or increase `MaxOutputTokens`.
+
+DeepSeek may attach the provider-neutral `LowerReasoningEffort` retry hint only when all of the following are true: `finish_reason` is `length`, the structured content is absent/blank or cannot be deserialized, and non-null usage metadata shows both `completion_tokens` and `reasoning_tokens` at or above the request `MaxOutputTokens` with reasoning at least as large as completion. Missing or inconclusive usage, a generic malformed response, a semantic validation failure, timeout, rate limit or other provider failure keeps existing retry semantics and never selects this fallback. A complete structured JSON result remains a success even when `finish_reason` is `length`.
+
+When the executor receives that explicit hint on attempt 1, it keeps the original operation, input, schema, instructions and token budget, leaves semantic validation state unset, and performs exactly one retry with the per-attempt `Low` override. The override can only lower an enabled policy; it cannot enable disabled thinking, upgrade an effort, mutate configuration or change appsettings. `DeepSeekAiProvider` still makes one HTTP request per invocation (`MaxAttempts=1`), so the global maximum remains two calls and there is no third or hidden provider retry. A normal high-policy success remains one call, while a successful fallback reports `Attempts=2` and `RepairUsed=false`.
+
+`RepairUsed` continues to mean that `BuildRepairInstructions` was used for a Nexora semantic repair. Semantic repair remains on the normal configured policy and is never treated as reasoning fallback. The fallback adds no additional default paid call; it is only the single, positively-triggered second attempt within the existing budget.
+
 When thinking is disabled, `thinking.type=disabled` is sent and `reasoning_effort` is omitted. When enabled, `thinking.type=enabled` and one of `low`, `high` or manual-only `max` is sent. No operation defaults to `max`, and repair does not escalate effort. Unknown purposes or invalid policy values fail closed before an HTTP call.
 
 The trusted system message contains operation metadata, the approved instructions and the exact Nexora-owned JSON schema. The untrusted CV/JD/answer/scenario text is sent only as the user message. The adapter requires nonblank `choices[0].message.content`, deserializes only that JSON content, ignores `reasoning_content`, and never strips fences or fabricates defaults. HTTP/network/timeout failures are normalized to `AiProviderFailureKind` without copying the provider body into exceptions.
 
-For paid-provider safety, DeepSeek logs metadata-only usage telemetry when the response supplies it: purpose, provider-aware model version, thinking, reasoning effort, latency, prompt/cache hit/cache miss/completion/reasoning/total tokens and finish reason. It never logs keys, authorization headers, prompts, candidate text, response content or `reasoning_content`, and missing usage is not a request failure. Pricing conversion remains outside the provider because DeepSeek pricing can change. DEC-01 still controls production provider/model and budgets and therefore blocks production AI enablement, not local development or integration tests.
+For paid-provider safety, DeepSeek logs metadata-only usage telemetry when the response supplies it: purpose, provider-aware model version, thinking, reasoning effort, latency, prompt/cache hit/cache miss/completion/reasoning/total tokens and finish reason. Confirmed reasoning exhaustion is separately observable through safe metadata (`configuredEffort`, `finishReason`, `reasoningTokens`, `completionTokens`, `maxOutputTokens`, `outcome=reasoning_budget_exhausted`); the executor logs the corresponding effective low retry and reason. It never logs keys, authorization headers, prompts, candidate text, response content or `reasoning_content`, and missing usage is not a request failure. Pricing conversion remains outside the provider because DeepSeek pricing can change. DEC-01 still controls production provider/model and budgets and therefore blocks production AI enablement, not local development or integration tests.
 
 The adapter and executor must never copy a provider response body, credential, prompt, or candidate answer text into an API response or log. Only safe diagnostics (`failureReason`, `stage`, `attempt`, `correlationId`) are recorded.
 
