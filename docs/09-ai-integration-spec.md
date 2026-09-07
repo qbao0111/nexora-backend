@@ -73,6 +73,7 @@ StartInterview retries must not duplicate session, question, usage event or job 
 ## 4. Output quality, safety and recovery rules
 
 - **Canonical Rubric Validation**: Structured evaluation output must pass JSON schema + server semantic validation:
+  - Scoring operations (`interview.evaluate`, `interview.report`, `scenario.evaluate`, `star.evaluate`) must explicitly return root `scoreScale: "0-100"`. Missing or non-exact values are repairable semantic failures; variants such as `1-5` or `0-100 ` are not normalized into validity.
   - Exact four rubric criteria: `correctness`, `structure`, `completeness`, `clarity` (case-insensitive matching from provider, normalized lowercase and trimmed).
   - Sub-scores bounded strictly to 0–100 with non-blank grounded evidence.
   - Overall score computed server-side via canonical weights (Relevance/Correctness 40%, Structure 25%, Completeness 20%, Clarity 15%).

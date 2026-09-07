@@ -248,6 +248,8 @@ public static class ResumeProfileValidator
 
 public static class AiOperations
 {
+    public const string ScoreScale = "0-100";
+
     public static readonly ResumeProfileOperation ResumeProfile = new();
     public static readonly ResumeAnalysisOperation ResumeAnalysis = new();
     public static readonly InterviewFirstQuestionOperation InterviewFirstQuestion = new();
@@ -512,7 +514,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
               "required": ["applicable"]
             }
           },
-          "required": ["scores", "feedback"]
+          "required": ["scoreScale", "scores", "feedback"]
         }
         """);
 
@@ -535,6 +537,8 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
     {
         if (raw is null)
             return AiValidationResult<AnswerEvaluation>.Failure("rubric.criteria_missing", "semantic", repairable: true);
+        if (!string.Equals(raw.ScoreScale, AiOperations.ScoreScale, StringComparison.Ordinal))
+            return AiValidationResult<AnswerEvaluation>.Failure("score.scale_invalid", "semantic", repairable: true);
 
         var rubricResult = CanonicalRubricValidator.ValidateAndNormalize(raw.Scores);
         if (!rubricResult.IsValid)
@@ -560,7 +564,8 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                 null,
                 [],
                 [],
-                raw.Star?.CoachingTips?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? []);
+                raw.Star?.CoachingTips?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [],
+                AiOperations.ScoreScale);
         }
         else
         {
@@ -610,10 +615,12 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                 res,
                 missing,
                 raw.Star.Strengths?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [],
-                raw.Star.CoachingTips?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? []);
+                raw.Star.CoachingTips?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [],
+                AiOperations.ScoreScale);
         }
 
-        return AiValidationResult<AnswerEvaluation>.Success(new AnswerEvaluation(rubricResult.NormalizedValue!, feedback, normalizedStar));
+        return AiValidationResult<AnswerEvaluation>.Success(
+            new AnswerEvaluation(rubricResult.NormalizedValue!, feedback, normalizedStar, AiOperations.ScoreScale));
     }
 
     public override string BuildRepairInstructions(AiValidationResult<AnswerEvaluation> priorResult, string originalInstructions)
@@ -670,7 +677,7 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
             "gaps": { "type": "array", "items": { "type": "string" } },
             "actionPlan": { "type": "array", "items": { "type": "string" } }
           },
-          "required": ["scores", "strengths", "gaps", "actionPlan"]
+          "required": ["scoreScale", "scores", "strengths", "gaps", "actionPlan"]
         }
         """);
 
@@ -681,6 +688,8 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
     {
         if (raw is null)
             return AiValidationResult<InterviewReportOutput>.Failure("rubric.criteria_missing", "semantic", repairable: true);
+        if (!string.Equals(raw.ScoreScale, AiOperations.ScoreScale, StringComparison.Ordinal))
+            return AiValidationResult<InterviewReportOutput>.Failure("score.scale_invalid", "semantic", repairable: true);
 
         var rubricResult = CanonicalRubricValidator.ValidateAndNormalize(raw.Scores);
         if (!rubricResult.IsValid)
@@ -698,7 +707,7 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
             return AiValidationResult<InterviewReportOutput>.Failure("report.action_plan_blank", "semantic", repairable: true);
 
         return AiValidationResult<InterviewReportOutput>.Success(
-            new InterviewReportOutput(rubricResult.NormalizedValue!, strengths, gaps, actionPlan));
+            new InterviewReportOutput(rubricResult.NormalizedValue!, strengths, gaps, actionPlan, AiOperations.ScoreScale));
     }
 }
 
@@ -734,7 +743,7 @@ public sealed class ScenarioEvaluateOperation : AiOperationDefinition<ScenarioEv
             "recommendedApproach": { "type": "array", "items": { "type": "string" } },
             "feedback": { "type": "string" }
           },
-          "required": ["overallScore", "dimensions", "strengths", "gaps", "recommendedApproach", "feedback"]
+          "required": ["scoreScale", "overallScore", "dimensions", "strengths", "gaps", "recommendedApproach", "feedback"]
         }
         """);
 
@@ -745,6 +754,8 @@ public sealed class ScenarioEvaluateOperation : AiOperationDefinition<ScenarioEv
     {
         if (raw is null)
             return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.dimensions_missing", "semantic", repairable: true);
+        if (!string.Equals(raw.ScoreScale, AiOperations.ScoreScale, StringComparison.Ordinal))
+            return AiValidationResult<ScenarioEvaluationResult>.Failure("score.scale_invalid", "semantic", repairable: true);
 
         if (raw.OverallScore is < 0 or > 100)
             return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.score_out_of_range", "semantic", repairable: true);
@@ -782,7 +793,7 @@ public sealed class ScenarioEvaluateOperation : AiOperationDefinition<ScenarioEv
             return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.overall_feedback_blank", "semantic", repairable: true);
 
         return AiValidationResult<ScenarioEvaluationResult>.Success(
-            new ScenarioEvaluationResult(raw.OverallScore, normalizedDimensions, strengths, gaps, approach, raw.Feedback.Trim()));
+            new ScenarioEvaluationResult(raw.OverallScore, normalizedDimensions, strengths, gaps, approach, raw.Feedback.Trim(), AiOperations.ScoreScale));
     }
 }
 
@@ -845,7 +856,7 @@ public sealed class StarEvaluateOperation : AiOperationDefinition<StarEvaluation
             "strengths": { "type": "array", "items": { "type": "string" } },
             "coachingTips": { "type": "array", "items": { "type": "string" } }
           },
-          "required": ["applicable", "overallScore", "situation", "task", "action", "result", "missingElements", "strengths", "coachingTips"]
+          "required": ["scoreScale", "applicable", "overallScore", "situation", "task", "action", "result", "missingElements", "strengths", "coachingTips"]
         }
         """);
 
@@ -863,6 +874,8 @@ public sealed class StarEvaluateOperation : AiOperationDefinition<StarEvaluation
     {
         if (raw is null)
             return AiValidationResult<StarEvaluation>.Failure("star.missing", "semantic", repairable: true);
+        if (!string.Equals(raw.ScoreScale, AiOperations.ScoreScale, StringComparison.Ordinal))
+            return AiValidationResult<StarEvaluation>.Failure("score.scale_invalid", "semantic", repairable: true);
 
         if (!raw.Applicable)
             return AiValidationResult<StarEvaluation>.Failure("star.applicability_mismatch", "semantic", repairable: true);
@@ -914,7 +927,8 @@ public sealed class StarEvaluateOperation : AiOperationDefinition<StarEvaluation
             res,
             missing,
             strengths,
-            coachingTips));
+            coachingTips,
+            AiOperations.ScoreScale));
     }
 
     public override string BuildRepairInstructions(AiValidationResult<StarEvaluation> priorResult, string originalInstructions)

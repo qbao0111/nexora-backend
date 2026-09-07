@@ -81,7 +81,8 @@ public sealed class AiValidationIntegrityTests
             Rubric(),
             missing == "strengths" ? [] : ["Grounded strength"],
             missing == "gaps" ? [] : ["Grounded gap"],
-            missing == "actionPlan" ? [] : ["Grounded action"]), Context);
+            missing == "actionPlan" ? [] : ["Grounded action"],
+            AiOperations.ScoreScale), Context);
 
         Assert.False(result.IsValid);
         Assert.True(result.Repairable);
@@ -138,7 +139,8 @@ public sealed class AiValidationIntegrityTests
             missing == "strengths" ? [] : ["Grounded strength"],
             missing == "gaps" ? [] : ["Grounded gap"],
             missing == "approach" ? [] : ["Grounded approach"],
-            "Grounded feedback"), Context);
+            "Grounded feedback",
+            AiOperations.ScoreScale), Context);
 
         Assert.False(result.IsValid);
         Assert.True(result.Repairable);
@@ -156,12 +158,66 @@ public sealed class AiValidationIntegrityTests
             new StarComponentEvaluation(70, true, "r", "feedback"),
             [],
             missing == "strengths" ? [] : ["Grounded strength"],
-            missing == "coachingTips" ? [] : ["Grounded tip"]);
+            missing == "coachingTips" ? [] : ["Grounded tip"],
+            AiOperations.ScoreScale);
 
         var result = AiOperations.StarEvaluate.NormalizeAndValidate(star, Context);
 
         Assert.False(result.IsValid);
         Assert.True(result.Repairable);
+    }
+
+    [Theory]
+    [InlineData("interview.evaluate", "0-100", true)]
+    [InlineData("interview.evaluate", null, false)]
+    [InlineData("interview.evaluate", "1-5", false)]
+    [InlineData("interview.evaluate", "0-100 ", false)]
+    [InlineData("interview.report", "0-100", true)]
+    [InlineData("interview.report", null, false)]
+    [InlineData("interview.report", "1-5", false)]
+    [InlineData("interview.report", "0-100 ", false)]
+    [InlineData("scenario.evaluate", "0-100", true)]
+    [InlineData("scenario.evaluate", null, false)]
+    [InlineData("scenario.evaluate", "1-5", false)]
+    [InlineData("scenario.evaluate", "0-100 ", false)]
+    [InlineData("star.evaluate", "0-100", true)]
+    [InlineData("star.evaluate", null, false)]
+    [InlineData("star.evaluate", "1-5", false)]
+    [InlineData("star.evaluate", "0-100 ", false)]
+    public void ScoringOperationsRequireExactScoreScale(string purpose, string? scoreScale, bool expectedValid)
+    {
+        var result = ValidateScoringOperation(purpose, scoreScale);
+
+        Assert.Equal(expectedValid, result.IsValid);
+        if (expectedValid)
+        {
+            Assert.Equal(AiOperations.ScoreScale, result.NormalizedScoreScale);
+        }
+        else
+        {
+            Assert.Equal("score.scale_invalid", result.FailureReason);
+            Assert.True(result.Repairable);
+        }
+    }
+
+    [Theory]
+    [InlineData("interview.evaluate")]
+    [InlineData("interview.report")]
+    [InlineData("scenario.evaluate")]
+    [InlineData("star.evaluate")]
+    public void ScoringOperationSchemaRequiresScoreScaleAtRoot(string purpose)
+    {
+        var schema = purpose switch
+        {
+            AiPurposes.InterviewEvaluate => AiOperations.InterviewEvaluate.OutputSchema,
+            AiPurposes.InterviewReport => AiOperations.InterviewReport.OutputSchema,
+            AiPurposes.ScenarioEvaluate => AiOperations.ScenarioEvaluate.OutputSchema,
+            AiPurposes.StarEvaluate => AiOperations.StarEvaluate.OutputSchema,
+            _ => throw new ArgumentOutOfRangeException(nameof(purpose))
+        };
+
+        var required = schema.RootElement.GetProperty("required").EnumerateArray().Select(item => item.GetString()).ToArray();
+        Assert.Contains("scoreScale", required);
     }
 
     private static ResumeProfile Profile(
@@ -185,5 +241,46 @@ public sealed class AiValidationIntegrityTests
         int overallScore = 75,
         IReadOnlyCollection<ScenarioDimensionEvaluation>? dimensions = null) =>
         new(overallScore, dimensions ?? [Dimension("analysis"), Dimension("communication")],
-            ["Grounded strength"], ["Grounded gap"], ["Grounded approach"], "Grounded feedback");
+            ["Grounded strength"], ["Grounded gap"], ["Grounded approach"], "Grounded feedback", AiOperations.ScoreScale);
+
+    private static (bool IsValid, string? FailureReason, bool Repairable, string? NormalizedScoreScale) ValidateScoringOperation(
+        string purpose,
+        string? scoreScale)
+    {
+        if (purpose == AiPurposes.InterviewEvaluate)
+        {
+            var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+                new AnswerEvaluation(Rubric(), "Grounded feedback", null, scoreScale),
+                new AiOperationContext("scale-test", ExpectedStar: false));
+            return (result.IsValid, result.FailureReason, result.Repairable, result.NormalizedValue?.ScoreScale);
+        }
+
+        if (purpose == AiPurposes.InterviewReport)
+        {
+            var result = AiOperations.InterviewReport.NormalizeAndValidate(
+                new InterviewReportOutput(Rubric(), ["Strength"], ["Gap"], ["Action"], scoreScale), Context);
+            return (result.IsValid, result.FailureReason, result.Repairable, result.NormalizedValue?.ScoreScale);
+        }
+
+        if (purpose == AiPurposes.ScenarioEvaluate)
+        {
+            var scenario = ValidScenario() with { ScoreScale = scoreScale };
+            var result = AiOperations.ScenarioEvaluate.NormalizeAndValidate(scenario, Context);
+            return (result.IsValid, result.FailureReason, result.Repairable, result.NormalizedValue?.ScoreScale);
+        }
+
+        var star = new StarEvaluation(
+            true,
+            75,
+            new StarComponentEvaluation(75, true, "s", "feedback"),
+            new StarComponentEvaluation(75, true, "t", "feedback"),
+            new StarComponentEvaluation(75, true, "a", "feedback"),
+            new StarComponentEvaluation(75, true, "r", "feedback"),
+            [],
+            ["Strength"],
+            ["Tip"],
+            scoreScale);
+        var starResult = AiOperations.StarEvaluate.NormalizeAndValidate(star, Context);
+        return (starResult.IsValid, starResult.FailureReason, starResult.Repairable, starResult.NormalizedValue?.ScoreScale);
+    }
 }

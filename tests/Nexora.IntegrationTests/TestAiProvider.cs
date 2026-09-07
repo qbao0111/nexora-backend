@@ -100,7 +100,8 @@ internal sealed class TestAiProvider : IAiProvider
                     new StarComponentEvaluation(0, false, string.Empty, "Cần nêu kết quả cụ thể hơn."),
                     ["result"],
                     ["Có hành động xử lý rõ"],
-                    ["Kết thúc câu trả lời bằng kết quả và tác động cụ thể."]) : new StarEvaluation(false, null, null, null, null, null, [], [], [])),
+                    ["Kết thúc câu trả lời bằng kết quả và tác động cụ thể."]) : new StarEvaluation(false, null, null, null, null, null, [], [], []),
+                AiOperations.ScoreScale),
             var type when type == typeof(StarEvaluation) => new StarEvaluation(
                 true,
                 56,
@@ -110,7 +111,8 @@ internal sealed class TestAiProvider : IAiProvider
                 new StarComponentEvaluation(0, false, string.Empty, "Cần nêu kết quả cụ thể hơn."),
                 ["result"],
                 ["Có hành động xử lý rõ"],
-                ["Kết thúc câu trả lời bằng kết quả và tác động cụ thể."]),
+                ["Kết thúc câu trả lời bằng kết quả và tác động cụ thể."],
+                AiOperations.ScoreScale),
             var type when type == typeof(ScenarioEvaluationResult) => new ScenarioEvaluationResult(
                 72,
                 [
@@ -120,7 +122,8 @@ internal sealed class TestAiProvider : IAiProvider
                 ["Phân tích vấn đề rõ ràng"],
                 ["Thiếu phương án dự phòng"],
                 ["Đề xuất thêm phương án B"],
-                "Nên bổ sung kết quả và phương án dự phòng."),
+                "Nên bổ sung kết quả và phương án dự phòng.",
+                AiOperations.ScoreScale),
             var type when type == typeof(InterviewReportOutput) => new InterviewReportOutput(
                 [
                     new RubricScore("correctness", 75, "Transcript cho thấy hướng giải quyết phù hợp."),
@@ -130,7 +133,8 @@ internal sealed class TestAiProvider : IAiProvider
                 ],
                 ["Diễn đạt rõ ràng"],
                 ["Thiếu kết quả định lượng"],
-                ["Luyện trả lời theo STAR"]),
+                ["Luyện trả lời theo STAR"],
+                AiOperations.ScoreScale),
             var type when type == typeof(ResumeAnalysisOutput) => new ResumeAnalysisOutput(
                 ["Kinh nghiệm C# và PostgreSQL phù hợp yêu cầu", "Có kỹ năng phân tích hệ thống"],
                 ["Cần bổ sung kiến thức về kiến trúc phân tán"],

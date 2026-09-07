@@ -420,3 +420,9 @@ This log records completed implementation milestones and verification evidence. 
 - Unified `ResumeProfile` normalization and usefulness validation across structured generation, cached profiles and Gemini document fallback. Summary is optional when another useful profile field exists; a completely empty profile remains invalid.
 - Prompt/schema/model version identifiers remain unchanged because this patch restores the already documented operation contracts and removes a conflicting provider overlay; it does not introduce a new persisted result shape or rubric meaning.
 - Added focused unit and integration regressions for semantic repair exhaustion, no fabricated persistence, question length handling, operation-owned prompt rules and canonical profile validity. No live Gemini call is required.
+
+## 2026-09-07 — Enforced AI score-scale contract
+
+- Made root `scoreScale` mandatory in the JSON schemas for interview answer evaluation, interview reports, scenario evaluation and standalone STAR evaluation.
+- Removed DTO defaults that could turn an omitted provider field into an implicit valid value. Semantic validators now accept only the exact ordinal value `0-100`, repair invalid/missing values once, and explicitly preserve `0-100` in normalized output.
+- Kept prompt/schema version identifiers unchanged because `scoreScale: "0-100"` was already the declared contract; this patch closes its enforcement gap without changing scoring semantics.

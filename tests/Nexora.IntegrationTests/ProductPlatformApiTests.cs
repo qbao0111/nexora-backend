@@ -209,7 +209,7 @@ public sealed class ProductPlatformApiTests
     public async Task ScenarioSemanticInvalidTwiceVoidsQuotaWithoutFabricatedEvaluation()
     {
         var aiProvider = new TestAiProvider();
-        var invalid = new ScenarioEvaluationResult(150, [], [], [], [], "");
+        var invalid = new ScenarioEvaluationResult(150, [], [], [], [], "", AiOperations.ScoreScale);
         aiProvider.EnqueueResponse(AiPurposes.ScenarioEvaluate, invalid);
         aiProvider.EnqueueResponse(AiPurposes.ScenarioEvaluate, invalid);
         using var factory = new NexoraApiFactory(aiProvider);

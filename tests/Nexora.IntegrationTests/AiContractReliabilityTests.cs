@@ -37,7 +37,8 @@ public sealed class AiContractReliabilityTests
                 Result: new StarComponentEvaluation(80, true, "Res evidence", "Res fb"),
                 MissingElements: [],
                 Strengths: ["Strong technical depth"],
-                CoachingTips: [])));
+                CoachingTips: []),
+            AiOperations.ScoreScale));
 
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
@@ -92,7 +93,8 @@ public sealed class AiContractReliabilityTests
                 new RubricScore("clarity", 80, "Clear communication.")
             ],
             "Good job.",
-            new StarEvaluation(false, null, null, null, null, null, [], [], [])));
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale));
 
         // Followup generation throws AI provider unavailable
         aiProvider.EnqueueResponse("interview.followup",
@@ -154,7 +156,8 @@ public sealed class AiContractReliabilityTests
                 new RubricScore("clarity", 80, "Grounded evidence.")
             ],
             "Grounded feedback.",
-            new StarEvaluation(false, null, null, null, null, null, [], [], [])));
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale));
         var overlong = new GeneratedQuestion(new string('x', 2_001));
         aiProvider.EnqueueResponse(AiPurposes.InterviewFollowup, overlong);
         aiProvider.EnqueueResponse(AiPurposes.InterviewFollowup, overlong);
@@ -205,7 +208,8 @@ public sealed class AiContractReliabilityTests
                 new RubricScore("completeness", 80, "Complete response.")
             ],
             "Good job.",
-            new StarEvaluation(false, null, null, null, null, null, [], [], [])));
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale));
 
         // Attempt 2: valid rubric (all 4 criteria)
         aiProvider.EnqueueResponse("interview.evaluate", new AnswerEvaluation(
@@ -216,7 +220,8 @@ public sealed class AiContractReliabilityTests
                 new RubricScore("clarity", 85, "Very clear.")
             ],
             "Good job.",
-            new StarEvaluation(false, null, null, null, null, null, [], [], [])));
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale));
 
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
@@ -256,11 +261,13 @@ public sealed class AiContractReliabilityTests
         aiProvider.EnqueueResponse("interview.evaluate", new AnswerEvaluation(
             [new RubricScore("correctness", 80, "Good answer.")],
             "Incomplete rubric",
-            new StarEvaluation(false, null, null, null, null, null, [], [], [])));
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale));
         aiProvider.EnqueueResponse("interview.evaluate", new AnswerEvaluation(
             [new RubricScore("correctness", 80, "Good answer.")],
             "Still incomplete rubric",
-            new StarEvaluation(false, null, null, null, null, null, [], [], [])));
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale));
 
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
@@ -369,7 +376,8 @@ public sealed class AiContractReliabilityTests
                 Result: new StarComponentEvaluation(90, true, "latency giảm từ 1.5s xuống còn 90ms và hệ thống không còn bị crash.", "Kết quả định lượng rõ ràng."),
                 MissingElements: ["task"],
                 Strengths: ["Xử lý kỹ thuật tốt"],
-                CoachingTips: ["Bổ sung vai trò cá nhân"])));
+                CoachingTips: ["Bổ sung vai trò cá nhân"]),
+            AiOperations.ScoreScale));
 
         // Followup question generation
         aiProvider.EnqueueResponse("interview.followup", new GeneratedQuestion(
@@ -393,7 +401,8 @@ public sealed class AiContractReliabilityTests
                 Result: new StarComponentEvaluation(90, true, "giải pháp được release an toàn sau 3 giờ, hệ thống chịu tải tốt và tôi đã đóng góp tài liệu RCA/Runbook vào wiki nội bộ của team.", "Kết quả cụ thể và tài liệu hóa."),
                 MissingElements: [],
                 Strengths: ["Kỹ năng phân tích nguyên nhân gốc rễ xuất sắc"],
-                CoachingTips: [])));
+                CoachingTips: []),
+            AiOperations.ScoreScale));
 
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();

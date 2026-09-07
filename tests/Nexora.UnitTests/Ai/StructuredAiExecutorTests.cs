@@ -164,6 +164,56 @@ public sealed class StructuredAiExecutorTests
         Assert.Equal(2, fakeProvider.CallCount);
     }
 
+    [Fact]
+    public async Task ExecuteAsyncRepairsInvalidScoreScaleOnSecondAttempt()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(TechnicalEvaluation("1-5"));
+        fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "technical answer",
+            new AiOperationContext("scale-repair", ExpectedStar: false),
+            CancellationToken.None);
+
+        Assert.Equal(AiOperations.ScoreScale, result.Value.ScoreScale);
+        Assert.True(result.RepairUsed);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Contains("score.scale_invalid", fakeProvider.Requests[1].Instructions);
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncRejectsInvalidScoreScaleAfterExactlyTwoAttempts()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(TechnicalEvaluation("1-5"));
+        fakeProvider.EnqueueResult(TechnicalEvaluation(null));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "technical answer",
+            new AiOperationContext("scale-invalid", ExpectedStar: false),
+            CancellationToken.None));
+
+        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
+        Assert.Equal(2, fakeProvider.CallCount);
+    }
+
+    private static AnswerEvaluation TechnicalEvaluation(string? scoreScale) => new(
+        [
+            new RubricScore("correctness", 80, "Evidence"),
+            new RubricScore("structure", 80, "Evidence"),
+            new RubricScore("completeness", 80, "Evidence"),
+            new RubricScore("clarity", 80, "Evidence")
+        ],
+        "Grounded feedback",
+        null,
+        scoreScale);
+
     private sealed class MockAiProvider : IAiProvider
     {
         public string ModelVersion => "mock-gemini";

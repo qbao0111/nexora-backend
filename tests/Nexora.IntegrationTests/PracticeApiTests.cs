@@ -236,7 +236,8 @@ public sealed class PracticeApiTests
             ],
             [],
             ["Grounded gap"],
-            ["Grounded action"]);
+            ["Grounded action"],
+            AiOperations.ScoreScale);
         aiProvider.EnqueueResponse(AiPurposes.InterviewReport, invalid);
         aiProvider.EnqueueResponse(AiPurposes.InterviewReport, invalid);
         using var factory = new NexoraApiFactory(aiProvider);
