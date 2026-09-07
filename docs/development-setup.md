@@ -50,7 +50,7 @@ dotnet user-secrets set "Ai:Gemini:ApiKey" "GEMINI_DEVELOPMENT_KEY" --project sr
 dotnet user-secrets set "Ai:Gemini:Model" "GEMINI_MODEL_ID" --project src/Nexora.Api
 ```
 
-Use only the Neon `development` branch. The guarded scripts reject non-Neon hosts for this workflow and never expose a remote reset/drop action. If the Neon branch selector says `production`, replace the secret with the connection from `development` before creating any test users. Gemini is required for the internal runtime; the API and Worker fail clearly at startup when either Gemini secret is missing. Gemini remains unapproved for production under DEC-01.
+Use only the Neon `development` branch. The guarded scripts reject non-Neon hosts for this workflow and never expose a remote reset/drop action. If the Neon branch selector says `production`, replace the secret with the connection from `development` before creating any test users. Gemini remains required for the document OCR fallback; the API and Worker fail clearly at startup when the Gemini secrets are missing. Text AI may use the default Gemini adapter or the optional local DeepSeek adapter. Neither is approved for production under DEC-01.
 
 Verify presence without sharing values:
 

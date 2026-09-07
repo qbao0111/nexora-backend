@@ -426,3 +426,13 @@ This log records completed implementation milestones and verification evidence. 
 - Made root `scoreScale` mandatory in the JSON schemas for interview answer evaluation, interview reports, scenario evaluation and standalone STAR evaluation.
 - Removed DTO defaults that could turn an omitted provider field into an implicit valid value. Semantic validators now accept only the exact ordinal value `0-100`, repair invalid/missing values once, and explicitly preserve `0-100` in normalized output.
 - Kept prompt/schema version identifiers unchanged because `scoreScale: "0-100"` was already the declared contract; this patch closes its enforcement gap without changing scoring semantics.
+
+## 2026-09-07 — Optional DeepSeek V4 Flash text provider (local evaluation branch)
+
+- Added `DeepSeekAiProvider` under `Nexora.Integrations` using the official HTTPS `api.deepseek.com/chat/completions` endpoint and the provider-neutral `IAiProvider` contract.
+- Added configuration-driven `Ai:Provider` selection (`gemini` default or `deepseek`, unknown values fail closed). `Nexora.Api` and `Nexora.Worker` use the same selector; `IDocumentOcrProvider` remains `GeminiDocumentOcrProvider` regardless of text-provider selection.
+- Added non-secret DeepSeek appsettings defaults with `MaxAttempts=1` and explicit per-purpose thinking/reasoning policy. The cost-aware baseline keeps high reasoning only for `interview.evaluate` and `star.evaluate`; no operation defaults to `max`.
+- DeepSeek requests keep trusted operation metadata/instructions/schema in the system message and untrusted candidate input only in the user message. JSON mode, exact `max_tokens`, safe error normalization, timeout/cancellation handling and metadata-only usage telemetry are covered without logging keys, prompts, candidate text, response content or `reasoning_content`.
+- Added offline fake-handler tests for endpoint/auth/request contract, all eight policies, configuration fail-closed behavior, response/error mapping, cancellation, usage parsing and provider selection. No live paid DeepSeek request was made.
+- Verification: `dotnet restore`, `dotnet build Nexora.slnx --nologo` (0 warnings, 0 errors), 178 unit tests passed, 82 integration tests passed, `dotnet ef migrations has-pending-model-changes` reported no pending changes, and `git diff --check` is clean.
+- This branch is for Development/local owner evaluation only. DEC-01 (production AI provider/model and budgets) remains deferred and is not a blocker for Phases 0–3 or local testing.

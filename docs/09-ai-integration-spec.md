@@ -37,6 +37,7 @@ public interface IStructuredAiExecutor
 {
     Task<AiExecutionResult<T>> ExecuteAsync<T>(
         AiOperationDefinition<T> operation,
+        string untrustedInput,
         AiOperationContext context,
         CancellationToken cancellationToken);
 }
@@ -49,10 +50,35 @@ public interface IStructuredAiExecutor
 
 Current internal implementation:
 
-- `GeminiAiProvider` là provider AI của application cho Development/internal testing bằng development API key/quota. Gemini SDK/HTTP types chỉ ở `Nexora.Integrations`; model identifier từ configuration; key từ secret configuration; output map sang Nexora-owned schema.
+- `GeminiAiProvider` remains the default text provider for Development/internal testing with a development API key/quota. Gemini SDK/HTTP types stay in `Nexora.Integrations`; the model identifier comes from configuration; the key comes from secret configuration; output is mapped to Nexora-owned schemas.
+- `DeepSeekAiProvider` is an optional official DeepSeek V4 Flash text adapter. Select it with `Ai:Provider=deepseek`; the default remains `gemini`. The adapter calls `https://api.deepseek.com/chat/completions` directly with the OpenAI-compatible Chat Completions contract, `thinking`, `reasoning_effort` and JSON mode. It is approved for local/development evaluation only; it is not a production provider decision.
+- Provider selection is fail-closed: only `gemini` and `deepseek` are accepted and there is no automatic fallback between providers. `Nexora.Api` and `Nexora.Worker` resolve the same selected `IAiProvider`.
 - Automated tests that need deterministic provider behavior register a test-project-only provider (`TestAiProvider`); no test double is part of the application runtime or normal development configuration.
 
-Gemini không phải production choice mặc định. DEC-01 vẫn quyết định production provider/model và budgets.
+The document extraction fallback is deliberately independent: `IDocumentOcrProvider` remains `GeminiDocumentOcrProvider` even when `Ai:Provider=deepseek`. Local development therefore keeps both Gemini (OCR) and DeepSeek (text) credentials in secret configuration.
+
+### 2.2 DeepSeek reasoning policy and request safety
+
+DeepSeek uses one provider call per `IAiProvider.GenerateStructuredAsync` invocation (`Ai:DeepSeek:MaxAttempts=1`). `IStructuredAiExecutor` owns the initial call and at most one repair call, so a repair never multiplies into nested provider retries. The operation policy is explicit and configuration-bound:
+
+| Purpose | Thinking | Effort | Development rationale |
+| --- | --- | --- | --- |
+| `resume.profile` | disabled | — | inexpensive extraction |
+| `resume.analysis` | enabled | low | useful comparison with bounded reasoning |
+| `interview.first-question` | disabled | — | deterministic generation |
+| `interview.evaluate` | enabled | high | core rubric/STAR semantic correctness |
+| `interview.followup` | disabled | — | deterministic follow-up generation |
+| `interview.report` | enabled | low | report synthesis with bounded reasoning |
+| `scenario.evaluate` | enabled | low | scenario coaching with bounded reasoning |
+| `star.evaluate` | enabled | high | standalone STAR semantic correctness |
+
+This table is the authoritative cost-aware baseline for the provider. In particular, `interview.report` and `scenario.evaluate` use `low`; no older example or test label that says otherwise should override this Section 7 policy.
+
+When thinking is disabled, `thinking.type=disabled` is sent and `reasoning_effort` is omitted. When enabled, `thinking.type=enabled` and one of `low`, `high` or manual-only `max` is sent. No operation defaults to `max`, and repair does not escalate effort. Unknown purposes or invalid policy values fail closed before an HTTP call.
+
+The trusted system message contains operation metadata, the approved instructions and the exact Nexora-owned JSON schema. The untrusted CV/JD/answer/scenario text is sent only as the user message. The adapter requires nonblank `choices[0].message.content`, deserializes only that JSON content, ignores `reasoning_content`, and never strips fences or fabricates defaults. HTTP/network/timeout failures are normalized to `AiProviderFailureKind` without copying the provider body into exceptions.
+
+For paid-provider safety, DeepSeek logs metadata-only usage telemetry when the response supplies it: purpose, provider-aware model version, thinking, reasoning effort, latency, prompt/cache hit/cache miss/completion/reasoning/total tokens and finish reason. It never logs keys, authorization headers, prompts, candidate text, response content or `reasoning_content`, and missing usage is not a request failure. Pricing conversion remains outside the provider because DeepSeek pricing can change. DEC-01 still controls production provider/model and budgets and therefore blocks production AI enablement, not local development or integration tests.
 
 The adapter and executor must never copy a provider response body, credential, prompt, or candidate answer text into an API response or log. Only safe diagnostics (`failureReason`, `stage`, `attempt`, `correlationId`) are recorded.
 
@@ -123,4 +149,4 @@ Server computes weighted overall score from validated sub-scores. Store rubric v
 
 ## 6. Cost and observability
 
-Record model, prompt/rubric/schema version, input/output token count, latency, estimated cost, job outcome and correlation ID. **DEC-01 does not block internal Gemini development testing or Phases 0–3.** It blocks real production AI traffic until Product Owner approves (a) production provider/model, (b) per-user daily/monthly budget, (c) global daily budget, (d) alert thresholds and (e) circuit-break action. Initial engineering defaults for development/staging only: alert at 70% configured daily budget, reject new AI jobs at 90%, circuit-break after 10 provider failures in 5 minutes; production values must replace them. Never run three model evaluations per answer in MVP without an explicit product experiment and budget approval.
+Record model, prompt/rubric/schema version, input/output token count, latency, estimated cost, job outcome and correlation ID. **DEC-01 does not block internal Gemini or optional DeepSeek development testing or Phases 0–3.** It blocks real production AI traffic until Product Owner approves (a) production provider/model, (b) per-user daily/monthly budget, (c) global daily budget, (d) alert thresholds and (e) circuit-break action. Initial engineering defaults for development/staging only: alert at 70% configured daily budget, reject new AI jobs at 90%, circuit-break after 10 provider failures in 5 minutes; production values must replace them. Never run three model evaluations per answer in MVP without an explicit product experiment and budget approval.

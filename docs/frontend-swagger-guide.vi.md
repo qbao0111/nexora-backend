@@ -351,5 +351,5 @@ Che token, password, connection string, upload capability và nội dung CV/answ
 - [ ] Không hard-code price, quota, userId, score; không dùng mock state làm authority.
 - [ ] Không commit secrets hoặc dữ liệu runtime.
 
-Hướng dẫn này không thay thế các production gates DEC-01–04, test PostgreSQL/concurrency, security và staging. Gemini ở đây chỉ là development adapter; không bật traffic production.
+Hướng dẫn này không thay thế các production gates DEC-01–04, test PostgreSQL/concurrency, security và staging. Gemini là text/OCR development adapter mặc định; DeepSeek chỉ là optional local text adapter; không bật traffic production.
 Tài liệu nguồn: [repo Nexora Backend](https://github.com/qbao0111/nexora-backend), `docs/03-api-data-contract.md`, `docs/frontend-integration.md`, `docs/development-setup.md`.
