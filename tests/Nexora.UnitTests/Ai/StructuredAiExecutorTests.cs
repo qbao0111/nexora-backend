@@ -165,6 +165,29 @@ public sealed class StructuredAiExecutorTests
     }
 
     [Fact]
+    public async Task ExecuteAsyncDoesNotApplyReasoningOverrideToNonInvalidResponseHint()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.Timeout,
+            "Timeout",
+            retryHint: AiProviderRetryHint.LowerReasoningEffort));
+        fakeProvider.EnqueueResult(new GeneratedQuestion("What is dependency injection?"));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewFirstQuestion,
+            "role: Backend Engineer",
+            new AiOperationContext("reasoning-hint-timeout"),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.Attempts);
+        Assert.False(result.RepairUsed);
+        Assert.Null(fakeProvider.Requests[0].ReasoningEffortOverride);
+        Assert.Null(fakeProvider.Requests[1].ReasoningEffortOverride);
+    }
+
+    [Fact]
     public async Task ExecuteAsyncRepairsInvalidScoreScaleOnSecondAttempt()
     {
         var fakeProvider = new MockAiProvider();

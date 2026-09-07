@@ -141,7 +141,6 @@ public sealed class DeepSeekAiProviderTests
         ]);
         var logger = new RecordingLogger();
         var handler = new RecordingHandler(_ => responses.Dequeue());
-        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
         var provider = CreateProvider(handler, logger: logger);
         var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
 
@@ -188,6 +187,54 @@ public sealed class DeepSeekAiProviderTests
         Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
         Assert.Equal(2, handler.Calls);
         Assert.Equal("low", RequestBody(handler, 1).RootElement.GetProperty("reasoning_effort").GetString());
+    }
+
+    [Fact]
+    public async Task LowReasoningExhaustionDoesNotEmitLowerReasoningHint()
+    {
+        var handler = new RecordingHandler(_ => ExhaustedResponse());
+        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
+        var provider = CreateProvider(handler);
+
+        var exception = await Assert.ThrowsAsync<AiProviderException>(() => provider.GenerateStructuredAsync<GeneratedQuestion>(
+            Request(AiPurposes.ResumeAnalysis, schema, maxOutputTokens: 6_000),
+            CancellationToken.None));
+
+        Assert.Equal(AiProviderFailureKind.InvalidResponse, exception.Kind);
+        Assert.Equal(AiProviderRetryHint.None, exception.RetryHint);
+        Assert.Equal(1, handler.Calls);
+        using var request = JsonDocument.Parse(handler.RequestBody!);
+        Assert.Equal("low", request.RootElement.GetProperty("reasoning_effort").GetString());
+    }
+
+    [Fact]
+    public async Task LowReasoningExhaustionRetriesAtConfiguredLowWithoutFallbackTelemetry()
+    {
+        var responses = new Queue<HttpResponseMessage>([
+            ExhaustedResponse(),
+            SuccessResponse(ValidResumeAnalysisContent())
+        ]);
+        var logger = new RecordingLogger();
+        var handler = new RecordingHandler(_ => responses.Dequeue());
+        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
+        var provider = CreateProvider(handler, logger: logger);
+        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.ResumeAnalysis,
+            "candidate input",
+            new AiOperationContext("low-retry"),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.Attempts);
+        Assert.False(result.RepairUsed);
+        Assert.Equal(2, handler.Calls);
+        using var firstRequest = RequestBody(handler, 0);
+        using var secondRequest = RequestBody(handler, 1);
+        Assert.Equal("low", firstRequest.RootElement.GetProperty("reasoning_effort").GetString());
+        Assert.Equal("low", secondRequest.RootElement.GetProperty("reasoning_effort").GetString());
+        Assert.DoesNotContain(logger.Messages, message =>
+            message.Contains("retryReason=reasoning_budget_exhausted", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -482,6 +529,11 @@ public sealed class DeepSeekAiProviderTests
         "Grounded feedback.",
         new StarEvaluation(false, null, null, null, null, null, [], [], [], AiOperations.ScoreScale),
         AiOperations.ScoreScale));
+
+    private static string ValidResumeAnalysisContent() => JsonSerializer.Serialize(new ResumeAnalysisOutput(
+        ["Strength"],
+        ["Gap"],
+        ["Recommendation"]));
 
     private static HttpResponseMessage ExhaustedResponse() => new(HttpStatusCode.OK)
     {

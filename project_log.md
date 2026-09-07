@@ -452,3 +452,10 @@ This log records completed implementation milestones and verification evidence. 
 - The one fallback retry preserves operation/input/schema/instructions/`MaxOutputTokens`, temporarily sends `reasoning_effort=low` only for an enabled policy, and does not mutate options or add provider-internal retries. Normal `interview.evaluate`/`star.evaluate` high defaults remain unchanged.
 - Added offline regressions for normal high success, the exact 6,000-token exhaustion incident, low-fallback terminal failure, semantic repair separation, generic invalid response, usable JSON with `finish_reason=length`, and disabled-reasoning fail-closed behavior. No live Gemini/DeepSeek request was made.
 - Verification: `dotnet restore`; `dotnet build Nexora.slnx --nologo` (0 warnings, 0 errors); 189 unit tests passed, 86 integration tests passed, 0 failed/skipped; `dotnet ef migrations has-pending-model-changes` reported no pending model changes; `git diff --check` is clean.
+
+## 2026-09-08 — Restrict DeepSeek reasoning fallback to high-policy exhaustion
+
+- Restricted `LowerReasoningEffort` emission to confirmed exhaustion on an effective `high` DeepSeek policy. `resume.analysis`, `interview.report` and `scenario.evaluate` keep ordinary low-to-low `InvalidResponse` retry behavior without fallback telemetry.
+- Tightened `StructuredAiExecutor` so the reasoning override requires both `AiProviderRetryHint.LowerReasoningEffort` and `AiProviderFailureKind.InvalidResponse`; timeout/rate-limit/unavailable hints cannot schedule a LOW override.
+- Added offline regressions for low-policy hint suppression, low-to-low retry, and non-`InvalidResponse` hint rejection. Defaults, token budgets, provider `MaxAttempts=1`, semantic repair, STAR behavior and configuration remain unchanged.
+- Verification: 192 unit tests passed, 86 integration tests passed, build 0 warnings/0 errors, EF reports no pending model changes, and no live paid AI request was made.

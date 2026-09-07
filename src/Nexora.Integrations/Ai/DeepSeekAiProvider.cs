@@ -310,7 +310,9 @@ public sealed partial class DeepSeekAiProvider(
         DeepSeekUsage? usage,
         string? finishReason)
     {
-        if (IsReasoningBudgetExhausted(usage, finishReason, request.MaxOutputTokens))
+        if (policy.ThinkingEnabled &&
+            string.Equals(policy.ReasoningEffort, "high", StringComparison.OrdinalIgnoreCase) &&
+            IsReasoningBudgetExhausted(usage, finishReason, request.MaxOutputTokens))
         {
             LogReasoningBudgetExhausted(
                 logger,

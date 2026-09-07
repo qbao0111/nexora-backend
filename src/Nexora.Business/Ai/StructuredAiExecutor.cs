@@ -105,10 +105,10 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                 lastProviderException = ex;
                 LogProviderRequestFailed(logger, operation.Purpose, ex.Kind.ToString(), attempt, correlationId);
 
-                if (ex.RetryHint == AiProviderRetryHint.LowerReasoningEffort &&
+                if (ex.Kind == AiProviderFailureKind.InvalidResponse &&
+                    ex.RetryHint == AiProviderRetryHint.LowerReasoningEffort &&
                     lastValidation is null &&
-                    attempt < MaxAttemptsPerPurpose &&
-                    IsRetryable(ex.Kind))
+                    attempt < MaxAttemptsPerPurpose)
                 {
                     reasoningOverride = AiReasoningEffortOverride.Low;
                 }
