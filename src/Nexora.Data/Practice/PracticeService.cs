@@ -714,8 +714,8 @@ public sealed partial class PracticeService(
         if (string.IsNullOrWhiteSpace(value)) return null;
         try
         {
-            var profile = JsonSerializer.Deserialize<ResumeProfile>(value, JsonOptions);
-            return profile is null ? null : IsResumeProfileValid(profile) ? profile : null;
+            var validation = ResumeProfileValidator.NormalizeAndValidate(JsonSerializer.Deserialize<ResumeProfile>(value, JsonOptions));
+            return validation.IsValid ? validation.NormalizedValue : null;
         }
         catch (JsonException)
         {
@@ -725,19 +725,7 @@ public sealed partial class PracticeService(
 
     private static void ValidateResumeProfile(ResumeProfile profile)
     {
-        if (!IsResumeProfileValid(profile)) throw InvalidAiOutput();
-    }
-
-    private static bool IsResumeProfileValid(ResumeProfile profile)
-    {
-        return !string.IsNullOrWhiteSpace(profile.Summary) &&
-            profile.Summary.Trim().Length <= 3_000 &&
-            (profile.Skills?.Count ?? 0) <= 100 &&
-            (profile.Experiences?.Count ?? 0) <= 30 &&
-            (profile.Education?.Count ?? 0) <= 20 &&
-            (profile.Projects?.Count ?? 0) <= 30 &&
-            (profile.Certifications?.Count ?? 0) <= 50 &&
-            (profile.Languages?.Count ?? 0) <= 30;
+        if (!ResumeProfileValidator.NormalizeAndValidate(profile).IsValid) throw InvalidAiOutput();
     }
 
     private async Task AnalyzeResumeAsync(OutboxEvent job, CancellationToken cancellationToken)

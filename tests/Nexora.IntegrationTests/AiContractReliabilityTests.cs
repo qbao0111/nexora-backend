@@ -143,6 +143,57 @@ public sealed class AiContractReliabilityTests
     }
 
     [Fact]
+    public async Task OverlongFollowupRepairsOnceThenUsesFallbackWithoutDiscardingAnswer()
+    {
+        var aiProvider = new TestAiProvider();
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "Grounded evidence."),
+                new RubricScore("structure", 80, "Grounded evidence."),
+                new RubricScore("completeness", 80, "Grounded evidence."),
+                new RubricScore("clarity", 80, "Grounded evidence.")
+            ],
+            "Grounded feedback.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], [])));
+        var overlong = new GeneratedQuestion(new string('x', 2_001));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFollowup, overlong);
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFollowup, overlong);
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 5);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "technical", "overlong-followup");
+        await ProcessJobsAsync(factory);
+        var interview = await GetInterviewAsync(client, interviewId);
+        var questionId = interview.GetProperty("questions")[0].GetProperty("id").GetGuid();
+
+        using var answerRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/answers")
+        {
+            Content = JsonContent.Create(new
+            {
+                questionId,
+                content = "Dependency injection supplies dependencies from outside the class.",
+                durationSeconds = 45
+            })
+        };
+        answerRequest.Headers.Add("Idempotency-Key", "overlong-followup-answer");
+        using var answerResponse = await client.SendAsync(answerRequest);
+
+        Assert.Equal(HttpStatusCode.OK, answerResponse.StatusCode);
+        var data = await DataAsync(answerResponse);
+        var fallback = data.GetProperty("nextQuestion").GetProperty("content").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(fallback));
+        Assert.True(fallback!.Length <= 2_000);
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewFollowup));
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
+        Assert.Equal(2, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+    }
+
+    [Fact]
     public async Task SemanticRepairOnAttempt1RecoversOnAttempt2ExactlyTwoCalls()
     {
         var aiProvider = new TestAiProvider();

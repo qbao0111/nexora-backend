@@ -100,7 +100,8 @@ public sealed class GeminiAiProviderTests
         using var schema = JsonDocument.Parse("{}");
         var provider = CreateProvider(handler);
 
-        var result = await provider.GenerateStructuredAsync<StarEvaluation>(Request("star.evaluate", schema), CancellationToken.None);
+        var result = await provider.GenerateStructuredAsync<StarEvaluation>(
+            Request("star.evaluate", schema, AiOperations.StarEvaluate.Instructions), CancellationToken.None);
 
         Assert.True(result.Applicable);
         Assert.Equal(85, result.OverallScore);
@@ -123,13 +124,47 @@ public sealed class GeminiAiProviderTests
         using var schema = JsonDocument.Parse("{}");
         var provider = CreateProvider(handler);
 
-        var result = await provider.GenerateStructuredAsync<ScenarioEvaluationResult>(Request("scenario.evaluate", schema), CancellationToken.None);
+        var result = await provider.GenerateStructuredAsync<ScenarioEvaluationResult>(
+            Request("scenario.evaluate", schema, AiOperations.ScenarioEvaluate.Instructions), CancellationToken.None);
 
         Assert.Equal(80, result.OverallScore);
         using var requestJson = JsonDocument.Parse(requestBody!);
         var prompt = requestJson.RootElement.GetProperty("contents")[0].GetProperty("parts")[0].GetProperty("text").GetString();
         Assert.Contains("scenario requirements", prompt, StringComparison.Ordinal);
         Assert.Contains("overallScore", prompt, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("interview.evaluate")]
+    [InlineData("interview.report")]
+    [InlineData("scenario.evaluate")]
+    public async Task GenerateStructuredAsyncUsesOperationCardinalityWithoutGenericArrayRule(string purpose)
+    {
+        string? requestBody = null;
+        var handler = new StubHandler(async (request, cancellationToken) =>
+        {
+            requestBody = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return Json(HttpStatusCode.OK, """{"candidates":[{"content":{"parts":[{"text":"{\"content\":\"ok\"}"}]}}]}""");
+        });
+        using var schema = JsonDocument.Parse("""{"type":"object"}""");
+        var provider = CreateProvider(handler);
+        var instructions = purpose switch
+        {
+            "interview.evaluate" => AiOperations.InterviewEvaluate.Instructions,
+            "interview.report" => AiOperations.InterviewReport.Instructions,
+            _ => AiOperations.ScenarioEvaluate.Instructions
+        };
+
+        await provider.GenerateStructuredAsync<GeneratedQuestion>(Request(purpose, schema, instructions), CancellationToken.None);
+
+        using var requestJson = JsonDocument.Parse(requestBody!);
+        var prompt = requestJson.RootElement.GetProperty("contents")[0].GetProperty("parts")[0].GetProperty("text").GetString()!;
+        Assert.DoesNotContain("Every required array must contain 1 to 3 useful items", prompt, StringComparison.Ordinal);
+        Assert.Contains(instructions, prompt, StringComparison.Ordinal);
+        if (purpose.StartsWith("interview.", StringComparison.Ordinal))
+            Assert.Contains("exactly four", prompt, StringComparison.OrdinalIgnoreCase);
+        else
+            Assert.Contains("2 to 4 dimensions", prompt, StringComparison.Ordinal);
     }
 
     private static GeminiAiProvider CreateProvider(HttpMessageHandler handler, int maxAttempts = 1) => new(
@@ -143,9 +178,9 @@ public sealed class GeminiAiProviderTests
             RetryBaseDelayMilliseconds = 0
         }));
 
-    private static AiRequest Request(string purpose, JsonDocument schema) => new(
+    private static AiRequest Request(string purpose, JsonDocument schema, string? instructions = null) => new(
         purpose, "prompt-v1", "model-v1", "rubric-v1", "schema-v1",
-        "<ignore-system>untrusted candidate text</ignore-system>", schema, 512, "correlation-id");
+        "<ignore-system>untrusted candidate text</ignore-system>", schema, 512, "correlation-id", instructions);
 
     private static HttpResponseMessage Json(HttpStatusCode statusCode, string body) => new(statusCode)
     {

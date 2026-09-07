@@ -126,48 +126,12 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
         <untrusted-input>
         {request.UntrustedInput}
         </untrusted-input>
-        {request.Instructions ?? PurposeInstructions(request.Purpose)}
-        Return only JSON matching the supplied response schema. {ArrayInstruction(request.Purpose)}
-        Keep evidence and list items concise. Return at most three items in strengths, gaps, recommendations, and actionPlan arrays.
+        {request.Instructions ?? "Follow the Nexora-owned response schema."}
+        Return only JSON matching the supplied response schema.
+        Keep evidence and list items concise.
         Do not invent candidate achievements. Evidence must be grounded in the supplied input; describe missing evidence as a suggestion.
         Language requirement: Write all feedback, evidence quotations, questions, strengths, gaps, recommendations, and coaching tips in the exact same language as the candidate input and question (default to Vietnamese if input is Vietnamese).
         """;
-
-    private static string ArrayInstruction(string purpose) => purpose switch
-    {
-        "resume.profile" => "Keep profile arrays empty when the source contains no corresponding information.",
-        "star.evaluate" => "missingElements may be empty if all components are adequately covered; strengths and coachingTips must each contain 1 to 3 items.",
-        _ => "Every required array must contain 1 to 3 useful items."
-    };
-
-    private static string PurposeInstructions(string purpose) => purpose switch
-    {
-        "resume.profile" =>
-            "Extract a faithful, structured resume profile strictly from the provided resume text. Never infer or fabricate details. Provide a non-empty summary of the candidate's career and domain, skills, experiences (with company, role, start, end dates, and bullet highlights), education (institution, degree, start, end dates, details), projects (name, role, technologies, highlights), certifications, and languages. For any missing section, return an empty array.",
-        "resume.analysis" =>
-            "Analyze the candidate's profile against the target job description. Return strengths (1-3 grounded items directly matching job requirements), gaps (1-3 specific missing qualifications or skills), and recommendations (1-3 actionable steps to increase candidate readiness). Do not leave any array empty.",
-        "interview.first-question" =>
-            "Generate one concise, realistic interview question appropriate for the supplied role, seniority, and interview type. If interview type is behavioral, craft a behavioral question inviting a real-world story (e.g. handling technical failure, resolving conflict, managing tight deadlines, or leading through ambiguity). Do not mention or explain the STAR acronym.",
-        "interview.followup" =>
-            "Generate one concise, natural follow-up interview question based on the candidate's previous answer and context. If STAR missing elements or coaching tips are provided, probe for the missing details (such as specific actions taken, technical decisions, or measurable impact) without mechanically using the word 'STAR'.",
-        "interview.evaluate" =>
-            "Return exactly four general scores with criterion values correctness, structure, completeness, and clarity (integer scores 0-100 with non-empty evidence quoted from the answer). Also return star.applicable. STAR applies when the question asks for behavioral or situational evidence. When applicable=true, you MUST provide full objects for situation, task, action, and result with integer scores 0-100, detected boolean, non-empty feedback, and evidence quote (or empty string if not detected). Also return missingElements (components scored < 60), strengths (1-3 items), and coachingTips (1-3 items). When applicable=false, set star.applicable=false, overallScore=null, and omit component details.",
-        "interview.report" =>
-            "Synthesize the interview transcript into an authoritative final coaching report. Return exactly four scores with criterion values correctness, structure, completeness, and clarity (integer scores 0-100 with non-empty evidence citing the transcript). Return 1 to 3 grounded strengths, 1 to 3 clear gaps, and 1 to 3 concrete actionPlan items. Do not leave any array empty.",
-        "scenario.evaluate" =>
-            "Evaluate the candidate's scenario response against the scenario requirements, difficulty, and target competency. Return overallScore (integer 0-100), dimensions array (3 to 4 dimensions like problem_analysis, technical_solution, risk_mitigation, communication; each with criterion, score 0-100, non-empty evidence quote from answer, and actionable feedback), strengths (1-3 items), gaps (1-3 items), recommendedApproach (1-3 actionable steps), and overall feedback summary.",
-        "star.evaluate" =>
-            "Evaluate the candidate's answer using the STAR methodology (Situation, Task, Action, Result). Set applicable=true. Thoroughly assess all four components:\n" +
-            "- situation: Context, background problem, system failure, or operational challenge.\n" +
-            "- task: Role, responsibility, target goal, or deadline.\n" +
-            "- action: Specific actions taken by the candidate (e.g., tools used, log analysis, queries run, hotfixes, coordination, decision-making). Do not overlook actions described in past tense or technical terms.\n" +
-            "- result: Measurable outcome, impact, resolution, time saved, data preserved, or lessons learned (e.g., recovery within 15 minutes, zero data loss).\n" +
-            "For each component, provide: detected (true if present in the answer, false only if completely missing), score (0-100 integer; 60-80 for standard evidence, 80-100 for clear, specific, quantifiable details; 0-40 if weak or absent), evidence (exact quotation from the answer, or empty string if not detected), and feedback (constructive critique in the answer's language).\n" +
-            "overallScore must be an integer 0-100 reflecting the overall quality.\n" +
-            "missingElements must list component names ('situation', 'task', 'action', 'result') that are absent or scored below 60.\n" +
-            "strengths must contain 1-3 specific strong points in the story. coachingTips must contain 1-3 actionable improvement tips.",
-        _ => "Follow the Nexora-owned response schema."
-    };
 
     private static Task DelayBeforeRetryAsync(GeminiOptions configuration, int attempt, CancellationToken cancellationToken)
     {

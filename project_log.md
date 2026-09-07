@@ -410,3 +410,13 @@ This log records completed implementation milestones and verification evidence. 
     - Added Test M verifying context builder includes question sequence, follow-up flag, and target missing elements.
     - Added regression fixture verifying follow-up aware evaluation preserves all detected STAR components.
     - Updated `TestAiProvider` to adhere to zero-score for undetected components invariant.
+
+## 2026-09-07 — AI validation integrity follow-up
+
+- Removed candidate-specific fabricated fallbacks from resume analysis, interview reports, scenario evaluation and standalone STAR validation. Required semantic fields now use the existing single repair attempt and fail safely if the repaired response remains invalid.
+- Preserved safe STAR structural normalization for absent components and blank component feedback; no candidate evidence or assessment is invented.
+- Rejected overlong first/follow-up questions through semantic repair instead of truncating provider output. Follow-up terminal failure still uses the existing deterministic Nexora-owned question so an already evaluated answer is not discarded.
+- Removed provider-level generic array/cardinality instructions; each `AiOperationCatalog` operation remains authoritative for its own contract.
+- Unified `ResumeProfile` normalization and usefulness validation across structured generation, cached profiles and Gemini document fallback. Summary is optional when another useful profile field exists; a completely empty profile remains invalid.
+- Prompt/schema/model version identifiers remain unchanged because this patch restores the already documented operation contracts and removes a conflicting provider overlay; it does not introduce a new persisted result shape or rubric meaning.
+- Added focused unit and integration regressions for semantic repair exhaustion, no fabricated persistence, question length handling, operation-owned prompt rules and canonical profile validity. No live Gemini call is required.

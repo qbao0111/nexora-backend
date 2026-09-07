@@ -76,6 +76,16 @@ StartInterview retries must not duplicate session, question, usage event or job 
   - Exact four rubric criteria: `correctness`, `structure`, `completeness`, `clarity` (case-insensitive matching from provider, normalized lowercase and trimmed).
   - Sub-scores bounded strictly to 0–100 with non-blank grounded evidence.
   - Overall score computed server-side via canonical weights (Relevance/Correctness 40%, Structure 25%, Completeness 20%, Clarity 15%).
+- **Validation integrity and operation ownership**:
+  - Deterministic normalization may repair representation only, such as trimming text or normalizing an absent STAR component to `detected = false`, `score = 0`, empty evidence and neutral feedback.
+  - The server must never invent candidate-specific strengths, gaps, recommendations, report findings, scenario dimensions, evidence or coaching content to make an invalid AI response pass.
+  - Missing required semantic content is repairable once through the structured executor; a second invalid response becomes the normalized `AI_OUTPUT_INVALID` failure for that workflow.
+  - Each operation owns its required arrays and cardinality. Provider adapters enforce transport/schema mechanics and must not add generic array-count instructions that conflict with an operation contract.
+  - Generated first and follow-up questions longer than 2,000 characters are invalid and enter repair handling; provider output is not silently truncated into a valid question.
+- **Canonical ResumeProfile validation**:
+  - `ResumeProfile` normalization and semantic validity are shared by `resume.profile`, cached-profile reads and Gemini document fallback.
+  - `summary` is optional. A profile is useful when at least one normalized summary, skill, experience, education, project, certification or language remains within the configured bounds.
+  - A fully empty profile is repairable during structured generation and invalid when returned from the one-call document fallback; no placeholder profile fields are synthesized.
 - **Server-Authoritative STAR Normalization & Semantic Contract**:
   - Non-behavioral questions: `star.applicable` is server-normalized to `false` without failing evaluation; STAR component details are suppressed.
   - Behavioral questions: If model omits STAR or returns `applicable = false`, the executor marks the issue repairable and attempts repair once.
