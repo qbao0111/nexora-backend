@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Nexora.Business.Ai;
 using Nexora.Business.Billing;
 using Nexora.Business.Practice;
 using Nexora.Data.Billing;
@@ -202,6 +203,46 @@ public sealed class ProductPlatformApiTests
         Assert.Equal(0, ef.Reserved);
         var attempt = await db.ScenarioAttempts.SingleAsync(item => item.Id == attemptId);
         Assert.Equal(PracticeFeatureValues.Failed, attempt.Status);
+    }
+
+    [Fact]
+    public async Task ScenarioSemanticInvalidTwiceVoidsQuotaWithoutFabricatedEvaluation()
+    {
+        var aiProvider = new TestAiProvider();
+        var invalid = new ScenarioEvaluationResult(150, [], [], [], [], "", AiOperations.ScoreScale);
+        aiProvider.EnqueueResponse(AiPurposes.ScenarioEvaluate, invalid);
+        aiProvider.EnqueueResponse(AiPurposes.ScenarioEvaluate, invalid);
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var scenario = await SeedPublishedScenarioAsync(factory);
+        await SeedFeatureEntitlementAsync(factory, account.UserId, FeatureValues.Scenario, 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var attemptId = await CreateDraftAttemptAsync(client, scenario.Id);
+        using (var submit = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/scenario-attempts/{attemptId}/submit")
+        {
+            Content = JsonContent.Create(new { answer = "A grounded scenario answer" })
+        })
+        {
+            submit.Headers.Add("Idempotency-Key", "scenario-invalid-twice");
+            using var response = await client.SendAsync(submit);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+
+        await ProcessJobsAsync(factory);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var attempt = await db.ScenarioAttempts.SingleAsync(item => item.Id == attemptId);
+        var feature = await db.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(
+            item => item.Entitlement.UserId == account.UserId && item.FeatureCode == FeatureValues.Scenario);
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.ScenarioEvaluate));
+        Assert.Equal(PracticeFeatureValues.Failed, attempt.Status);
+        Assert.Null(attempt.EvaluationJson);
+        Assert.Equal(0, feature.Reserved);
+        Assert.Equal(0, feature.Consumed);
     }
 
     [Fact]
@@ -454,6 +495,78 @@ public sealed class ProductPlatformApiTests
         Assert.Equal(1, efAfter.Consumed);
         var analysis = await db3.ResumeAnalyses.SingleAsync(item => item.UserId == account.UserId);
         Assert.Equal(PracticeValues.Completed, analysis.Status);
+    }
+
+    [Fact]
+    public async Task CvAnalysisSemanticInvalidTwiceFailsAndVoidsQuotaWithoutFabricatedResult()
+    {
+        var aiProvider = new TestAiProvider();
+        var invalid = new ResumeAnalysisOutput([], ["Grounded gap"], ["Grounded recommendation"]);
+        aiProvider.EnqueueResponse(AiPurposes.ResumeAnalysis, invalid);
+        aiProvider.EnqueueResponse(AiPurposes.ResumeAnalysis, invalid);
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedFeatureEntitlementAsync(factory, account.UserId, FeatureValues.CvAnalysis, 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        Guid resumeId;
+        Guid jobDescriptionId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var now = DateTimeOffset.UtcNow;
+            var storedFile = new Nexora.Data.Practice.StoredFile
+            {
+                Id = Guid.NewGuid(), UserId = account.UserId, StorageKey = "storage/semantic-invalid.pdf", FileName = "cv.pdf",
+                ContentType = "application/pdf", Size = 1024, Checksum = "semantic-invalid", CreatedAt = now
+            };
+            var resume = new Nexora.Data.Practice.ResumeRecord
+            {
+                Id = Guid.NewGuid(), UserId = account.UserId, StoredFileId = storedFile.Id, StoredFile = storedFile,
+                Status = PracticeValues.Ready, ExtractedText = "C# and PostgreSQL skills.",
+                StructuredProfile = "{\"summary\":null,\"skills\":[\"C#\"],\"experiences\":[],\"education\":[],\"projects\":[],\"certifications\":[],\"languages\":[]}",
+                ProfileModelVersion = aiProvider.ModelVersion,
+                ProfilePromptVersion = "resume-profile-v1",
+                ProfileSchemaVersion = "resume-profile-v1",
+                Version = 1, CreatedAt = now, UpdatedAt = now
+            };
+            var jobDescription = new Nexora.Data.Practice.JobDescription
+            {
+                Id = Guid.NewGuid(), UserId = account.UserId, Title = "Backend Engineer", Content = "C# and PostgreSQL",
+                Version = 1, CreatedAt = now, UpdatedAt = now
+            };
+            db.AddRange(storedFile, resume, jobDescription);
+            await db.SaveChangesAsync();
+            resumeId = resume.Id;
+            jobDescriptionId = jobDescription.Id;
+        }
+
+        using (var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new { resumeId, jobDescriptionId })
+        })
+        {
+            request.Headers.Add("Idempotency-Key", "cv-analysis-semantic-invalid");
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        }
+
+        await ProcessJobsAsync(factory);
+
+        await using var finalScope = factory.Services.CreateAsyncScope();
+        var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var analysis = await finalDb.ResumeAnalyses.SingleAsync(item => item.UserId == account.UserId);
+        var feature = await finalDb.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(
+            item => item.Entitlement.UserId == account.UserId
+                && item.Entitlement.PlanCodeSnapshot != "free"
+                && item.FeatureCode == FeatureValues.CvAnalysis);
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.ResumeAnalysis));
+        Assert.Equal(PracticeValues.Failed, analysis.Status);
+        Assert.Null(analysis.Result);
+        Assert.Equal(0, feature.Reserved);
+        Assert.Equal(0, feature.Consumed);
     }
 
     [Fact]

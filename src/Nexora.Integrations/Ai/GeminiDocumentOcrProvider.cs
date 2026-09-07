@@ -25,7 +25,7 @@ public sealed class GeminiDocumentOcrProvider(HttpClient httpClient, IOptions<Ge
             "profile":{
               "type":"object",
               "properties":{
-                "summary":{"type":"string"},
+                "summary":{"type":"string","nullable":true},
                 "skills":{"type":"array","items":{"type":"string"}},
                 "experiences":{"type":"array","items":{"type":"object","properties":{
                   "company":{"type":"string"},"role":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},
@@ -41,8 +41,7 @@ public sealed class GeminiDocumentOcrProvider(HttpClient httpClient, IOptions<Ge
                 }}},
                 "certifications":{"type":"array","items":{"type":"string"}},
                 "languages":{"type":"array","items":{"type":"string"}}
-              },
-              "required":["summary"]
+              }
             }
           },
           "required":["extractedText","pageCount","warnings","profile"]
@@ -172,50 +171,15 @@ public sealed class GeminiDocumentOcrProvider(HttpClient httpClient, IOptions<Ge
             ?? throw new JsonException("Document extraction response was empty.");
         if (string.IsNullOrWhiteSpace(result.ExtractedText) || result.Profile is null)
             throw new JsonException("Document extraction response did not contain usable text and profile.");
+        var profileValidation = ResumeProfileValidator.NormalizeAndValidate(result.Profile);
+        if (!profileValidation.IsValid)
+            throw new JsonException("Document extraction response did not contain a usable profile.");
         return new DocumentOcrResult(
             result.ExtractedText,
-            SafeNormalizeProfile(result.Profile),
+            profileValidation.NormalizedValue!,
             Math.Max(0, result.PageCount),
             result.Warnings ?? [],
             "ocr-v2");
-    }
-
-    private static ResumeProfile SafeNormalizeProfile(ResumeProfile raw)
-    {
-        var experiences = raw.Experiences?
-            .Select(e => new ResumeExperience(
-                e.Company?.Trim(),
-                e.Role?.Trim(),
-                e.Start?.Trim(),
-                e.End?.Trim(),
-                e.Highlights?.Where(h => !string.IsNullOrWhiteSpace(h)).Select(h => h.Trim()).ToArray() ?? []))
-            .ToArray() ?? [];
-
-        var education = raw.Education?
-            .Select(e => new ResumeEducation(
-                e.Institution?.Trim(),
-                e.Degree?.Trim(),
-                e.Start?.Trim(),
-                e.End?.Trim(),
-                e.Details?.Where(d => !string.IsNullOrWhiteSpace(d)).Select(d => d.Trim()).ToArray() ?? []))
-            .ToArray() ?? [];
-
-        var projects = raw.Projects?
-            .Select(p => new ResumeProject(
-                p.Name?.Trim(),
-                p.Role?.Trim(),
-                p.Technologies?.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim()).ToArray() ?? [],
-                p.Highlights?.Where(h => !string.IsNullOrWhiteSpace(h)).Select(h => h.Trim()).ToArray() ?? []))
-            .ToArray() ?? [];
-
-        return new ResumeProfile(
-            raw.Summary?.Trim() ?? string.Empty,
-            raw.Skills?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToArray() ?? [],
-            experiences,
-            education,
-            projects,
-            raw.Certifications?.Where(c => !string.IsNullOrWhiteSpace(c)).Select(c => c.Trim()).ToArray() ?? [],
-            raw.Languages?.Where(l => !string.IsNullOrWhiteSpace(l)).Select(l => l.Trim()).ToArray() ?? []);
     }
 
     private static AiProviderFailureKind Classify(HttpStatusCode statusCode) => statusCode switch

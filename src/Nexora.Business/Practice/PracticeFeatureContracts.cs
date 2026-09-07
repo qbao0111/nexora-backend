@@ -10,7 +10,7 @@ public sealed record ScenarioEvaluationResult(
     IReadOnlyCollection<string> Gaps,
     IReadOnlyCollection<string> RecommendedApproach,
     string Feedback,
-    string? ScoreScale = "0-100");
+    string? ScoreScale = null);
 
 public static class PracticeFeatureValues
 {

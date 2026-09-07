@@ -25,7 +25,8 @@ public sealed class AiOperationCatalogTests
                 Result: new StarComponentEvaluation(80, true, "Res evidence", "Res fb"),
                 MissingElements: [],
                 Strengths: ["Good"],
-                CoachingTips: ["Keep going"]));
+                CoachingTips: ["Keep going"]),
+            ScoreScale: AiOperations.ScoreScale);
 
         // Non-behavioral question
         var context = new AiOperationContext("test-corr", ExpectedStar: false);
@@ -55,7 +56,8 @@ public sealed class AiOperationCatalogTests
                 new RubricScore("clarity", 80, "Evidence D")
             ],
             "Overall good answer",
-            Star: null);
+            Star: null,
+            ScoreScale: AiOperations.ScoreScale);
 
         var context = new AiOperationContext("test-corr", ExpectedStar: true);
 
@@ -86,7 +88,8 @@ public sealed class AiOperationCatalogTests
                 Result: null,
                 MissingElements: [],
                 Strengths: [],
-                CoachingTips: []));
+                CoachingTips: []),
+            ScoreScale: AiOperations.ScoreScale);
 
         var context = new AiOperationContext("test-corr", ExpectedStar: true);
 
@@ -117,7 +120,8 @@ public sealed class AiOperationCatalogTests
                 Result: new StarComponentEvaluation(50, true, "Res evidence", "Res fb"),
                 MissingElements: [],
                 Strengths: ["Good"],
-                CoachingTips: ["Keep going"]));
+                CoachingTips: ["Keep going"]),
+            ScoreScale: AiOperations.ScoreScale);
 
         var context = new AiOperationContext("test-corr", ExpectedStar: true);
 
@@ -145,7 +149,8 @@ public sealed class AiOperationCatalogTests
             Result: null,
             MissingElements: [],
             Strengths: [],
-            CoachingTips: []);
+            CoachingTips: [],
+            ScoreScale: AiOperations.ScoreScale);
 
         var context = new AiOperationContext("test-corr", ExpectedStar: true);
 
@@ -168,7 +173,8 @@ public sealed class AiOperationCatalogTests
             Result: new StarComponentEvaluation(40, true, "Res evidence", "Res fb"),
             MissingElements: [],
             Strengths: ["Good"],
-            CoachingTips: ["Improve result"]);
+            CoachingTips: ["Improve result"],
+            ScoreScale: AiOperations.ScoreScale);
 
         var context = new AiOperationContext("test-corr", ExpectedStar: true);
 

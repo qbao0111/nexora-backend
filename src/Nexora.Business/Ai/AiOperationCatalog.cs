@@ -166,8 +166,90 @@ public static class StarComponentValidator
     }
 }
 
+public static class ResumeProfileValidator
+{
+    public static AiValidationResult<ResumeProfile> NormalizeAndValidate(ResumeProfile? raw)
+    {
+        if (raw is null)
+            return AiValidationResult<ResumeProfile>.Failure("resume.profile_invalid", "semantic", repairable: true);
+
+        var experiences = raw.Experiences?
+            .Select(item => new ResumeExperience(
+                item.Company?.Trim(),
+                item.Role?.Trim(),
+                item.Start?.Trim(),
+                item.End?.Trim(),
+                Clean(item.Highlights)))
+            .Where(HasContent)
+            .ToArray() ?? [];
+        var education = raw.Education?
+            .Select(item => new ResumeEducation(
+                item.Institution?.Trim(),
+                item.Degree?.Trim(),
+                item.Start?.Trim(),
+                item.End?.Trim(),
+                Clean(item.Details)))
+            .Where(HasContent)
+            .ToArray() ?? [];
+        var projects = raw.Projects?
+            .Select(item => new ResumeProject(
+                item.Name?.Trim(),
+                item.Role?.Trim(),
+                Clean(item.Technologies),
+                Clean(item.Highlights)))
+            .Where(HasContent)
+            .ToArray() ?? [];
+        var normalized = new ResumeProfile(
+            raw.Summary?.Trim(),
+            Clean(raw.Skills),
+            experiences,
+            education,
+            projects,
+            Clean(raw.Certifications),
+            Clean(raw.Languages));
+
+        var hasContent = !string.IsNullOrWhiteSpace(normalized.Summary) ||
+            normalized.Skills.Count > 0 ||
+            normalized.Experiences.Count > 0 ||
+            normalized.Education.Count > 0 ||
+            normalized.Projects.Count > 0 ||
+            normalized.Certifications.Count > 0 ||
+            normalized.Languages.Count > 0;
+        if (!hasContent)
+            return AiValidationResult<ResumeProfile>.Failure("resume.profile_invalid", "semantic", repairable: true);
+
+        if ((normalized.Summary?.Length ?? 0) > 3_000 ||
+            normalized.Skills.Count > 100 ||
+            normalized.Experiences.Count > 30 ||
+            normalized.Education.Count > 20 ||
+            normalized.Projects.Count > 30 ||
+            normalized.Certifications.Count > 50 ||
+            normalized.Languages.Count > 30)
+            return AiValidationResult<ResumeProfile>.Failure("resume.profile_invalid", "semantic", repairable: false);
+
+        return AiValidationResult<ResumeProfile>.Success(normalized);
+    }
+
+    private static string[] Clean(IReadOnlyCollection<string>? values) =>
+        values?.Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Trim()).ToArray() ?? [];
+
+    private static bool HasContent(ResumeExperience item) =>
+        !string.IsNullOrWhiteSpace(item.Company) || !string.IsNullOrWhiteSpace(item.Role) ||
+        !string.IsNullOrWhiteSpace(item.Start) || !string.IsNullOrWhiteSpace(item.End) || item.Highlights.Count > 0;
+
+    private static bool HasContent(ResumeEducation item) =>
+        !string.IsNullOrWhiteSpace(item.Institution) || !string.IsNullOrWhiteSpace(item.Degree) ||
+        !string.IsNullOrWhiteSpace(item.Start) || !string.IsNullOrWhiteSpace(item.End) || item.Details.Count > 0;
+
+    private static bool HasContent(ResumeProject item) =>
+        !string.IsNullOrWhiteSpace(item.Name) || !string.IsNullOrWhiteSpace(item.Role) ||
+        item.Technologies.Count > 0 || item.Highlights.Count > 0;
+}
+
 public static class AiOperations
 {
+    public const string ScoreScale = "0-100";
+
     public static readonly ResumeProfileOperation ResumeProfile = new();
     public static readonly ResumeAnalysisOperation ResumeAnalysis = new();
     public static readonly InterviewFirstQuestionOperation InterviewFirstQuestion = new();
@@ -240,41 +322,7 @@ public sealed class ResumeProfileOperation : AiOperationDefinition<ResumeProfile
         "Extract a faithful, structured resume profile strictly from the provided resume text. Never infer or fabricate details. For any missing section, return an empty array. Do not fail if optional sections are absent. Write in the language of the resume.";
 
     public override AiValidationResult<ResumeProfile> NormalizeAndValidate(ResumeProfile? raw, AiOperationContext context)
-    {
-        if (raw is null)
-            return AiValidationResult<ResumeProfile>.Failure("resume.profile_invalid", "semantic", repairable: true);
-
-        var normalized = new ResumeProfile(
-            raw.Summary?.Trim(),
-            raw.Skills?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToArray() ?? [],
-            raw.Experiences ?? [],
-            raw.Education ?? [],
-            raw.Projects ?? [],
-            raw.Certifications?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToArray() ?? [],
-            raw.Languages?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToArray() ?? []);
-
-        var hasContent = !string.IsNullOrWhiteSpace(normalized.Summary) ||
-            normalized.Skills.Count > 0 ||
-            normalized.Experiences.Count > 0 ||
-            normalized.Education.Count > 0 ||
-            normalized.Projects.Count > 0 ||
-            normalized.Certifications.Count > 0 ||
-            normalized.Languages.Count > 0;
-
-        if (!hasContent)
-            return AiValidationResult<ResumeProfile>.Failure("resume.profile_invalid", "semantic", repairable: true);
-
-        if ((normalized.Summary?.Length ?? 0) > 3_000 ||
-            normalized.Skills.Count > 100 ||
-            normalized.Experiences.Count > 30 ||
-            normalized.Education.Count > 20 ||
-            normalized.Projects.Count > 30 ||
-            normalized.Certifications.Count > 50 ||
-            normalized.Languages.Count > 30)
-            return AiValidationResult<ResumeProfile>.Failure("resume.profile_invalid", "semantic", repairable: false);
-
-        return AiValidationResult<ResumeProfile>.Success(normalized);
-    }
+        => ResumeProfileValidator.NormalizeAndValidate(raw);
 }
 
 public sealed class ResumeAnalysisOperation : AiOperationDefinition<ResumeAnalysisOutput>
@@ -310,11 +358,11 @@ public sealed class ResumeAnalysisOperation : AiOperationDefinition<ResumeAnalys
         var recommendations = raw.Recommendations?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [];
 
         if (strengths.Length == 0)
-            strengths = ["Hồ sơ thể hiện nền tảng và kỹ năng phù hợp với yêu cầu vị trí."];
+            return AiValidationResult<ResumeAnalysisOutput>.Failure("resume.strengths_blank", "semantic", repairable: true);
         if (gaps.Length == 0)
-            gaps = ["Cần bổ sung thêm các số liệu định lượng về kết quả dự án đã hoàn thành."];
+            return AiValidationResult<ResumeAnalysisOutput>.Failure("resume.gaps_blank", "semantic", repairable: true);
         if (recommendations.Length == 0)
-            recommendations = ["Chuẩn bị thêm các tình huống thực tế theo mô hình STAR khi phỏng vấn."];
+            return AiValidationResult<ResumeAnalysisOutput>.Failure("resume.recommendations_blank", "semantic", repairable: true);
 
         return AiValidationResult<ResumeAnalysisOutput>.Success(new ResumeAnalysisOutput(strengths, gaps, recommendations));
     }
@@ -348,7 +396,7 @@ public sealed class InterviewFirstQuestionOperation : AiOperationDefinition<Gene
 
         var trimmed = raw.Content.Trim();
         if (trimmed.Length > 2_000)
-            trimmed = trimmed[..2_000];
+            return AiValidationResult<GeneratedQuestion>.Failure("question.too_long", "semantic", repairable: true);
 
         return AiValidationResult<GeneratedQuestion>.Success(new GeneratedQuestion(trimmed));
     }
@@ -382,7 +430,7 @@ public sealed class InterviewFollowupOperation : AiOperationDefinition<Generated
 
         var trimmed = raw.Content.Trim();
         if (trimmed.Length > 2_000)
-            trimmed = trimmed[..2_000];
+            return AiValidationResult<GeneratedQuestion>.Failure("question.too_long", "semantic", repairable: true);
 
         return AiValidationResult<GeneratedQuestion>.Success(new GeneratedQuestion(trimmed));
     }
@@ -466,7 +514,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
               "required": ["applicable"]
             }
           },
-          "required": ["scores", "feedback"]
+          "required": ["scoreScale", "scores", "feedback"]
         }
         """);
 
@@ -489,14 +537,16 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
     {
         if (raw is null)
             return AiValidationResult<AnswerEvaluation>.Failure("rubric.criteria_missing", "semantic", repairable: true);
+        if (!string.Equals(raw.ScoreScale, AiOperations.ScoreScale, StringComparison.Ordinal))
+            return AiValidationResult<AnswerEvaluation>.Failure("score.scale_invalid", "semantic", repairable: true);
 
         var rubricResult = CanonicalRubricValidator.ValidateAndNormalize(raw.Scores);
         if (!rubricResult.IsValid)
             return AiValidationResult<AnswerEvaluation>.Failure(rubricResult.FailureReason!, rubricResult.ValidationStage!, rubricResult.Repairable);
 
-        var feedback = string.IsNullOrWhiteSpace(raw.Feedback)
-            ? "Đã hoàn thành đánh giá câu trả lời của ứng viên."
-            : raw.Feedback.Trim();
+        if (string.IsNullOrWhiteSpace(raw.Feedback))
+            return AiValidationResult<AnswerEvaluation>.Failure("interview.feedback_blank", "semantic", repairable: true);
+        var feedback = raw.Feedback.Trim();
 
         // Server authoritative STAR validation
         var expectedStar = context.ExpectedStar ?? false;
@@ -514,7 +564,8 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                 null,
                 [],
                 [],
-                raw.Star?.CoachingTips?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? []);
+                raw.Star?.CoachingTips?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [],
+                AiOperations.ScoreScale);
         }
         else
         {
@@ -564,10 +615,12 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                 res,
                 missing,
                 raw.Star.Strengths?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [],
-                raw.Star.CoachingTips?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? []);
+                raw.Star.CoachingTips?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [],
+                AiOperations.ScoreScale);
         }
 
-        return AiValidationResult<AnswerEvaluation>.Success(new AnswerEvaluation(rubricResult.NormalizedValue!, feedback, normalizedStar));
+        return AiValidationResult<AnswerEvaluation>.Success(
+            new AnswerEvaluation(rubricResult.NormalizedValue!, feedback, normalizedStar, AiOperations.ScoreScale));
     }
 
     public override string BuildRepairInstructions(AiValidationResult<AnswerEvaluation> priorResult, string originalInstructions)
@@ -624,7 +677,7 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
             "gaps": { "type": "array", "items": { "type": "string" } },
             "actionPlan": { "type": "array", "items": { "type": "string" } }
           },
-          "required": ["scores", "strengths", "gaps", "actionPlan"]
+          "required": ["scoreScale", "scores", "strengths", "gaps", "actionPlan"]
         }
         """);
 
@@ -635,6 +688,8 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
     {
         if (raw is null)
             return AiValidationResult<InterviewReportOutput>.Failure("rubric.criteria_missing", "semantic", repairable: true);
+        if (!string.Equals(raw.ScoreScale, AiOperations.ScoreScale, StringComparison.Ordinal))
+            return AiValidationResult<InterviewReportOutput>.Failure("score.scale_invalid", "semantic", repairable: true);
 
         var rubricResult = CanonicalRubricValidator.ValidateAndNormalize(raw.Scores);
         if (!rubricResult.IsValid)
@@ -645,14 +700,14 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
         var actionPlan = raw.ActionPlan?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [];
 
         if (strengths.Length == 0)
-            strengths = ["Ứng viên thể hiện thái độ tự tin và giao tiếp tích cực trong buổi phỏng vấn."];
+            return AiValidationResult<InterviewReportOutput>.Failure("report.strengths_blank", "semantic", repairable: true);
         if (gaps.Length == 0)
-            gaps = ["Có thể làm rõ thêm các số liệu đo lường và tác động kinh doanh trong các câu trả lời."];
+            return AiValidationResult<InterviewReportOutput>.Failure("report.gaps_blank", "semantic", repairable: true);
         if (actionPlan.Length == 0)
-            actionPlan = ["Luyện tập thêm phương pháp STAR để tối ưu hóa cấu trúc câu trả lời."];
+            return AiValidationResult<InterviewReportOutput>.Failure("report.action_plan_blank", "semantic", repairable: true);
 
         return AiValidationResult<InterviewReportOutput>.Success(
-            new InterviewReportOutput(rubricResult.NormalizedValue!, strengths, gaps, actionPlan));
+            new InterviewReportOutput(rubricResult.NormalizedValue!, strengths, gaps, actionPlan, AiOperations.ScoreScale));
     }
 }
 
@@ -688,7 +743,7 @@ public sealed class ScenarioEvaluateOperation : AiOperationDefinition<ScenarioEv
             "recommendedApproach": { "type": "array", "items": { "type": "string" } },
             "feedback": { "type": "string" }
           },
-          "required": ["overallScore", "dimensions", "strengths", "gaps", "recommendedApproach", "feedback"]
+          "required": ["scoreScale", "overallScore", "dimensions", "strengths", "gaps", "recommendedApproach", "feedback"]
         }
         """);
 
@@ -699,51 +754,46 @@ public sealed class ScenarioEvaluateOperation : AiOperationDefinition<ScenarioEv
     {
         if (raw is null)
             return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.dimensions_missing", "semantic", repairable: true);
+        if (!string.Equals(raw.ScoreScale, AiOperations.ScoreScale, StringComparison.Ordinal))
+            return AiValidationResult<ScenarioEvaluationResult>.Failure("score.scale_invalid", "semantic", repairable: true);
 
-        var overallScore = Math.Clamp(raw.OverallScore, 0, 100);
+        if (raw.OverallScore is < 0 or > 100)
+            return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.score_out_of_range", "semantic", repairable: true);
 
         var dimensions = raw.Dimensions ?? [];
         var normalizedDimensions = new List<ScenarioDimensionEvaluation>(dimensions.Count);
         foreach (var d in dimensions)
         {
-            if (string.IsNullOrWhiteSpace(d?.Criterion))
-                continue;
+            if (d is null || string.IsNullOrWhiteSpace(d.Criterion))
+                return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.criterion_blank", "semantic", repairable: true);
+            if (d.Score is < 0 or > 100)
+                return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.dimension_score_out_of_range", "semantic", repairable: true);
+            if (string.IsNullOrWhiteSpace(d.Evidence))
+                return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.evidence_blank", "semantic", repairable: true);
+            if (string.IsNullOrWhiteSpace(d.Feedback))
+                return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.feedback_blank", "semantic", repairable: true);
 
             var criterion = d.Criterion.Trim();
-            var score = Math.Clamp(d.Score, 0, 100);
-            var evidence = string.IsNullOrWhiteSpace(d.Evidence) ? "Dựa trên nội dung câu trả lời tình huống." : d.Evidence.Trim();
-            var dimFeedback = string.IsNullOrWhiteSpace(d.Feedback) ? $"Đã đánh giá tiêu chí {criterion}." : d.Feedback.Trim();
-
-            normalizedDimensions.Add(new ScenarioDimensionEvaluation(criterion, score, evidence, dimFeedback));
+            normalizedDimensions.Add(new ScenarioDimensionEvaluation(criterion, d.Score, d.Evidence.Trim(), d.Feedback.Trim()));
         }
 
-        if (normalizedDimensions.Count < 2)
-        {
-            if (normalizedDimensions.Count == 0)
-            {
-                normalizedDimensions.Add(new ScenarioDimensionEvaluation("Phương pháp tiếp cận", overallScore, "Dựa trên câu trả lời tình huống.", "Đánh giá phương pháp tiếp cận vấn đề."));
-                normalizedDimensions.Add(new ScenarioDimensionEvaluation("Kỹ năng chuyên môn", overallScore, "Dựa trên câu trả lời tình huống.", "Đánh giá mức độ am hiểu kỹ thuật."));
-            }
-            else
-            {
-                normalizedDimensions.Add(new ScenarioDimensionEvaluation("Kỹ năng chuyên môn", overallScore, "Dựa trên câu trả lời tình huống.", "Đánh giá mức độ am hiểu kỹ thuật."));
-            }
-        }
+        if (normalizedDimensions.Count is < 2 or > 4)
+            return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.dimensions_count_invalid", "semantic", repairable: true);
 
         var strengths = raw.Strengths?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [];
         var gaps = raw.Gaps?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [];
         var approach = raw.RecommendedApproach?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [];
-        var feedback = string.IsNullOrWhiteSpace(raw.Feedback) ? "Đã hoàn thành đánh giá bài giải tình huống." : raw.Feedback.Trim();
-
         if (strengths.Length == 0)
-            strengths = ["Tiếp cận tình huống với tư duy giải quyết vấn đề phù hợp."];
+            return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.strengths_blank", "semantic", repairable: true);
         if (gaps.Length == 0)
-            gaps = ["Có thể làm rõ thêm các bước xử lý chi tiết và phương án dự phòng."];
+            return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.gaps_blank", "semantic", repairable: true);
         if (approach.Length == 0)
-            approach = ["Phân tích kỹ các ràng buộc trước khi đưa ra quyết định kỹ thuật."];
+            return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.recommended_approach_blank", "semantic", repairable: true);
+        if (string.IsNullOrWhiteSpace(raw.Feedback))
+            return AiValidationResult<ScenarioEvaluationResult>.Failure("scenario.overall_feedback_blank", "semantic", repairable: true);
 
         return AiValidationResult<ScenarioEvaluationResult>.Success(
-            new ScenarioEvaluationResult(overallScore, normalizedDimensions, strengths, gaps, approach, feedback));
+            new ScenarioEvaluationResult(raw.OverallScore, normalizedDimensions, strengths, gaps, approach, raw.Feedback.Trim(), AiOperations.ScoreScale));
     }
 }
 
@@ -806,7 +856,7 @@ public sealed class StarEvaluateOperation : AiOperationDefinition<StarEvaluation
             "strengths": { "type": "array", "items": { "type": "string" } },
             "coachingTips": { "type": "array", "items": { "type": "string" } }
           },
-          "required": ["applicable", "overallScore", "situation", "task", "action", "result", "missingElements", "strengths", "coachingTips"]
+          "required": ["scoreScale", "applicable", "overallScore", "situation", "task", "action", "result", "missingElements", "strengths", "coachingTips"]
         }
         """);
 
@@ -824,6 +874,8 @@ public sealed class StarEvaluateOperation : AiOperationDefinition<StarEvaluation
     {
         if (raw is null)
             return AiValidationResult<StarEvaluation>.Failure("star.missing", "semantic", repairable: true);
+        if (!string.Equals(raw.ScoreScale, AiOperations.ScoreScale, StringComparison.Ordinal))
+            return AiValidationResult<StarEvaluation>.Failure("score.scale_invalid", "semantic", repairable: true);
 
         if (!raw.Applicable)
             return AiValidationResult<StarEvaluation>.Failure("star.applicability_mismatch", "semantic", repairable: true);
@@ -862,9 +914,9 @@ public sealed class StarEvaluateOperation : AiOperationDefinition<StarEvaluation
         var coachingTips = raw.CoachingTips?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [];
 
         if (strengths.Length == 0)
-            strengths = ["Ứng viên đã trả lời câu hỏi theo cấu trúc tình huống."];
+            return AiValidationResult<StarEvaluation>.Failure("star.strengths_blank", "semantic", repairable: true);
         if (coachingTips.Length == 0)
-            coachingTips = ["Tiếp tục phát huy các dẫn chứng cụ thể trong câu trả lời."];
+            return AiValidationResult<StarEvaluation>.Failure("star.coaching_tips_blank", "semantic", repairable: true);
 
         return AiValidationResult<StarEvaluation>.Success(new StarEvaluation(
             true,
@@ -875,7 +927,8 @@ public sealed class StarEvaluateOperation : AiOperationDefinition<StarEvaluation
             res,
             missing,
             strengths,
-            coachingTips));
+            coachingTips,
+            AiOperations.ScoreScale));
     }
 
     public override string BuildRepairInstructions(AiValidationResult<StarEvaluation> priorResult, string originalInstructions)
