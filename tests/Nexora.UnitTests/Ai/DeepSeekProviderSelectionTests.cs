@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Nexora.Business.Ai;
 using Nexora.Business.Practice;
 using Nexora.Integrations;
@@ -46,18 +47,55 @@ public sealed class DeepSeekProviderSelectionTests
         Assert.IsType<DeepSeekAiProvider>(workerServices.GetRequiredService<IAiProvider>());
     }
 
+    [Fact]
+    public void OfficialDeepSeekBaseUrlIsAcceptedWhenAiIsEnabled()
+    {
+        using var services = BuildDeepSeekServices("https://api.deepseek.com");
+
+        var options = services.GetRequiredService<IOptions<DeepSeekOptions>>().Value;
+
+        Assert.Equal("https://api.deepseek.com", options.BaseUrl);
+    }
+
+    [Theory]
+    [InlineData("https://example.com")]
+    [InlineData("http://api.deepseek.com")]
+    [InlineData("https://api.deepseek.com/unexpected")]
+    [InlineData("https://api.deepseek.com?query=1")]
+    public void InvalidDeepSeekBaseUrlIsRejectedWhenAiIsEnabled(string baseUrl)
+    {
+        using var services = BuildDeepSeekServices(baseUrl);
+
+        Assert.Throws<OptionsValidationException>(() =>
+            services.GetRequiredService<IOptions<DeepSeekOptions>>().Value);
+    }
+
     private static ServiceProvider BuildServices(string provider = "gemini") =>
         new ServiceCollection()
             .AddLogging()
             .AddIntegrations(Configuration(provider))
             .BuildServiceProvider();
 
-    private static IConfiguration Configuration(string provider) =>
+    private static ServiceProvider BuildDeepSeekServices(string baseUrl) =>
+        new ServiceCollection()
+            .AddLogging()
+            .AddIntegrations(Configuration("deepseek", aiEnabled: true, deepSeekBaseUrl: baseUrl))
+            .BuildServiceProvider();
+
+    private static IConfiguration Configuration(
+        string provider,
+        bool aiEnabled = false,
+        string? deepSeekBaseUrl = null) =>
         new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Features:Ai"] = "false",
+                ["Features:Ai"] = aiEnabled ? "true" : "false",
                 ["Ai:Provider"] = provider,
+                ["Ai:Gemini:ApiKey"] = "test-gemini-key",
+                ["Ai:Gemini:Model"] = "test-gemini-model",
+                ["Ai:DeepSeek:ApiKey"] = "test-deepseek-key",
+                ["Ai:DeepSeek:BaseUrl"] = deepSeekBaseUrl ?? "https://api.deepseek.com",
+                ["Ai:DeepSeek:Model"] = "deepseek-v4-flash",
                 ["Storage:Local:RootPath"] = ".nexora-test-storage"
             })
             .Build();

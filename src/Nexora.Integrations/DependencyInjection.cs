@@ -55,7 +55,7 @@ public static class DependencyInjection
         services.AddOptions<DeepSeekOptions>().Bind(configuration.GetSection(DeepSeekOptions.SectionName))
             .Validate(options => !deepSeekEnabled || !string.IsNullOrWhiteSpace(options.ApiKey),
                 "Ai:DeepSeek:ApiKey must be supplied through secret configuration when Ai:Provider=deepseek.")
-            .Validate(options => !deepSeekEnabled || !DeepSeekConfigurationValidation.IsOfficialBaseUrl(options.BaseUrl),
+            .Validate(options => !deepSeekEnabled || DeepSeekConfigurationValidation.IsOfficialBaseUrl(options.BaseUrl),
                 "Ai:DeepSeek:BaseUrl must be the official HTTPS DeepSeek API base endpoint.")
             .Validate(options => !deepSeekEnabled || (!string.IsNullOrWhiteSpace(options.Model) && options.Model.Trim().Length <= 80),
                 "Ai:DeepSeek:Model must be configured and 80 characters or fewer.")
