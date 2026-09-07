@@ -390,7 +390,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
     public override string PromptVersion => "interview-eval-v4";
     public override string SchemaVersion => "interview-eval-v4";
     public override string RubricVersion => "rubric-v2";
-    public override int MaxOutputTokens => 2_500;
+    public override int MaxOutputTokens => 6_000;
 
     public override JsonDocument OutputSchema { get; } = JsonDocument.Parse("""
         {
@@ -601,7 +601,7 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
     public override string PromptVersion => "interview-report-v2";
     public override string SchemaVersion => "interview-report-v2";
     public override string RubricVersion => "rubric-v2";
-    public override int MaxOutputTokens => 2_000;
+    public override int MaxOutputTokens => 6_000;
 
     public override JsonDocument OutputSchema { get; } = JsonDocument.Parse("""
         {
@@ -736,7 +736,7 @@ public sealed class StarEvaluateOperation : AiOperationDefinition<StarEvaluation
     public override string PromptVersion => "star-eval-v3";
     public override string SchemaVersion => "star-eval-v3";
     public override string RubricVersion => "star-rubric-v2";
-    public override int MaxOutputTokens => 2_500;
+    public override int MaxOutputTokens => 6_000;
 
     public override JsonDocument OutputSchema { get; } = JsonDocument.Parse("""
         {
