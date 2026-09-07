@@ -30,19 +30,19 @@ public sealed class GeminiDocumentOcrProvider(HttpClient httpClient, IOptions<Ge
                 "experiences":{"type":"array","items":{"type":"object","properties":{
                   "company":{"type":"string"},"role":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},
                   "highlights":{"type":"array","items":{"type":"string"}}
-                },"required":["company","role","start","end","highlights"]}},
+                }}},
                 "education":{"type":"array","items":{"type":"object","properties":{
                   "institution":{"type":"string"},"degree":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},
                   "details":{"type":"array","items":{"type":"string"}}
-                },"required":["institution","degree","start","end","details"]}},
+                }}},
                 "projects":{"type":"array","items":{"type":"object","properties":{
                   "name":{"type":"string"},"role":{"type":"string"},"technologies":{"type":"array","items":{"type":"string"}},
                   "highlights":{"type":"array","items":{"type":"string"}}
-                },"required":["name","role","technologies","highlights"]}},
+                }}},
                 "certifications":{"type":"array","items":{"type":"string"}},
                 "languages":{"type":"array","items":{"type":"string"}}
               },
-              "required":["summary","skills","experiences","education","projects","certifications","languages"]
+              "required":["summary"]
             }
           },
           "required":["extractedText","pageCount","warnings","profile"]
@@ -174,9 +174,48 @@ public sealed class GeminiDocumentOcrProvider(HttpClient httpClient, IOptions<Ge
             throw new JsonException("Document extraction response did not contain usable text and profile.");
         return new DocumentOcrResult(
             result.ExtractedText,
-            result.Profile,
+            SafeNormalizeProfile(result.Profile),
             Math.Max(0, result.PageCount),
-            result.Warnings ?? []);
+            result.Warnings ?? [],
+            "ocr-v2");
+    }
+
+    private static ResumeProfile SafeNormalizeProfile(ResumeProfile raw)
+    {
+        var experiences = raw.Experiences?
+            .Select(e => new ResumeExperience(
+                e.Company?.Trim(),
+                e.Role?.Trim(),
+                e.Start?.Trim(),
+                e.End?.Trim(),
+                e.Highlights?.Where(h => !string.IsNullOrWhiteSpace(h)).Select(h => h.Trim()).ToArray() ?? []))
+            .ToArray() ?? [];
+
+        var education = raw.Education?
+            .Select(e => new ResumeEducation(
+                e.Institution?.Trim(),
+                e.Degree?.Trim(),
+                e.Start?.Trim(),
+                e.End?.Trim(),
+                e.Details?.Where(d => !string.IsNullOrWhiteSpace(d)).Select(d => d.Trim()).ToArray() ?? []))
+            .ToArray() ?? [];
+
+        var projects = raw.Projects?
+            .Select(p => new ResumeProject(
+                p.Name?.Trim(),
+                p.Role?.Trim(),
+                p.Technologies?.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim()).ToArray() ?? [],
+                p.Highlights?.Where(h => !string.IsNullOrWhiteSpace(h)).Select(h => h.Trim()).ToArray() ?? []))
+            .ToArray() ?? [];
+
+        return new ResumeProfile(
+            raw.Summary?.Trim() ?? string.Empty,
+            raw.Skills?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToArray() ?? [],
+            experiences,
+            education,
+            projects,
+            raw.Certifications?.Where(c => !string.IsNullOrWhiteSpace(c)).Select(c => c.Trim()).ToArray() ?? [],
+            raw.Languages?.Where(l => !string.IsNullOrWhiteSpace(l)).Select(l => l.Trim()).ToArray() ?? []);
     }
 
     private static AiProviderFailureKind Classify(HttpStatusCode statusCode) => statusCode switch

@@ -12,7 +12,7 @@ public sealed class GeminiOptions
     public string ApiKey { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
     public int TimeoutSeconds { get; set; } = 20;
-    public int MaxAttempts { get; set; } = 2;
+    public int MaxAttempts { get; set; } = 1;
     public int RetryBaseDelayMilliseconds { get; set; } = 250;
 }
 
@@ -126,7 +126,7 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
         <untrusted-input>
         {request.UntrustedInput}
         </untrusted-input>
-        {PurposeInstructions(request.Purpose)}
+        {request.Instructions ?? PurposeInstructions(request.Purpose)}
         Return only JSON matching the supplied response schema. {ArrayInstruction(request.Purpose)}
         Keep evidence and list items concise. Return at most three items in strengths, gaps, recommendations, and actionPlan arrays.
         Do not invent candidate achievements. Evidence must be grounded in the supplied input; describe missing evidence as a suggestion.

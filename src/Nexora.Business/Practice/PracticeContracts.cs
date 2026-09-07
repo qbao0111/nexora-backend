@@ -92,7 +92,8 @@ public sealed record DocumentOcrResult(
     string ExtractedText,
     ResumeProfile Profile,
     int PageCount,
-    IReadOnlyCollection<string> Warnings);
+    IReadOnlyCollection<string> Warnings,
+    string? SchemaVersion = null);
 
 public interface IDocumentOcrProvider
 {

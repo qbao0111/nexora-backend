@@ -1,0 +1,124 @@
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Nexora.Business.Common;
+
+namespace Nexora.Business.Ai;
+
+public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger<StructuredAiExecutor> logger) : IStructuredAiExecutor
+{
+    private const int MaxAttemptsPerPurpose = 2;
+
+    public async Task<AiExecutionResult<T>> ExecuteAsync<T>(
+        AiOperationDefinition<T> operation,
+        string untrustedInput,
+        AiOperationContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+
+        var stopwatch = Stopwatch.StartNew();
+        var modelVersion = aiProvider.ModelVersion;
+        var correlationId = context.CorrelationId;
+        var instructions = operation.Instructions;
+
+        AiValidationResult<T>? lastValidation = null;
+        AiProviderException? lastProviderException = null;
+
+        for (var attempt = 1; attempt <= MaxAttemptsPerPurpose; attempt++)
+        {
+            var isRepairAttempt = attempt > 1 && lastValidation is not null && !lastValidation.IsValid;
+            var currentInstructions = isRepairAttempt
+                ? operation.BuildRepairInstructions(lastValidation!, instructions)
+                : instructions;
+
+            var request = new AiRequest(
+                operation.Purpose,
+                operation.PromptVersion,
+                modelVersion,
+                operation.RubricVersion,
+                operation.SchemaVersion,
+                untrustedInput,
+                operation.OutputSchema,
+                operation.MaxOutputTokens,
+                correlationId,
+                currentInstructions);
+
+            try
+            {
+                var raw = await aiProvider.GenerateStructuredAsync<T>(request, cancellationToken);
+                var validation = operation.NormalizeAndValidate(raw, context);
+                lastValidation = validation;
+
+                if (validation.IsValid)
+                {
+                    LogExecutionSucceeded(logger, operation.Purpose, attempt, isRepairAttempt, stopwatch.ElapsedMilliseconds, correlationId);
+
+                    return new AiExecutionResult<T>(
+                        validation.NormalizedValue!,
+                        modelVersion,
+                        operation.PromptVersion,
+                        operation.SchemaVersion,
+                        operation.RubricVersion,
+                        isRepairAttempt,
+                        attempt,
+                        stopwatch.ElapsedMilliseconds);
+                }
+
+                LogValidationFailed(logger, operation.Purpose, validation.FailureReason ?? "unknown", validation.ValidationStage ?? "validation", attempt, validation.Repairable, correlationId);
+
+                if (!validation.Repairable || attempt >= MaxAttemptsPerPurpose)
+                {
+                    LogExecutionTerminalFailure(logger, operation.Purpose, validation.FailureReason ?? "unknown", validation.ValidationStage ?? "validation", attempt, correlationId);
+
+                    throw new BusinessException("AI_OUTPUT_INVALID", "Dữ liệu phản hồi từ AI không hợp lệ.", BusinessErrorKind.ExternalFailure);
+                }
+            }
+            catch (AiProviderException ex)
+            {
+                lastProviderException = ex;
+                LogProviderRequestFailed(logger, operation.Purpose, ex.Kind.ToString(), attempt, correlationId);
+
+                if (ex.Kind is AiProviderFailureKind.Configuration or AiProviderFailureKind.Authentication ||
+                    cancellationToken.IsCancellationRequested ||
+                    attempt >= MaxAttemptsPerPurpose ||
+                    !IsRetryable(ex.Kind))
+                {
+                    LogProviderTerminalFailure(logger, operation.Purpose, ex.Kind.ToString(), attempt, correlationId);
+
+                    throw MapProviderException(ex);
+                }
+            }
+        }
+
+        if (lastProviderException is not null)
+            throw MapProviderException(lastProviderException);
+
+        throw new BusinessException("AI_OUTPUT_INVALID", "Dữ liệu phản hồi từ AI không hợp lệ.", BusinessErrorKind.ExternalFailure);
+    }
+
+    private static bool IsRetryable(AiProviderFailureKind kind) =>
+        kind is AiProviderFailureKind.RateLimited or AiProviderFailureKind.Timeout or AiProviderFailureKind.Unavailable or AiProviderFailureKind.InvalidResponse;
+
+    private static BusinessException MapProviderException(AiProviderException exception) => exception.Kind switch
+    {
+        AiProviderFailureKind.RateLimited => new BusinessException("AI_RATE_LIMITED", "AI provider đang bị giới hạn tốc độ.", BusinessErrorKind.ExternalFailure),
+        AiProviderFailureKind.Timeout or AiProviderFailureKind.Unavailable => new BusinessException("AI_PROVIDER_UNAVAILABLE", "Dịch vụ AI tạm thời không khả dụng.", BusinessErrorKind.ExternalFailure),
+        _ => new BusinessException("AI_OUTPUT_INVALID", "Dữ liệu phản hồi từ AI không hợp lệ.", BusinessErrorKind.ExternalFailure)
+    };
+
+    [LoggerMessage(LogLevel.Information, "AI structured execution succeeded: purpose={Purpose}, attempt={Attempt}, repairUsed={RepairUsed}, latencyMs={LatencyMs}, correlationId={CorrelationId}")]
+    private static partial void LogExecutionSucceeded(ILogger logger, string purpose, int attempt, bool repairUsed, long latencyMs, string correlationId);
+
+    [LoggerMessage(LogLevel.Warning, "AI structured validation failed: purpose={Purpose}, failureReason={FailureReason}, stage={Stage}, attempt={Attempt}, repairable={Repairable}, correlationId={CorrelationId}")]
+    private static partial void LogValidationFailed(ILogger logger, string purpose, string failureReason, string stage, int attempt, bool repairable, string correlationId);
+
+    [LoggerMessage(LogLevel.Error, "AI structured execution failed terminal: purpose={Purpose}, failureReason={FailureReason}, stage={Stage}, attempt={Attempt}, outcome=failed, correlationId={CorrelationId}")]
+    private static partial void LogExecutionTerminalFailure(ILogger logger, string purpose, string failureReason, string stage, int attempt, string correlationId);
+
+    [LoggerMessage(LogLevel.Warning, "AI provider request failed: purpose={Purpose}, failureKind={FailureKind}, attempt={Attempt}, correlationId={CorrelationId}")]
+    private static partial void LogProviderRequestFailed(ILogger logger, string purpose, string failureKind, int attempt, string correlationId);
+
+    [LoggerMessage(LogLevel.Error, "AI provider request failed terminal: purpose={Purpose}, failureKind={FailureKind}, attempt={Attempt}, outcome=failed, correlationId={CorrelationId}")]
+    private static partial void LogProviderTerminalFailure(ILogger logger, string purpose, string failureKind, int attempt, string correlationId);
+}
