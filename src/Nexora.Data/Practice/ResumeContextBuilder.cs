@@ -6,11 +6,11 @@ namespace Nexora.Data.Practice;
 
 public sealed class ResumeContextBuilder : IResumeContextBuilder
 {
-    private const int ProfileInputLimit = 20_000;
-    private const int AnalysisContextLimit = 12_000;
-    private const int InterviewContextLimit = 9_000;
-    private const int AnswerContextLimit = 8_000;
-    private const int ReportContextLimit = 16_000;
+    private const int ProfileInputLimit = 25_000;
+    private const int AnalysisContextLimit = 16_000;
+    private const int InterviewContextLimit = 12_000;
+    private const int AnswerContextLimit = 16_000;
+    private const int ReportContextLimit = 24_000;
 
     public string BuildProfileExtractionContext(string rawExtractedText) =>
         $"<resume-text>\n{Bound(rawExtractedText, ProfileInputLimit)}\n</resume-text>";
@@ -18,8 +18,8 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
     public string BuildResumeAnalysisContext(ResumeProfile profile, string jobDescription)
     {
         var builder = new StringBuilder();
-        AppendProfile(builder, profile, includeDetails: true);
         Append(builder, "target-job", jobDescription, 8_000);
+        AppendProfile(builder, profile, includeDetails: true);
         return Bound(builder.ToString(), AnalysisContextLimit);
     }
 
@@ -31,7 +31,7 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
         Append(builder, "seniority", seniority, 80);
         Append(builder, "interview-type", interviewType, 80);
         Append(builder, "difficulty", difficulty, 80);
-        Append(builder, "job-description", jobDescription, 5_000);
+        Append(builder, "job-description", jobDescription, 4_000);
         if (profile is not null) AppendProfile(builder, profile, includeDetails: false);
         return Bound(builder.ToString(), InterviewContextLimit);
     }
@@ -39,40 +39,95 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
     public string BuildAnswerEvaluationContext(
         string role, string seniority, string interviewType, string? jobDescription, string question, string answer, ResumeProfile? profile)
     {
+        // Section priority:
+        // 1. Metadata
+        // 2. Question
+        // 3. Candidate Answer (protected from truncation)
+        // 4. Compact Job Description (from remaining budget)
+        // 5. Compact Candidate Profile (from remaining budget)
         var builder = new StringBuilder();
         Append(builder, "role", role, 160);
         Append(builder, "seniority", seniority, 80);
         Append(builder, "interview-type", interviewType, 80);
-        Append(builder, "job-description", jobDescription, 3_000);
         Append(builder, "question", question, 2_000);
-        Append(builder, "answer", answer, 12_000);
-        if (profile is not null) AppendProfile(builder, profile, includeDetails: false);
-        return Bound(builder.ToString(), AnswerContextLimit);
+        Append(builder, "answer", answer, 10_000);
+
+        var remainingBudget = Math.Max(0, AnswerContextLimit - builder.Length);
+        if (remainingBudget > 500 && !string.IsNullOrWhiteSpace(jobDescription))
+        {
+            var jdBudget = Math.Min(3_000, remainingBudget / 2);
+            Append(builder, "job-description", jobDescription, jdBudget);
+        }
+
+        if (profile is not null)
+        {
+            var profileBudget = Math.Max(0, AnswerContextLimit - builder.Length);
+            if (profileBudget > 300)
+            {
+                var profileBuilder = new StringBuilder();
+                AppendProfile(profileBuilder, profile, includeDetails: false);
+                var boundedProfile = Bound(profileBuilder.ToString(), profileBudget);
+                if (boundedProfile.Length > 0)
+                {
+                    builder.Append(boundedProfile);
+                }
+            }
+        }
+
+        return builder.ToString();
     }
 
     public string BuildFollowupQuestionContext(
         string role, string seniority, string interviewType, string? jobDescription, string question, string answer, StarEvaluation? star, ResumeProfile? profile)
     {
+        // Section priority:
+        // 1. Previous Question
+        // 2. Previous Answer
+        // 3. STAR coaching / missing elements
+        // 4. Metadata
+        // 5. Compact Job Description & Profile (from remaining budget)
         var builder = new StringBuilder();
-        Append(builder, "role", role, 160);
-        Append(builder, "seniority", seniority, 80);
-        Append(builder, "interview-type", interviewType, 80);
-        Append(builder, "job-description", jobDescription, 3_000);
         Append(builder, "previous-question", question, 2_000);
         Append(builder, "previous-answer", answer, 8_000);
         if (star?.Applicable == true)
         {
-            Append(builder, "star-missing-elements", string.Join("; ", star.MissingElements ?? []), 300);
-            Append(builder, "star-coaching-tips", string.Join("; ", star.CoachingTips ?? []), 500);
+            Append(builder, "star-missing-elements", string.Join("; ", star.MissingElements ?? []), 400);
+            Append(builder, "star-coaching-tips", string.Join("; ", star.CoachingTips ?? []), 600);
         }
-        if (profile is not null) AppendProfile(builder, profile, includeDetails: false);
-        return Bound(builder.ToString(), AnswerContextLimit);
+
+        Append(builder, "role", role, 160);
+        Append(builder, "seniority", seniority, 80);
+        Append(builder, "interview-type", interviewType, 80);
+
+        var remainingBudget = Math.Max(0, AnswerContextLimit - builder.Length);
+        if (remainingBudget > 500 && !string.IsNullOrWhiteSpace(jobDescription))
+        {
+            var jdBudget = Math.Min(2_500, remainingBudget / 2);
+            Append(builder, "job-description", jobDescription, jdBudget);
+        }
+
+        if (profile is not null)
+        {
+            var profileBudget = Math.Max(0, AnswerContextLimit - builder.Length);
+            if (profileBudget > 300)
+            {
+                var profileBuilder = new StringBuilder();
+                AppendProfile(profileBuilder, profile, includeDetails: false);
+                var boundedProfile = Bound(profileBuilder.ToString(), profileBudget);
+                if (boundedProfile.Length > 0)
+                {
+                    builder.Append(boundedProfile);
+                }
+            }
+        }
+
+        return builder.ToString();
     }
 
     public string BuildReportContext(string transcript, ResumeProfile? profile)
     {
         var builder = new StringBuilder();
-        Append(builder, "transcript", transcript, 14_000);
+        Append(builder, "transcript", transcript, 18_000);
         if (profile is not null) AppendProfile(builder, profile, includeDetails: false);
         return Bound(builder.ToString(), ReportContextLimit);
     }

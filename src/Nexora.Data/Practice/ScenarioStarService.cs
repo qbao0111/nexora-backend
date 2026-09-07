@@ -17,6 +17,7 @@ public sealed partial class ScenarioStarService(
     NexoraDbContext dbContext,
     IFeatureEntitlementService featureEntitlementService,
     IAiProvider aiProvider,
+    IStructuredAiExecutor structuredAiExecutor,
     TimeProvider timeProvider,
     ILogger<ScenarioStarService> logger) : IScenarioService, IStarAttemptService, IProgressService, IScenarioStarJobProcessor
 {
@@ -25,10 +26,6 @@ public sealed partial class ScenarioStarService(
     private const string ScenarioSchemaVersion = "scenario-v1";
     private const string ScenarioPromptVersion = "scenario-v1";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly JsonDocument ScenarioEvaluationSchema = JsonDocument.Parse(
-        """{"type":"object","properties":{"overallScore":{"type":"integer"},"dimensions":{"type":"array","items":{"type":"object","properties":{"criterion":{"type":"string"},"score":{"type":"integer"},"evidence":{"type":"string"},"feedback":{"type":"string"}},"required":["criterion","score","evidence","feedback"]}},"strengths":{"type":"array","items":{"type":"string"}},"gaps":{"type":"array","items":{"type":"string"}},"recommendedApproach":{"type":"array","items":{"type":"string"}},"feedback":{"type":"string"}},"required":["overallScore","dimensions","strengths","gaps","recommendedApproach","feedback"]}""");
-    private static readonly JsonDocument StarPersonaSituationSchema = JsonDocument.Parse(
-        """{"type":"object","properties":{"applicable":{"type":"boolean"},"overallScore":{"type":"integer"},"situation":{"type":"object","properties":{"score":{"type":"integer"},"detected":{"type":"boolean"},"evidence":{"type":"string"},"feedback":{"type":"string"}},"required":["score","detected","evidence","feedback"]},"task":{"type":"object","properties":{"score":{"type":"integer"},"detected":{"type":"boolean"},"evidence":{"type":"string"},"feedback":{"type":"string"}},"required":["score","detected","evidence","feedback"]},"action":{"type":"object","properties":{"score":{"type":"integer"},"detected":{"type":"boolean"},"evidence":{"type":"string"},"feedback":{"type":"string"}},"required":["score","detected","evidence","feedback"]},"result":{"type":"object","properties":{"score":{"type":"integer"},"detected":{"type":"boolean"},"evidence":{"type":"string"},"feedback":{"type":"string"}},"required":["score","detected","evidence","feedback"]},"missingElements":{"type":"array","items":{"type":"string"}},"strengths":{"type":"array","items":{"type":"string"}},"coachingTips":{"type":"array","items":{"type":"string"}}},"required":["applicable","overallScore","situation","task","action","result","missingElements","strengths","coachingTips"]}""");
 
     public async Task<IReadOnlyCollection<ScenarioCategoryView>> GetCategoriesAsync(CancellationToken cancellationToken) =>
         await dbContext.ScenarioCategories.AsNoTracking().Where(item => item.IsActive).OrderBy(item => item.SortOrder)
@@ -506,12 +503,12 @@ public sealed partial class ScenarioStarService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         var input = $"Scenario: {attempt.Scenario.Title}\nCompetency: {attempt.Scenario.Competency}\nDifficulty: {attempt.Scenario.Difficulty}\n\nContent:\n{attempt.Scenario.Content}\n\nUser Answer:\n{attempt.Answer}";
-        var result = await aiProvider.GenerateStructuredAsync<ScenarioEvaluationResult>(
-            new AiRequest("scenario.evaluate", ScenarioPromptVersion, CurrentModelVersion, ScenarioSchemaVersion, ScenarioSchemaVersion,
-                Bound(input), ScenarioEvaluationSchema, 2_000, attempt.Id.ToString("N")), cancellationToken);
-        if (result.OverallScore < 0 || result.OverallScore > 100 || result.Dimensions.Count == 0) throw InvalidAiOutput();
-        foreach (var d in result.Dimensions)
-            if (d.Score < 0 || d.Score > 100 || string.IsNullOrWhiteSpace(d.Evidence) || string.IsNullOrWhiteSpace(d.Feedback)) throw InvalidAiOutput();
+        var execResult = await structuredAiExecutor.ExecuteAsync(
+            AiOperations.ScenarioEvaluate,
+            Bound(input),
+            new AiOperationContext(attempt.Id.ToString("N"), attempt.UserId),
+            cancellationToken);
+        var result = execResult.Value;
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         attempt.EvaluationJson = JsonSerializer.Serialize(result, JsonOptions);
@@ -532,10 +529,12 @@ public sealed partial class ScenarioStarService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         var input = $"Question: {attempt.Question}\n\nAnswer: {attempt.Answer}";
-        var evaluation = await aiProvider.GenerateStructuredAsync<StarEvaluation>(
-            new AiRequest("star.evaluate", PromptVersion, CurrentModelVersion, PromptVersion, SchemaVersion,
-                Bound(input), StarPersonaSituationSchema, 2_000, attempt.Id.ToString("N")), cancellationToken);
-        evaluation = ValidateAndNormalizeStar(evaluation, attempt.Question);
+        var execResult = await structuredAiExecutor.ExecuteAsync(
+            AiOperations.StarEvaluate,
+            Bound(input),
+            new AiOperationContext(attempt.Id.ToString("N"), attempt.UserId, ExpectedStar: true),
+            cancellationToken);
+        var evaluation = execResult.Value;
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         attempt.EvaluationJson = JsonSerializer.Serialize(evaluation, JsonOptions);
@@ -586,39 +585,7 @@ public sealed partial class ScenarioStarService(
         return MapStarAttempt(attempt);
     }
 
-    private static StarEvaluation ValidateAndNormalizeStar(StarEvaluation star, string question)
-    {
-        if (!star.Applicable) return star with { OverallScore = null, Situation = null, Task = null, Action = null, Result = null, MissingElements = [], Strengths = [], CoachingTips = [] };
-        var sit = ValidateComponent(star.Situation, "situation");
-        var task = ValidateComponent(star.Task, "task");
-        var act = ValidateComponent(star.Action, "action");
-        var res = ValidateComponent(star.Result, "result");
-        var missing = new[] { ("situation", sit), ("task", task), ("action", act), ("result", res) }
-            .Where(x => !x.Item2.Detected || x.Item2.Score < 60).Select(x => x.Item1)
-            .Concat(star.MissingElements ?? []).Distinct(StringComparer.Ordinal).Take(4).ToArray();
-        return star with
-        {
-            OverallScore = (int)Math.Round(sit.Score * .20 + task.Score * .20 + act.Score * .35 + res.Score * .25),
-            Situation = sit, Task = task, Action = act, Result = res,
-            MissingElements = missing,
-            Strengths = star.Strengths?.Where(NotBlank).Take(3).ToArray() ?? [],
-            CoachingTips = star.CoachingTips?.Where(NotBlank).Take(3).ToArray() ?? []
-        };
-    }
 
-    private static StarComponentEvaluation ValidateComponent(StarComponentEvaluation? component, string name)
-    {
-        if (component is null)
-            return new StarComponentEvaluation(0, false, string.Empty, $"Thiếu nội dung {name}.");
-        var score = component.Score;
-        // If LLM returned a 1-5 scale score instead of 0-100, normalize it
-        if (score is > 0 and <= 5) score *= 20;
-        score = Math.Clamp(score, 0, 100);
-        var feedback = string.IsNullOrWhiteSpace(component.Feedback) ? $"Đánh giá {name}." : component.Feedback.Trim();
-        var evidence = component.Evidence?.Trim() ?? string.Empty;
-        var detected = component.Detected || (!string.IsNullOrWhiteSpace(evidence) && score >= 50);
-        return new StarComponentEvaluation(score, detected, evidence, feedback);
-    }
 
     private static int? ParseScenarioScore(string? evaluationJson)
     {
