@@ -66,6 +66,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
                 ["Billing:FakePayment:WebhookSecret"] = "phase2-test-webhook-key-material",
                 ["Billing:FakePayment:TimestampToleranceMinutes"] = "5",
                 ["Ai:Provider"] = "gemini",
+                ["Realtime:Enabled"] = "false",
                 ["Ai:Gemini:ApiKey"] = "test-only-not-used",
                 ["Ai:Gemini:Model"] = "test-gemini-model",
                 ["RateLimits:Authentication:PermitLimit"] = "1000",

@@ -24,6 +24,13 @@ All successful JSON responses are `{ "data": ... }`. All handled errors are `{ "
 
 ## Idempotency
 
+Async resource completion can now use authenticated SignalR notifications instead of
+aggressive polling. Connect to the API origin's `/hubs/realtime`, handle `resourceChanged`,
+deduplicate by `eventId`, then refetch the relevant REST resource once. Reconcile on
+reconnect and retain slow 15–30 second fallback polling. See the
+[complete realtime integration contract](realtime-notifications.md), including the
+intentional absence of a report-failure event.
+
 For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse that key and the identical body when retrying the same request. Generate a new key for a new action. Required mutations are checkout, resume analysis, interview start, answer, interview completion and deletion request. Register/login, upload presign, raw upload, resume finalization, JD creation and GET requests do not need a key.
 
 ## Real CV → JD → analysis flow

@@ -40,6 +40,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<Scenario> Scenarios => Set<Scenario>();
     public DbSet<ScenarioAttempt> ScenarioAttempts => Set<ScenarioAttempt>();
     public DbSet<StarAttempt> StarAttempts => Set<StarAttempt>();
+    public DbSet<Nexora.Data.Realtime.RealtimeNotification> RealtimeNotifications => Set<Nexora.Data.Realtime.RealtimeNotification>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -103,6 +104,14 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
         ConfigurePrivacy(builder);
         ConfigureFeatureManagement(builder);
         ConfigureScenarioStar(builder);
+        builder.Entity<Nexora.Data.Realtime.RealtimeNotification>(entity =>
+        {
+            entity.ToTable("realtime_notifications");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.ResourceType).HasMaxLength(40).IsRequired();
+            entity.Property(item => item.Status).HasMaxLength(20).IsRequired();
+            entity.HasIndex(item => new { item.ProcessedAt, item.CreatedAt });
+        });
     }
 
     private static void ConfigureFeatureManagement(ModelBuilder builder)

@@ -31,6 +31,7 @@ ApplicationUser 1--N Subscription 1--N Entitlement 1--N UsageEvent
 | `star_drafts`, `scenario_attempts` | Practice support | owner ID, version/status. |
 | `idempotency_keys`, `outbox_events`, `audit_logs` | Reliability/operations | expiry/retention job. |
 | `data_privacy_requests` | Audit/retry state cho export/delete workflow | unique `(user_id, idempotency_key)`; không FK cascade để audit còn lại sau anonymization. |
+| `realtime_notifications` | Minimal owner-targeted resource-change delivery metadata | `Id`, `UserId`, `ResourceType`, `ResourceId`, `Status`, `CreatedAt`, nullable `ProcessedAt`/`NextAttemptAt`, `Attempts`; pending index `(ProcessedAt, CreatedAt)`. Inserted with resource transition; see [delivery contract](realtime-notifications.md). |
 
 ## 3. Required columns
 

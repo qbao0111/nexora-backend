@@ -6,11 +6,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.IdentityModel.Tokens;
 using Nexora.Api.Authorization;
 using Nexora.Api.Contracts;
 using Nexora.Api.Health;
 using Nexora.Api.Infrastructure;
+using Nexora.Api.Realtime;
 using Nexora.Business;
 using Nexora.Business.Authorization;
 using Nexora.Data;
@@ -19,6 +21,17 @@ using Nexora.Data.Identity;
 using Nexora.Integrations;
 
 var builder = WebApplication.CreateBuilder(args);
+// Hosting request-start logs include query strings; browser SignalR transports use access_token.
+builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting", LogLevel.Warning);
+builder.Logging.AddFilter("Microsoft.AspNetCore.Http.Connections", LogLevel.Warning);
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<IUserIdProvider, SubClaimUserIdProvider>();
+builder.Services.AddOptions<RealtimeOptions>().Bind(builder.Configuration.GetSection(RealtimeOptions.SectionName))
+    .Validate(options => options.BatchSize is >= 1 and <= 500 &&
+        options.BusyDelayMilliseconds > 0 && options.IdleDelayMilliseconds > 0 && options.FailureDelayMilliseconds > 0,
+        "Realtime batch size must be 1..500 and delays must be positive.")
+    .ValidateOnStart();
+builder.Services.AddHostedService<RealtimeNotificationBroadcaster>();
 builder.Services.AddBusiness();
 builder.Services.AddData(builder.Configuration);
 ProductionSafety.ValidateDevelopmentAdapters(
@@ -68,6 +81,14 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     };
     options.Events = new JwtBearerEvents
     {
+        OnMessageReceived = context =>
+        {
+            if (context.Request.Path.StartsWithSegments(RealtimeHub.Path) &&
+                context.Request.Query.TryGetValue("access_token", out var token) && token.Count == 1 &&
+                !string.IsNullOrWhiteSpace(token))
+                context.Token = token;
+            return Task.CompletedTask;
+        },
         OnTokenValidated = async context =>
         {
             var subject = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub);
@@ -139,6 +160,8 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => fa
 app.MapHealthChecks("/api/v1/health", new HealthCheckOptions { Predicate = registration => registration.Tags.Contains("ready") });
 app.MapHealthChecks("/api/v1/health/operations", new HealthCheckOptions { Predicate = registration => registration.Tags.Contains("operations") });
 app.MapControllers();
+if (app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<RealtimeOptions>>().Value.Enabled)
+    app.MapHub<RealtimeHub>(RealtimeHub.Path, options => options.CloseOnAuthenticationExpiration = true);
 app.Run();
 
 public partial class Program;

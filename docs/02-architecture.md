@@ -62,3 +62,12 @@ tests/
 - Không tách microservice trước khi có số liệu cho thấy API/worker hoặc một module đã là bottleneck; khi đó tách worker AI trước.
 - Mọi AI/payment/storage/email call đi qua interface trong Business và adapter trong `Nexora.Integrations`; controller/frontend không gọi provider trực tiếp.
 - Controller không dùng `DbContext`; DTO không phải EF entity; repository không quyết định business rule.
+
+## Optional realtime invalidation
+
+Worker resource transitions persist minimal `realtime_notifications` rows atomically
+with business state. One API-hosted broadcaster reads PostgreSQL and sends
+authenticated SignalR `resourceChanged` events to the JWT `sub` user at
+`/hubs/realtime`. Worker never references `IHubContext`; REST remains the only
+command/query API. This bridge supports one API instance and requires no external
+broker. Details and failure/reconnect semantics: [realtime contract](realtime-notifications.md).
