@@ -668,6 +668,7 @@ public sealed partial class PracticeService(
         }
         resume.Status = PracticeValues.Ready;
         resume.UpdatedAt = timeProvider.GetUtcNow();
+        EnqueueResourceChanged(resume.UserId, "resume", resume.Id, resume.Status, resume.UpdatedAt);
         ResumeExtractionMeasured(logger, resume.Id, extraction.PageCount, extraction.CharacterCount, extraction.WordCount,
             extraction.ExtractionMethod.ToString(), extraction.QualityScore, string.Join(',', extraction.Warnings), ocrFallbackUsed);
         MarkProcessed(job);
@@ -750,6 +751,7 @@ public sealed partial class PracticeService(
         analysis.Result = JsonSerializer.Serialize(result, JsonOptions);
         analysis.Status = PracticeValues.Completed;
         analysis.CompletedAt = analysis.UpdatedAt = timeProvider.GetUtcNow();
+        EnqueueResourceChanged(analysis.UserId, "resumeAnalysis", analysis.Id, analysis.Status, analysis.UpdatedAt);
         MarkProcessed(job);
         if (analysis.UsageReservationId.HasValue)
             await featureEntitlementService.ConsumeAsync(analysis.UserId, analysis.UsageReservationId.Value, cancellationToken);
@@ -790,6 +792,7 @@ public sealed partial class PracticeService(
         });
         FinalizeReservation(entitlement, reservation, BillingValues.Consume, now);
         session.Status = PracticeValues.Active;
+        EnqueueResourceChanged(session.UserId, "interview", session.Id, session.Status, now);
         session.Version++;
         session.UpdatedAt = now;
         MarkProcessed(job);
@@ -840,6 +843,7 @@ public sealed partial class PracticeService(
             CreatedAt = now
         });
         session.Status = PracticeValues.Completed;
+        EnqueueResourceChanged(session.UserId, "interview", session.Id, session.Status, now);
         session.Version++;
         session.UpdatedAt = now;
         session.CompletedAt = now;
@@ -864,6 +868,7 @@ public sealed partial class PracticeService(
                 var entitlement = await FindEntitlementForUpdateAsync(reservation.EntitlementId, cancellationToken) ?? throw InvalidState();
                 FinalizeReservation(entitlement, reservation, BillingValues.Void, current.ProcessedAt.Value);
                 session.Status = PracticeValues.Failed;
+                EnqueueResourceChanged(session.UserId, "interview", session.Id, session.Status, current.ProcessedAt.Value);
                 session.Version++;
                 session.UpdatedAt = current.ProcessedAt.Value;
             }
@@ -873,6 +878,7 @@ public sealed partial class PracticeService(
             var resume = await dbContext.Resumes.SingleAsync(item => item.Id == current.AggregateId, cancellationToken);
             resume.Status = PracticeValues.Failed;
             resume.UpdatedAt = current.ProcessedAt.Value;
+            EnqueueResourceChanged(resume.UserId, "resume", resume.Id, resume.Status, resume.UpdatedAt);
         }
         else if (current.Type == "ResumeAnalysisRequested")
         {
@@ -880,6 +886,7 @@ public sealed partial class PracticeService(
             analysis.Status = PracticeValues.Failed;
             analysis.ErrorCode = "AI_PROCESSING_FAILED";
             analysis.UpdatedAt = current.ProcessedAt.Value;
+            EnqueueResourceChanged(analysis.UserId, "resumeAnalysis", analysis.Id, analysis.Status, analysis.UpdatedAt);
             if (analysis.UsageReservationId.HasValue)
                 await featureEntitlementService.VoidAsync(analysis.UserId, analysis.UsageReservationId.Value, cancellationToken);
         }
@@ -935,6 +942,16 @@ public sealed partial class PracticeService(
             CreatedAt = now
         });
     }
+
+    private void EnqueueResourceChanged(Guid userId, string resourceType, Guid resourceId, string status, DateTimeOffset occurredAt) =>
+        dbContext.RealtimeNotifications.Add(new Nexora.Data.Realtime.RealtimeNotification
+        {
+            UserId = userId,
+            ResourceType = resourceType,
+            ResourceId = resourceId,
+            Status = status,
+            CreatedAt = occurredAt
+        });
 
     private async Task ValidateOwnedContextAsync(Guid userId, Guid? resumeId, Guid? jobDescriptionId, CancellationToken cancellationToken)
     {

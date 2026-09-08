@@ -287,6 +287,9 @@ public sealed class PracticeApiTests
             Assert.Equal(PracticeValues.Completing, (await db.InterviewSessions.SingleAsync(item => item.Id == interviewId)).Status);
             Assert.Equal(1, (await db.Entitlements.SingleAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free")).Adjustment);
             Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.Action == BillingValues.Adjustment && item.SourceType == "report_failure"));
+            // Report failures deliberately keep completing and do not publish a misleading interview.failed event.
+            Assert.Equal(1, await db.RealtimeNotifications.CountAsync(item => item.ResourceId == interviewId));
+            Assert.Equal("active", (await db.RealtimeNotifications.SingleAsync(item => item.ResourceId == interviewId)).Status);
         }
 
         await CompleteAsync(client, interviewId, "report-complete-retry");

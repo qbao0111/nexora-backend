@@ -199,6 +199,7 @@ public sealed partial class PrivacyService(
         dbContext.StoredFiles.RemoveRange(dbContext.StoredFiles.Where(item => item.UserId == request.UserId));
         dbContext.OutboxEvents.RemoveRange(dbContext.OutboxEvents.Where(item => personalAggregateIds.Contains(item.AggregateId)));
         dbContext.IdempotencyRecords.RemoveRange(dbContext.IdempotencyRecords.Where(item => item.ActorId == request.UserId));
+        dbContext.RealtimeNotifications.RemoveRange(dbContext.RealtimeNotifications.Where(item => item.UserId == request.UserId));
         dbContext.RefreshTokens.RemoveRange(dbContext.RefreshTokens.Where(item => item.UserId == request.UserId));
         dbContext.UserProfiles.RemoveRange(dbContext.UserProfiles.Where(item => item.UserId == request.UserId));
         dbContext.Set<IdentityUserClaim<Guid>>().RemoveRange(dbContext.Set<IdentityUserClaim<Guid>>().Where(item => item.UserId == request.UserId));

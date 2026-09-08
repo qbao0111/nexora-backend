@@ -179,6 +179,8 @@ Production requires private objects, authorization before upload/download access
 
 Document extraction, CV analysis and report generation are asynchronous. Question generation may be synchronous only within an explicit timeout budget; interview lifecycle remains observable. Jobs require a stable identity/correlation ID, idempotent handling, persisted state, timeout, bounded retry/backoff and visible terminal failure. A retry cannot duplicate usage, answers, transitions or reports.
 
+Ready/final resume, resume-analysis and interview transitions also persist a minimal realtime notification in the same transaction. The API broadcasts authenticated `resourceChanged` events through `/hubs/realtime`; REST remains authoritative and the Worker never calls SignalR. Delivery is optional and retryable; clients deduplicate event IDs and reconcile through REST. Report-job failure emits no event and keeps the existing `completing` state. See [realtime contract](docs/realtime-notifications.md).
+
 ## 15. Error/idempotency conventions
 
 Standard error envelope:
