@@ -148,7 +148,7 @@ Candidate browser -> Nexora frontend -> Nexora .NET API -> PostgreSQL
 | Interface | Requirement |
 | --- | --- |
 | Frontend/API | REST JSON `/api/v1`, UTC ISO-8601, standard error envelope, API versioning. |
-| AI | `IAiProvider` adapter; Development/internal traffic uses configuration-driven `GeminiAiProvider`, while deterministic test doubles stay in the test project; timeout, bounded retry, structured schema/semantic validation, token/cost telemetry; no client key/provider type leak. DEC-01 still gates production AI. |
+| AI | `IAiProvider` adapter; Development/internal traffic defaults to configuration-driven `GeminiAiProvider` and may select optional `DeepSeekAiProvider` for local text evaluation, while deterministic test doubles stay in the test project; timeout, bounded retry, structured schema/semantic validation, token/cost telemetry; no client key/provider type leak. `GeminiDocumentOcrProvider` remains the document fallback. DEC-01 still gates production AI. |
 | Payment | `IPaymentProvider`; `FakePaymentProvider` trước DEC-02; hosted production checkout, signature verification and idempotent webhook. |
 | Storage | `IStorageProvider`; `LocalStorageProvider`/development adapter được phép nhưng không dùng production; production private object, signed PUT/GET where supported, file checksum and lifecycle policy. |
 | Email | Transactional email adapter for verify/reset/payment receipt; no sensitive content in URL. |
@@ -185,7 +185,7 @@ Use-case specification, sequence/class/package/deployment diagrams và ma trận
 
 ## 11. Deferred production enablement decisions
 
-Các quyết định dưới đây **không block backend/local development, Phases 0–3 hoặc integration test dùng internal Gemini/test-project doubles**. Chúng chỉ block real production capability tương ứng:
+Các quyết định dưới đây **không block backend/local development, Phases 0–3 hoặc integration test dùng internal Gemini/DeepSeek development adapters và test-project doubles**. Chúng chỉ block real production capability tương ứng:
 
 1. **DEC-01:** production AI provider/model và production per-user/global budgets, alert/circuit-break controls.
 2. **DEC-02:** production Vietnamese payment provider; refund, invoice và tax handling.

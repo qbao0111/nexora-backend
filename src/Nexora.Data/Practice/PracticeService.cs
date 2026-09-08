@@ -531,8 +531,10 @@ public sealed partial class PracticeService(
     {
         var report = await dbContext.InterviewReports.AsNoTracking()
             .Include(item => item.InterviewSession).ThenInclude(item => item.Answers)
+            .Include(item => item.InterviewSession).ThenInclude(item => item.Questions)
+            .AsSplitQuery()
             .SingleOrDefaultAsync(item => item.InterviewSessionId == interviewId && item.UserId == userId, cancellationToken) ?? throw NotFound();
-        return MapReport(report, report.InterviewSession.Answers);
+        return MapReport(report, report.InterviewSession.Questions, report.InterviewSession.Answers);
     }
 
     public async Task<DashboardView> GetDashboardAsync(Guid userId, CancellationToken cancellationToken)
@@ -1044,43 +1046,145 @@ public sealed partial class PracticeService(
     private static int WeightedStarScore(StarComponentEvaluation situation, StarComponentEvaluation task, StarComponentEvaluation action, StarComponentEvaluation result) =>
         (int)Math.Round(situation.Score * .20 + task.Score * .20 + action.Score * .35 + result.Score * .25);
 
-    private static StarReportSummary? BuildStarSummary(IEnumerable<InterviewAnswer> answers)
+    private static StarReportSummary? BuildStarSummary(
+        IEnumerable<InterviewQuestion> questions,
+        IEnumerable<InterviewAnswer> answers)
     {
-        var stars = answers.Select(answer =>
-            {
-                try { return JsonSerializer.Deserialize<AnswerEvaluation>(answer.Evaluation, JsonOptions)?.Star; }
-                catch (JsonException) { return null; }
-            })
-            .Where(star => star?.Applicable == true && star.Situation is not null && star.Task is not null && star.Action is not null && star.Result is not null)
-            .Cast<StarEvaluation>()
-            .ToArray();
-        if (stars.Length == 0) return null;
-
-        var situation = Average(stars.Select(star => star.Situation!.Score));
-        var task = Average(stars.Select(star => star.Task!.Score));
-        var action = Average(stars.Select(star => star.Action!.Score));
-        var result = Average(stars.Select(star => star.Result!.Score));
-        var components = new Dictionary<string, int>(StringComparer.Ordinal)
+        var questionSequences = questions.ToDictionary(item => item.Id, item => item.Sequence);
+        var evaluations = new List<PersistedStarEvaluation>();
+        foreach (var answer in answers)
         {
-            ["situation"] = situation,
-            ["task"] = task,
-            ["action"] = action,
-            ["result"] = result
+            if (TryReadStarEvaluation(answer, questionSequences, out var evaluation) && evaluation is not null)
+                evaluations.Add(evaluation);
+        }
+
+        var orderedEvaluations = evaluations
+            .OrderBy(item => item.Sequence)
+            .ThenBy(item => item.CreatedAt)
+            .ThenBy(item => item.AnswerId)
+            .ToArray();
+        if (orderedEvaluations.Length == 0) return null;
+
+        var situation = MergeStarComponent(orderedEvaluations, star => star.Situation);
+        var task = MergeStarComponent(orderedEvaluations, star => star.Task);
+        var action = MergeStarComponent(orderedEvaluations, star => star.Action);
+        var result = MergeStarComponent(orderedEvaluations, star => star.Result);
+        var components = new[]
+        {
+            (Name: "situation", Component: situation),
+            (Name: "task", Component: task),
+            (Name: "action", Component: action),
+            (Name: "result", Component: result)
         };
 
+        var strongest = components
+            .Select((item, index) => (item, index))
+            .OrderByDescending(item => item.item.Component.Score)
+            .ThenBy(item => item.index)
+            .First().item.Name;
+        var weakest = components
+            .Select((item, index) => (item, index))
+            .OrderBy(item => item.item.Component.Score)
+            .ThenBy(item => item.index)
+            .First().item.Name;
+
         return new StarReportSummary(
-            stars.Length,
-            Average(stars.Select(star => star.OverallScore ?? WeightedStarScore(star.Situation!, star.Task!, star.Action!, star.Result!))),
-            new StarComponentAverages(situation, task, action, result),
-            components.MaxBy(item => item.Value).Key,
-            components.MinBy(item => item.Value).Key,
-            stars.SelectMany(star => star.MissingElements ?? []).Where(NotBlank).Select(Trim).Distinct(StringComparer.Ordinal).Take(3).ToArray(),
-            stars.SelectMany(star => star.CoachingTips ?? []).Where(NotBlank).Select(Trim).Take(3).ToArray());
+            orderedEvaluations.Length,
+            WeightedStarScore(situation, task, action, result),
+            new StarComponentAverages(situation.Score, task.Score, action.Score, result.Score),
+            strongest,
+            weakest,
+            components
+                .Where(item => !item.Component.Detected || item.Component.Score < 60)
+                .Select(item => item.Name)
+                .Take(3)
+                .ToArray(),
+            components
+                .Select((item, index) => (item, index))
+                .Where(item => !item.item.Component.Detected || item.item.Component.Score < 60)
+                .OrderBy(item => item.item.Component.Score)
+                .ThenBy(item => item.index)
+                .Select(item => item.item.Component.Feedback)
+                .Where(NotBlank)
+                .Select(item => item!.Trim())
+                .Distinct(StringComparer.Ordinal)
+                .Take(3)
+                .ToArray());
     }
 
-    private static int Average(IEnumerable<int> values) => (int)Math.Round(values.Average());
+    private static bool TryReadStarEvaluation(
+        InterviewAnswer answer,
+        Dictionary<Guid, int> questionSequences,
+        out PersistedStarEvaluation? evaluation)
+    {
+        evaluation = null;
+        if (string.IsNullOrWhiteSpace(answer.Evaluation) || !questionSequences.TryGetValue(answer.QuestionId, out var sequence))
+            return false;
+
+        try
+        {
+            var star = JsonSerializer.Deserialize<AnswerEvaluation>(answer.Evaluation, JsonOptions)?.Star;
+            if (!IsUsableStar(star)) return false;
+            evaluation = new PersistedStarEvaluation(answer.Id, sequence, answer.CreatedAt, star!);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsUsableStar(StarEvaluation? star) =>
+        star is not null && star.Applicable &&
+        IsUsableStarComponent(star.Situation) &&
+        IsUsableStarComponent(star.Task) &&
+        IsUsableStarComponent(star.Action) &&
+        IsUsableStarComponent(star.Result);
+
+    private static bool IsUsableStarComponent(StarComponentEvaluation? component)
+    {
+        if (component is null || component.Score is < 0 or > 100) return false;
+        return component.Detected
+            ? component.Score > 0 && !string.IsNullOrWhiteSpace(component.Evidence)
+            : component.Score == 0 && string.IsNullOrWhiteSpace(component.Evidence);
+    }
+
+    private static StarComponentEvaluation MergeStarComponent(
+        IReadOnlyCollection<PersistedStarEvaluation> evaluations,
+        Func<StarEvaluation, StarComponentEvaluation?> selector)
+    {
+        var candidates = evaluations
+            .Select(item => new { item, component = selector(item.Star) })
+            .Where(item => item.component is not null)
+            .ToArray();
+        var strongestDetected = candidates
+            .Where(item => item.component!.Detected && !string.IsNullOrWhiteSpace(item.component.Evidence))
+            .OrderByDescending(item => item.component!.Score)
+            .ThenByDescending(item => item.item.Sequence)
+            .ThenByDescending(item => item.item.CreatedAt)
+            .ThenByDescending(item => item.item.AnswerId)
+            .Select(item => item.component!)
+            .FirstOrDefault();
+        if (strongestDetected is not null) return strongestDetected;
+
+        var latestUndetected = candidates
+            .OrderByDescending(item => item.item.Sequence)
+            .ThenByDescending(item => item.item.CreatedAt)
+            .ThenByDescending(item => item.item.AnswerId)
+            .Select(item => item.component!)
+            .FirstOrDefault();
+        return latestUndetected is null
+            ? new StarComponentEvaluation(0, false, string.Empty, string.Empty)
+            : new StarComponentEvaluation(0, false, string.Empty, latestUndetected.Feedback);
+    }
+
+    private sealed record PersistedStarEvaluation(
+        Guid AnswerId,
+        int Sequence,
+        DateTimeOffset CreatedAt,
+        StarEvaluation Star);
+
     private static bool NotBlank(string? value) => !string.IsNullOrWhiteSpace(value);
-    private static string Trim(string value) => value.Trim();
 
     private static int WeightedScore(IReadOnlyCollection<RubricScore> scores)
     {
@@ -1166,9 +1270,9 @@ public sealed partial class PracticeService(
             questions.OrderBy(item => item.Sequence).Select(MapQuestion).ToArray(), answers.OrderBy(item => item.CreatedAt).Select(MapAnswer).ToArray(), session.CreatedAt, session.UpdatedAt);
     private static QuestionView MapQuestion(InterviewQuestion question) => new(question.Id, question.Sequence, question.Content, question.CreatedAt);
     private static AnswerView MapAnswer(InterviewAnswer answer) => new(answer.Id, answer.QuestionId, answer.Content, answer.DurationSeconds, ParseJson(answer.Evaluation), answer.CreatedAt);
-    private static ReportView MapReport(InterviewReport report, IEnumerable<InterviewAnswer>? answers = null) => new(report.Id, report.InterviewSessionId, report.OverallScore,
+    private static ReportView MapReport(InterviewReport report, IEnumerable<InterviewQuestion> questions, IEnumerable<InterviewAnswer> answers) => new(report.Id, report.InterviewSessionId, report.OverallScore,
         ParseJson(report.Rubric) ?? default(JsonElement), ParseJson(report.Strengths) ?? default(JsonElement), ParseJson(report.Gaps) ?? default(JsonElement),
-        ParseJson(report.ActionPlan) ?? default(JsonElement), report.Disclaimer, report.CreatedAt, BuildStarSummary(answers ?? []));
+        ParseJson(report.ActionPlan) ?? default(JsonElement), report.Disclaimer, report.CreatedAt, BuildStarSummary(questions, answers));
     private static JsonElement? ParseJson(string? value) => value is null ? null : JsonSerializer.Deserialize<JsonElement>(value);
 
     private static BusinessException Validation(string message, string code = "VALIDATION_ERROR") => new(code, message, BusinessErrorKind.Validation);

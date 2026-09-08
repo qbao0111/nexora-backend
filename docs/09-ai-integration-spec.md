@@ -1,7 +1,7 @@
 # AI Integration Specification — Nexora
 
 **Status:** Approved implementation baseline; production provider/budgets deferred  
-**Last updated:** 2026-09-07
+**Last updated:** 2026-09-08
 
 ## 1. Allowed AI capabilities in MVP
 
@@ -26,7 +26,7 @@ public interface IAiProvider
 }
 ```
 
-`AiRequest` contains purpose, approved prompt template version, untrusted user text delimiters, expected JSON schema, optional per-operation instructions, max tokens and correlation ID. Provider-specific SDK types never escape to controller/business API.
+`AiRequest` contains purpose, approved prompt template version, untrusted user text delimiters, expected JSON schema, optional per-operation instructions, max tokens, correlation ID and an optional provider-neutral per-attempt reasoning-effort override. Provider-specific SDK types never escape to controller/business API. Provider exceptions may carry a provider-neutral retry hint; the Business layer does not reference a concrete provider.
 
 ### 2.1 Structured AI execution layer (`IStructuredAiExecutor`)
 
@@ -37,22 +37,58 @@ public interface IStructuredAiExecutor
 {
     Task<AiExecutionResult<T>> ExecuteAsync<T>(
         AiOperationDefinition<T> operation,
+        string untrustedInput,
         AiOperationContext context,
         CancellationToken cancellationToken);
 }
 ```
 
-- **Global Retry Budget**: At most **two** provider calls per AI purpose (1 initial call + at most 1 repair or rate-limit retry). Provider adapter default `MaxAttempts` is set to 1 to eliminate nested retry multiplication.
+- **Global Retry Budget**: At most **two** provider calls per AI purpose (1 initial call + at most 1 bounded retry). A retry may be a semantic repair, an existing transient/provider retry, or the explicit reasoning-budget fallback described below. Provider adapter default `MaxAttempts` is set to 1 to eliminate nested retry multiplication.
 - **Repair Cycle**: If attempt 1 fails server semantic validation with a repairable issue, attempt 2 injects a focused repair prompt specifying the exact contract violation and instructions to correct it.
-- **Non-Repairable Failures**: Syntax parsing failures, malformed JSON, unrecoverable semantic violations, or non-transient HTTP errors fail fast without a second call.
+- **Provider Failure Retry**: Existing retryable provider failures retain the bounded retry behavior. A generic `InvalidResponse` retry keeps the configured reasoning policy; it is not automatically downgraded to low. Non-retryable HTTP, authentication and configuration failures remain terminal.
 - **Error Normalization**: Maps failures to canonical `BusinessException` with `BusinessErrorKind.ExternalFailure` and safe error codes (`AI_OUTPUT_INVALID`, `AI_RATE_LIMITED`, `AI_PROVIDER_UNAVAILABLE`).
 
 Current internal implementation:
 
-- `GeminiAiProvider` là provider AI của application cho Development/internal testing bằng development API key/quota. Gemini SDK/HTTP types chỉ ở `Nexora.Integrations`; model identifier từ configuration; key từ secret configuration; output map sang Nexora-owned schema.
+- `GeminiAiProvider` remains the default text provider for Development/internal testing with a development API key/quota. Gemini SDK/HTTP types stay in `Nexora.Integrations`; the model identifier comes from configuration; the key comes from secret configuration; output is mapped to Nexora-owned schemas.
+- `DeepSeekAiProvider` is an optional official DeepSeek V4 Flash text adapter. Select it with `Ai:Provider=deepseek`; the default remains `gemini`. The adapter calls `https://api.deepseek.com/chat/completions` directly with the OpenAI-compatible Chat Completions contract, `thinking`, `reasoning_effort` and JSON mode. It is approved for local/development evaluation only; it is not a production provider decision.
+- Provider selection is fail-closed: only `gemini` and `deepseek` are accepted and there is no automatic fallback between providers. `Nexora.Api` and `Nexora.Worker` resolve the same selected `IAiProvider`.
 - Automated tests that need deterministic provider behavior register a test-project-only provider (`TestAiProvider`); no test double is part of the application runtime or normal development configuration.
 
-Gemini không phải production choice mặc định. DEC-01 vẫn quyết định production provider/model và budgets.
+The document extraction fallback is deliberately independent: `IDocumentOcrProvider` remains `GeminiDocumentOcrProvider` even when `Ai:Provider=deepseek`. Local development therefore keeps both Gemini (OCR) and DeepSeek (text) credentials in secret configuration.
+
+### 2.2 DeepSeek reasoning policy and request safety
+
+DeepSeek uses one provider call per `IAiProvider.GenerateStructuredAsync` invocation (`Ai:DeepSeek:MaxAttempts=1`). `IStructuredAiExecutor` owns the initial call and at most one repair call, so a repair never multiplies into nested provider retries. The operation policy is explicit and configuration-bound:
+
+| Purpose | Thinking | Effort | Development rationale |
+| --- | --- | --- | --- |
+| `resume.profile` | disabled | — | inexpensive extraction |
+| `resume.analysis` | enabled | low | useful comparison with bounded reasoning |
+| `interview.first-question` | disabled | — | deterministic generation |
+| `interview.evaluate` | enabled | high | core rubric/STAR semantic correctness |
+| `interview.followup` | disabled | — | deterministic follow-up generation |
+| `interview.report` | enabled | low | report synthesis with bounded reasoning |
+| `scenario.evaluate` | enabled | low | scenario coaching with bounded reasoning |
+| `star.evaluate` | enabled | high | standalone STAR semantic correctness |
+
+This table is the authoritative cost-aware baseline for the provider. In particular, `interview.report` and `scenario.evaluate` use `low`; no older example or test label that says otherwise should override this Section 7 policy.
+
+#### 2.2.1 Confirmed reasoning-budget fallback
+
+The configured policy is always used for the first attempt. `interview.evaluate` and `star.evaluate` therefore remain **high** by default; this correction does not lower defaults or increase `MaxOutputTokens`.
+
+DeepSeek may attach the provider-neutral `LowerReasoningEffort` retry hint only for an **effective high** policy and only when all of the following are true: `thinking` is enabled, `reasoning_effort` is `high`, `finish_reason` is `length`, the structured content is absent/blank or cannot be deserialized, and non-null usage metadata shows both `completion_tokens` and `reasoning_tokens` at or above the request `MaxOutputTokens` with reasoning at least as large as completion. Missing or inconclusive usage, a generic malformed response, a semantic validation failure, timeout, rate limit or other provider failure keeps existing retry semantics and never selects this fallback. A complete structured JSON result remains a success even when `finish_reason` is `length`. Low-policy operations (`resume.analysis`, `interview.report`, `scenario.evaluate`) do not emit this hint; any ordinary retry remains low without the special fallback telemetry.
+
+When the executor receives that explicit hint on attempt 1, it keeps the original operation, input, schema, instructions and token budget, leaves semantic validation state unset, and performs exactly one retry with the per-attempt `Low` override. The override can only lower an enabled policy; it cannot enable disabled thinking, upgrade an effort, mutate configuration or change appsettings. `DeepSeekAiProvider` still makes one HTTP request per invocation (`MaxAttempts=1`), so the global maximum remains two calls and there is no third or hidden provider retry. A normal high-policy success remains one call, while a successful fallback reports `Attempts=2` and `RepairUsed=false`.
+
+`RepairUsed` continues to mean that `BuildRepairInstructions` was used for a Nexora semantic repair. Semantic repair remains on the normal configured policy and is never treated as reasoning fallback. The fallback adds no additional default paid call; it is only the single, positively-triggered second attempt within the existing budget.
+
+When thinking is disabled, `thinking.type=disabled` is sent and `reasoning_effort` is omitted. When enabled, `thinking.type=enabled` and one of `low`, `high` or manual-only `max` is sent. No operation defaults to `max`, and repair does not escalate effort. Unknown purposes or invalid policy values fail closed before an HTTP call.
+
+The trusted system message contains operation metadata, the approved instructions and the exact Nexora-owned JSON schema. The untrusted CV/JD/answer/scenario text is sent only as the user message. The adapter requires nonblank `choices[0].message.content`, deserializes only that JSON content, ignores `reasoning_content`, and never strips fences or fabricates defaults. HTTP/network/timeout failures are normalized to `AiProviderFailureKind` without copying the provider body into exceptions.
+
+For paid-provider safety, DeepSeek logs metadata-only usage telemetry when the response supplies it: purpose, provider-aware model version, thinking, reasoning effort, latency, prompt/cache hit/cache miss/completion/reasoning/total tokens and finish reason. Confirmed reasoning exhaustion is separately observable through safe metadata (`configuredEffort`, `finishReason`, `reasoningTokens`, `completionTokens`, `maxOutputTokens`, `outcome=reasoning_budget_exhausted`); the executor logs the corresponding effective low retry and reason. It never logs keys, authorization headers, prompts, candidate text, response content or `reasoning_content`, and missing usage is not a request failure. Pricing conversion remains outside the provider because DeepSeek pricing can change. DEC-01 still controls production provider/model and budgets and therefore blocks production AI enablement, not local development or integration tests.
 
 The adapter and executor must never copy a provider response body, credential, prompt, or candidate answer text into an API response or log. Only safe diagnostics (`failureReason`, `stage`, `attempt`, `correlationId`) are recorded.
 
@@ -104,6 +140,12 @@ StartInterview retries must not duplicate session, question, usage event or job 
 - **Follow-up Failure Isolation**:
   - Follow-up question generation failure must **never** fail or discard an already-evaluated candidate answer.
   - When follow-up question generation fails (AI rate-limit, invalid JSON, provider timeout), `PracticeService` falls back to a deterministic, Nexora-owned follow-up question (<= 2,000 chars) and persists the evaluation successfully.
+- **Report STAR story summary**:
+  - Realtime answer evaluation remains independent per answer for immediate coaching. `report.starSummary` is a deterministic story-level view built from the persisted evaluations; it does not trigger another AI operation.
+  - Under the current interview flow, question sequence 1 and every follow-up (sequence > 1) form one behavioral story chain. The report loads question sequence metadata with the session answers and does not require a `ParentQuestionId` or schema migration.
+  - For each Situation/Task/Action/Result component, only valid `detected = true` evaluations with nonblank evidence contribute. The merged component keeps the highest grounded score across the chain; if none is available it is `score = 0`, `detected = false`. A follow-up can strengthen a component but cannot lower unrelated primary-story evidence.
+  - `componentAverages` keeps its existing API name but contains the four merged story component scores. `applicableAnswers` remains the count of valid applicable answer evaluations contributing to the summary (not the number of independent stories). The story `averageScore` is recomputed server-side with the canonical 20/20/35/25 STAR weights; persisted per-answer `overallScore` values are not averaged.
+  - `recurringIssues` is recomputed from the merged components (`detected = false` or `score < 60`); raw per-answer `missingElements` are never unioned, so a follow-up can resolve an earlier missing component. Coaching priorities use feedback attached to the selected merged/weak component evidence, in deterministic weakness order, distinct and capped at three; historical `coachingTips` are not concatenated.
 - **Context Budgeting**:
   - `ResumeContextBuilder` prioritizes candidate answer text, question text, and metadata above background context.
   - Target JD and resume profile summaries are compacted to ensure the candidate's answer is never crowded out or truncated.
@@ -123,4 +165,4 @@ Server computes weighted overall score from validated sub-scores. Store rubric v
 
 ## 6. Cost and observability
 
-Record model, prompt/rubric/schema version, input/output token count, latency, estimated cost, job outcome and correlation ID. **DEC-01 does not block internal Gemini development testing or Phases 0–3.** It blocks real production AI traffic until Product Owner approves (a) production provider/model, (b) per-user daily/monthly budget, (c) global daily budget, (d) alert thresholds and (e) circuit-break action. Initial engineering defaults for development/staging only: alert at 70% configured daily budget, reject new AI jobs at 90%, circuit-break after 10 provider failures in 5 minutes; production values must replace them. Never run three model evaluations per answer in MVP without an explicit product experiment and budget approval.
+Record model, prompt/rubric/schema version, input/output token count, latency, estimated cost, job outcome and correlation ID. **DEC-01 does not block internal Gemini or optional DeepSeek development testing or Phases 0–3.** It blocks real production AI traffic until Product Owner approves (a) production provider/model, (b) per-user daily/monthly budget, (c) global daily budget, (d) alert thresholds and (e) circuit-break action. Initial engineering defaults for development/staging only: alert at 70% configured daily budget, reject new AI jobs at 90%, circuit-break after 10 provider failures in 5 minutes; production values must replace them. Never run three model evaluations per answer in MVP without an explicit product experiment and budget approval.

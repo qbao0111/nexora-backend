@@ -1,7 +1,7 @@
 # Project Technical Specification — Nexora .NET 10 MVP
 
 **Status:** Approved implementation baseline  
-**Last updated:** 2026-08-21
+**Last updated:** 2026-09-07
 
 ## 1. Technical baseline
 
@@ -77,7 +77,7 @@ Production application host (DEC-04)
 - C# nullable enabled, `async` all I/O, cancellation token cho HTTP/job.
 - Controller mỏng: bind DTO → validation → service → DTO response.
 - Business service không phụ thuộc `HttpContext`, controller không gọi `DbContext` trực tiếp.
-- Integration adapter đặt timeout/bounded retry cho external provider. Development uses `GeminiAiProvider`; deterministic AI test doubles, when needed, live only in the test project. `FakePaymentProvider` and `LocalStorageProvider` remain development adapters. Gemini is not a production selection until DEC-01 is approved.
+- Integration adapter đặt timeout/bounded retry cho external provider. Development defaults to `GeminiAiProvider`; optional `DeepSeekAiProvider` may be selected for local text-AI evaluation through `Ai:Provider=deepseek`, while document OCR remains Gemini. Deterministic AI test doubles, when needed, live only in the test project. `FakePaymentProvider` and `LocalStorageProvider` remain development adapters. Neither Gemini nor DeepSeek is a production selection until DEC-01 is approved.
 - EF migrations là artefact source-controlled và review cùng thay đổi entity.
 
 ## 9. Provider decision boundary

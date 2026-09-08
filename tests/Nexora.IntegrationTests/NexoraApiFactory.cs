@@ -36,6 +36,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
         ["Authentication:Jwt:Issuer"] = "Nexora.Tests",
         ["Authentication:Jwt:Audience"] = "Nexora.Tests.Client",
         ["Authentication:Jwt:SigningKey"] = "integration-test-signing-key-32-characters-minimum",
+        ["Ai:Provider"] = "gemini",
         ["Ai:Gemini:ApiKey"] = "test-only-not-used",
         ["Ai:Gemini:Model"] = "test-gemini-model",
         ["Billing:Payment:Provider"] = "fake"
@@ -64,6 +65,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
                 ["Billing:Payment:Provider"] = "fake",
                 ["Billing:FakePayment:WebhookSecret"] = "phase2-test-webhook-key-material",
                 ["Billing:FakePayment:TimestampToleranceMinutes"] = "5",
+                ["Ai:Provider"] = "gemini",
                 ["Ai:Gemini:ApiKey"] = "test-only-not-used",
                 ["Ai:Gemini:Model"] = "test-gemini-model",
                 ["RateLimits:Authentication:PermitLimit"] = "1000",

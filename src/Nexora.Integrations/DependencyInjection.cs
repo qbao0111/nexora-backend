@@ -36,6 +36,10 @@ public static class DependencyInjection
         services.AddSingleton<IDocumentExtractor>(provider => provider.GetRequiredService<PdfDocxDocumentExtractor>());
         services.AddSingleton<IDetailedDocumentExtractor>(provider => provider.GetRequiredService<PdfDocxDocumentExtractor>());
         var aiEnabled = configuration.GetValue("Features:Ai", true);
+        var aiProvider = configuration.GetValue("Ai:Provider", "gemini")?.Trim().ToLowerInvariant() ?? "gemini";
+        if (aiProvider is not ("gemini" or "deepseek"))
+            throw new InvalidOperationException("Ai:Provider must be gemini or deepseek.");
+        var deepSeekEnabled = aiEnabled && string.Equals(aiProvider, "deepseek", StringComparison.Ordinal);
         services.AddOptions<GeminiOptions>().Bind(configuration.GetSection(GeminiOptions.SectionName))
             .Validate(options => !aiEnabled || !string.IsNullOrWhiteSpace(options.ApiKey),
                 "Ai:Gemini:ApiKey must be supplied through secret configuration when Features:Ai is enabled.")
@@ -48,7 +52,27 @@ public static class DependencyInjection
             .Validate(options => options.RetryBaseDelayMilliseconds is >= 0 and <= 5_000, "Gemini retry delay must be between 0 and 5000 milliseconds.")
             .ValidateOnStart();
         services.AddHttpClient<GeminiAiProvider>();
-        services.AddSingleton<IAiProvider>(provider => provider.GetRequiredService<GeminiAiProvider>());
+        services.AddOptions<DeepSeekOptions>().Bind(configuration.GetSection(DeepSeekOptions.SectionName))
+            .Validate(options => !deepSeekEnabled || !string.IsNullOrWhiteSpace(options.ApiKey),
+                "Ai:DeepSeek:ApiKey must be supplied through secret configuration when Ai:Provider=deepseek.")
+            .Validate(options => !deepSeekEnabled || DeepSeekConfigurationValidation.IsOfficialBaseUrl(options.BaseUrl),
+                "Ai:DeepSeek:BaseUrl must be the official HTTPS DeepSeek API base endpoint.")
+            .Validate(options => !deepSeekEnabled || (!string.IsNullOrWhiteSpace(options.Model) && options.Model.Trim().Length <= 80),
+                "Ai:DeepSeek:Model must be configured and 80 characters or fewer.")
+            .Validate(options => !deepSeekEnabled || options.TimeoutSeconds is >= 1 and <= 120,
+                "DeepSeek timeout must be between 1 and 120 seconds.")
+            .Validate(options => !deepSeekEnabled || options.MaxAttempts == 1,
+                "DeepSeek MaxAttempts must be exactly 1; StructuredAiExecutor owns retries.")
+            .Validate(options => !deepSeekEnabled || options.RetryBaseDelayMilliseconds is >= 0 and <= 5_000,
+                "DeepSeek retry delay must be between 0 and 5000 milliseconds.")
+            .Validate(options => !deepSeekEnabled || DeepSeekConfigurationValidation.IsValidReasoningConfiguration(options.Reasoning),
+                "Ai:DeepSeek:Reasoning contains an unsupported policy. Use disabled, or enabled with low, high or max.")
+            .ValidateOnStart();
+        services.AddHttpClient<DeepSeekAiProvider>();
+        services.AddSingleton<IAiProvider>(provider =>
+            string.Equals(aiProvider, "deepseek", StringComparison.Ordinal)
+                ? provider.GetRequiredService<DeepSeekAiProvider>()
+                : provider.GetRequiredService<GeminiAiProvider>());
         services.AddHttpClient<GeminiDocumentOcrProvider>();
         services.AddSingleton<IDocumentOcrProvider>(provider => provider.GetRequiredService<GeminiDocumentOcrProvider>());
         var paymentProvider = configuration.GetValue($"{PaymentProviderOptions.SectionName}:Provider", "fake")?.Trim().ToLowerInvariant() ?? "fake";

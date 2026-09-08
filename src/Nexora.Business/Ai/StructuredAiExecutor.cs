@@ -24,6 +24,7 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
         AiValidationResult<T>? lastValidation = null;
         AiProviderException? lastProviderException = null;
+        AiReasoningEffortOverride? reasoningOverride = null;
 
         for (var attempt = 1; attempt <= MaxAttemptsPerPurpose; attempt++)
         {
@@ -31,6 +32,8 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
             var currentInstructions = isRepairAttempt
                 ? operation.BuildRepairInstructions(lastValidation!, instructions)
                 : instructions;
+            var currentReasoningOverride = reasoningOverride;
+            reasoningOverride = null;
 
             var request = new AiRequest(
                 operation.Purpose,
@@ -42,7 +45,18 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                 operation.OutputSchema,
                 operation.MaxOutputTokens,
                 correlationId,
-                currentInstructions);
+                currentInstructions,
+                currentReasoningOverride);
+
+            if (currentReasoningOverride is not null)
+            {
+                LogReasoningFallbackRetry(
+                    logger,
+                    operation.Purpose,
+                    currentReasoningOverride.Value.ToString().ToLowerInvariant(),
+                    attempt,
+                    correlationId);
+            }
 
             try
             {
@@ -91,6 +105,14 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                 lastProviderException = ex;
                 LogProviderRequestFailed(logger, operation.Purpose, ex.Kind.ToString(), attempt, correlationId);
 
+                if (ex.Kind == AiProviderFailureKind.InvalidResponse &&
+                    ex.RetryHint == AiProviderRetryHint.LowerReasoningEffort &&
+                    lastValidation is null &&
+                    attempt < MaxAttemptsPerPurpose)
+                {
+                    reasoningOverride = AiReasoningEffortOverride.Low;
+                }
+
                 if (ex.Kind is AiProviderFailureKind.Configuration or AiProviderFailureKind.Authentication ||
                     cancellationToken.IsCancellationRequested ||
                     attempt >= MaxAttemptsPerPurpose ||
@@ -130,6 +152,9 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
     [LoggerMessage(LogLevel.Warning, "AI provider request failed: purpose={Purpose}, failureKind={FailureKind}, attempt={Attempt}, correlationId={CorrelationId}")]
     private static partial void LogProviderRequestFailed(ILogger logger, string purpose, string failureKind, int attempt, string correlationId);
+
+    [LoggerMessage(LogLevel.Information, "AI structured retry using reasoning override: purpose={Purpose}, effectiveEffort={EffectiveEffort}, attempt={Attempt}, retryReason=reasoning_budget_exhausted, correlationId={CorrelationId}")]
+    private static partial void LogReasoningFallbackRetry(ILogger logger, string purpose, string effectiveEffort, int attempt, string correlationId);
 
     [LoggerMessage(LogLevel.Error, "AI provider request failed terminal: purpose={Purpose}, failureKind={FailureKind}, attempt={Attempt}, outcome=failed, correlationId={CorrelationId}")]
     private static partial void LogProviderTerminalFailure(ILogger logger, string purpose, string failureKind, int attempt, string correlationId);
