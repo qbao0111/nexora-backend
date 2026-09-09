@@ -3,7 +3,7 @@
 **Status:** Approved implementation baseline  
 **Last updated:** 2026-09-07
 
-DEC-01–04 are production enablement gates, not prerequisites for Phases 0–3. Gemini remains the default internal text-AI path; the optional DeepSeek V4 Flash adapter is available for local text evaluation. FakePayment and LocalStorage remain development adapters until production-specific decisions are approved.
+DEC-01–04 are production enablement gates, not prerequisites for Phases 0–3. Gemini remains the default internal text-AI path; the optional DeepSeek V4 Flash adapter is available for local text evaluation. FakePayment and LocalStorage remain development adapters; the private R2 adapter is available for production-like storage, while final account/hosting enablement remains under DEC-04.
 
 ## Phase 0 — Repository and engineering readiness
 
@@ -21,7 +21,7 @@ DEC-01–04 are production enablement gates, not prerequisites for Phases 0–3.
 - Profile, EF migrations and persistence conventions.
 - Standard error envelope, correlation ID and health endpoints.
 - Ownership/admin authorization policies and negative tests.
-- `IStorageProvider` with `LocalStorageProvider` or development adapter; production private-storage contract remains enforced.
+- `IStorageProvider` with `LocalStorageProvider` for development/testing or `R2StorageProvider` for private production-like storage; production private-storage contract remains enforced. Presigned upload intents are a later A2 task.
 - Replace only auth/profile localStorage paths behind a feature flag.
 
 **Exit:** T-01/T-02 and login E2E pass; API follows `/api/v1` and auth transport ADR.

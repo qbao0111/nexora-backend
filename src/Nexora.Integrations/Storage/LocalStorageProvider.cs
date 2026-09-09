@@ -75,8 +75,8 @@ public sealed class LocalStorageProvider : IStorageProvider
 
     private string ResolvePrivatePath(string storageKey)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(storageKey);
-        var candidate = Path.GetFullPath(Path.Combine(_rootPath, storageKey.Replace('/', Path.DirectorySeparatorChar)));
+        var validatedKey = StorageKeyValidator.Validate(storageKey);
+        var candidate = Path.GetFullPath(Path.Combine(_rootPath, validatedKey.Replace('/', Path.DirectorySeparatorChar)));
         var rootWithSeparator = _rootPath.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         if (!candidate.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Storage key is invalid.", nameof(storageKey));

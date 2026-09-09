@@ -73,7 +73,7 @@ Không chạy drill vào production target. Không ghi connection string/token v
 - **DEC-03:** final retention periods and approved legal/privacy text completed before processing affected personal data in production.
 - **DEC-04:** hosting/storage vendors, domains, mail and infrastructure accounts completed before production deployment.
 
-Development storage may use `LocalStorageProvider` or another adapter, but local filesystem storage is never a production option. The exact deferred-decision wording is canonical in [07-architecture-decisions.md](07-architecture-decisions.md#production-enablement-decisions-dec-01-through-dec-04).
+Development/testing storage may use `LocalStorageProvider`; production-like configuration must use `R2StorageProvider` with private objects and validated HTTPS endpoint/credentials. Local filesystem storage is never a production option. A1 does not ship presigned upload intents; that remains A2. The exact deferred-decision wording is canonical in [07-architecture-decisions.md](07-architecture-decisions.md#production-enablement-decisions-dec-01-through-dec-04).
 
 ## Incident response tối thiểu
 

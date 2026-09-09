@@ -20,6 +20,20 @@ public sealed class ProductionSafetyTests
     }
 
     [Fact]
+    public void ProductionAllowsR2ForUploadWhenOtherDeferredAdaptersAreDisabled()
+    {
+        ProductionSafety.ValidateDevelopmentAdapters(
+            true, aiEnabled: false, paymentEnabled: false, uploadEnabled: true, storageProvider: "r2");
+    }
+
+    [Fact]
+    public void UnknownStorageProviderFailsClosed()
+    {
+        Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
+            false, aiEnabled: false, paymentEnabled: false, uploadEnabled: false, storageProvider: "wat"));
+    }
+
+    [Fact]
     public void ValidateEmailConfigurationInDevelopmentOrTestingAllowsNoopAndHttp()
     {
         var config = CreateEmailConfig(provider: "noop", publicUrl: "http://localhost:3000");

@@ -500,3 +500,15 @@ This log records completed implementation milestones and verification evidence. 
 - Migration impact: none. Existing Scenario/ScenarioAttempt schema and JSON evaluation evidence were reused; no DbContext, migration, ModelSnapshot, Program, Interview or `PracticeService.cs` file was changed. Bookmark is deferred because it needs a user-scenario schema/migration.
 - Verification: solution build passed with 0 warnings/errors; full suite passed with 210 unit and 109 integration tests; B7-specific coverage passed 5/5; Scenario/STAR/SignalR regression filter passed 29/29; scoped `dotnet format --verify-no-changes` and `git diff --check` passed. Tests use SQLite and deterministic AI only; no live provider calls.
 - Remaining dependency/blocker: none for B7. Frontend must consume the new response fields/endpoints; bookmark remains explicitly out of scope.
+
+## 2026-09-10 — A1 Cloudflare R2 storage provider
+
+- Status: Completed
+- Owner: Backend workstream A
+- Branch: `feat/r2-storage-provider`
+- Commit/PR: pending single A1 commit / PR not opened (final SHA recorded in handoff)
+- Scope: Added the provider-neutral R2 implementation, configuration/selection and key validation; no A2 presigned upload flow, migration, domain semantics or live provider calls.
+- Contracts/traceability: `IStorageProvider`; A1 in `implementation_plan.md`; ADR-004 and storage sections in `SPEC.md`, `docs/02-architecture.md` and `docs/04-production-runbook.md`.
+- Files/modules: `src/Nexora.Integrations/Storage/*`, `src/Nexora.Business/Storage/StorageKeyValidator.cs`, integration DI/production safety, API/Worker storage config, package manifest and focused storage tests.
+- Verification: `dotnet restore`; `dotnet build --no-restore Nexora.slnx --nologo` (0 errors, 0 warnings); 265 unit tests and 133 integration tests passed; EF reports no pending model changes; vulnerable-package scan reports none; scoped `dotnet format --verify-no-changes` and `git diff --check` pass. Full solution format still reports 18 pre-existing issues outside this A1 scope.
+- Dependencies: A2 — production upload intents/presigned PUT/finalize flow; DEC-04 final production account/hosting enablement. No migration impact.

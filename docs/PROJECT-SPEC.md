@@ -13,7 +13,7 @@
 | Data | PostgreSQL + Entity Framework Core 10 migrations. |
 | Auth | ASP.NET Core Identity with PostgreSQL EF store; Google OAuth integration. |
 | Jobs | .NET worker/background jobs with persisted state, timeout and bounded retry; concrete queue package selected during implementation if needed. |
-| File storage | `IStorageProvider`; development adapter allowed, production private objects + short-lived signed URLs. |
+| File storage | `IStorageProvider`; `LocalStorageProvider` for development/testing, `R2StorageProvider` for private production-like objects + short-lived signed URLs where supported. |
 | UI hosting | Static frontend on Vercel. |
 | Production hosting | Deferred under DEC-04; API has an independently configurable origin/domain. |
 
@@ -77,7 +77,7 @@ Production application host (DEC-04)
 - C# nullable enabled, `async` all I/O, cancellation token cho HTTP/job.
 - Controller mỏng: bind DTO → validation → service → DTO response.
 - Business service không phụ thuộc `HttpContext`, controller không gọi `DbContext` trực tiếp.
-- Integration adapter đặt timeout/bounded retry cho external provider. Development defaults to `GeminiAiProvider`; optional `DeepSeekAiProvider` may be selected for local text-AI evaluation through `Ai:Provider=deepseek`, while document OCR remains Gemini. Deterministic AI test doubles, when needed, live only in the test project. `FakePaymentProvider` and `LocalStorageProvider` remain development adapters. Neither Gemini nor DeepSeek is a production selection until DEC-01 is approved.
+- Integration adapter đặt timeout/bounded retry cho external provider. Development defaults to `GeminiAiProvider`; optional `DeepSeekAiProvider` may be selected for local text-AI evaluation through `Ai:Provider=deepseek`, while document OCR remains Gemini. Deterministic AI test doubles, when needed, live only in the test project. `FakePaymentProvider` and `LocalStorageProvider` remain development adapters; `R2StorageProvider` is the private storage adapter for production-like configuration. Neither Gemini nor DeepSeek is a production selection until DEC-01 is approved, and final R2 account/hosting enablement remains DEC-04.
 - EF migrations là artefact source-controlled và review cùng thay đổi entity.
 
 ## 9. Provider decision boundary

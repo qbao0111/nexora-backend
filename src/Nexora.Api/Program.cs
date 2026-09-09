@@ -38,7 +38,8 @@ ProductionSafety.ValidateDevelopmentAdapters(
     builder.Environment.IsProduction(),
     builder.Configuration.GetValue("Features:Ai", true),
     builder.Configuration.GetValue("Features:Payment", true),
-    builder.Configuration.GetValue("Features:Upload", true));
+    builder.Configuration.GetValue("Features:Upload", true),
+    builder.Configuration.GetValue<string?>("Storage:Provider"));
 ProductionSafety.ValidateEmailConfiguration(
     builder.Environment.IsProduction() || builder.Environment.IsStaging(),
     builder.Configuration);

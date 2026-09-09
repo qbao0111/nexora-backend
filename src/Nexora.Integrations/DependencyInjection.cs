@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Nexora.Business.Ai;
 using Nexora.Business.Billing;
 using Nexora.Business.Practice;
@@ -24,10 +26,43 @@ public static class DependencyInjection
     public static IServiceCollection AddIntegrations(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddEmail(configuration);
-        services.AddOptions<LocalStorageOptions>().Bind(configuration.GetSection(LocalStorageOptions.SectionName))
-            .Validate(options => !string.IsNullOrWhiteSpace(options.RootPath), "Storage:Local:RootPath is required.")
+        var storageProvider = configuration.GetValue<string?>($"{StorageOptions.SectionName}:Provider")?.Trim().ToLowerInvariant() ?? "local";
+        if (storageProvider is not ("local" or "r2"))
+            throw new InvalidOperationException("Storage:Provider must be local or r2.");
+
+        var r2Enabled = string.Equals(storageProvider, "r2", StringComparison.Ordinal);
+        services.AddOptions<StorageOptions>().Bind(configuration.GetSection(StorageOptions.SectionName))
+            .Validate(options => options.Provider?.Trim().ToLowerInvariant() is "local" or "r2",
+                "Storage:Provider must be local or r2.")
             .ValidateOnStart();
-        services.AddSingleton<IStorageProvider, LocalStorageProvider>();
+        services.AddOptions<R2StorageOptions>().Bind(configuration.GetSection(R2StorageOptions.SectionName))
+            .Validate(options => !r2Enabled || !string.IsNullOrWhiteSpace(options.AccountId),
+                "Storage:R2:AccountId is required when Storage:Provider=r2.")
+            .Validate(options => !r2Enabled || !string.IsNullOrWhiteSpace(options.Bucket),
+                "Storage:R2:Bucket is required when Storage:Provider=r2.")
+            .Validate(options => !r2Enabled || !string.IsNullOrWhiteSpace(options.AccessKeyId),
+                "Storage:R2:AccessKeyId is required when Storage:Provider=r2.")
+            .Validate(options => !r2Enabled || !string.IsNullOrWhiteSpace(options.SecretAccessKey),
+                "Storage:R2:SecretAccessKey is required when Storage:Provider=r2.")
+            .Validate(options => !r2Enabled || R2ConfigurationValidation.IsValidEndpoint(options.Endpoint),
+                "Storage:R2:Endpoint must be an absolute HTTPS URL without credentials, query or fragment when Storage:Provider=r2.")
+            .ValidateOnStart();
+        services.AddOptions<LocalStorageOptions>().Bind(configuration.GetSection(LocalStorageOptions.SectionName))
+            .Validate(options => r2Enabled || !string.IsNullOrWhiteSpace(options.RootPath), "Storage:Local:RootPath is required when Storage:Provider=local.")
+            .ValidateOnStart();
+        services.AddSingleton<LocalStorageProvider>();
+        if (r2Enabled)
+        {
+            services.AddSingleton<IR2ObjectClient, R2ObjectClient>();
+            services.AddSingleton<R2StorageProvider>(provider => new R2StorageProvider(
+                provider.GetRequiredService<IOptions<R2StorageOptions>>(),
+                provider.GetRequiredService<IR2ObjectClient>(),
+                provider.GetRequiredService<TimeProvider>(),
+                provider.GetService<ILogger<R2StorageProvider>>()));
+        }
+        services.AddSingleton<IStorageProvider>(provider => r2Enabled
+            ? provider.GetRequiredService<R2StorageProvider>()
+            : provider.GetRequiredService<LocalStorageProvider>());
         services.AddOptions<UploadOptions>().Bind(configuration.GetSection(UploadOptions.SectionName))
             .Validate(options => options.MaxResumeBytes is > 0 and <= 25 * 1024 * 1024, "Upload limit must be between 1 byte and 25 MiB.")
             .Validate(options => options.IntentMinutes is > 0 and <= 60, "Upload intent lifetime must be between 1 and 60 minutes.");

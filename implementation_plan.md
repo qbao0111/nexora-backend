@@ -382,21 +382,17 @@ Reset password
 
 Tasks:
 
-- [ ] Thêm `Storage:Provider = local | r2`, unknown value fail-closed.
-- [ ] Implement `R2StorageProvider : IStorageProvider`.
-- [ ] S3-compatible Cloudflare R2 config:
+- [x] Thêm `Storage:Provider = local | r2`, unknown value fail-closed.
+- [x] Implement `R2StorageProvider : IStorageProvider`.
+- [x] S3-compatible Cloudflare R2 config:
   - account endpoint;
   - bucket;
   - access key;
-  - secret key;
-  - optional public/custom domain chỉ cho public asset nếu cần.
-- [ ] Prefix object:
-  - `resumes/{userId}/...`
-  - `avatars/{userId}/...`
-  - `audio/{userId}/...` reserved, **không lưu interview audio mặc định**.
-- [ ] `OpenReadAsync` phải dùng được từ Worker để extract CV.
-- [ ] `DeleteAsync` phải được privacy/deletion flow gọi được.
-- [ ] Không log R2 credentials/presigned URL có signature.
+  - secret key. Public/custom domains are intentionally not part of A1; objects remain private.
+- [x] Logical object keys accept the target `resumes/{userId}/...`, `avatars/{userId}/...` and reserved `audio/{userId}/...` prefixes; the existing `IStorageProvider.SaveAsync` key format remains unchanged for backward compatibility until a user-scoped key contract is approved. Audio remains reserved and is not stored by default.
+- [x] `OpenReadAsync` phải dùng được từ Worker để extract CV.
+- [x] `DeleteAsync` phải được privacy/deletion flow gọi được.
+- [x] Không log R2 credentials/presigned URL có signature.
 
 ### A2. Production upload intent [P0]
 
@@ -423,11 +419,11 @@ Tasks:
 
 ### A3. R2 tests
 
-- [ ] Unit test provider mapping/config validation.
-- [ ] Test object key không cho path traversal.
-- [ ] Test delete/open behavior.
+- [x] Unit test provider mapping/config validation.
+- [x] Test object key không cho path traversal.
+- [x] Test delete/open behavior.
 - [ ] Test signed-upload expiry/security.
-- [ ] Không dùng live paid R2 trong unit/integration gate.
+- [x] Không dùng live paid R2 trong unit/integration gate.
 
 ---
 
