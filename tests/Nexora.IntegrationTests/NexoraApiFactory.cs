@@ -31,23 +31,42 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
     internal NexoraApiFactory(IReadOnlyDictionary<string, string?> configurationOverrides) : this((IAiProvider?)null, configurationOverrides) { }
     internal NexoraApiFactory(IReadOnlyDictionary<string, string?> configurationOverrides, Action<IServiceCollection> configureServices) : this((IAiProvider?)null, configurationOverrides, configureServices) { }
 
-    internal NexoraApiFactory(string environment) : this(environment, new Dictionary<string, string?>
-    {
-        ["Features:Ai"] = "false",
-        ["Features:Payment"] = "false",
-        ["Features:Upload"] = "false",
-        ["Authentication:Jwt:Issuer"] = "Nexora.Tests",
-        ["Authentication:Jwt:Audience"] = "Nexora.Tests.Client",
-        ["Authentication:Jwt:SigningKey"] = "integration-test-signing-key-32-characters-minimum",
-        ["Ai:Provider"] = "gemini",
-        ["Ai:Gemini:ApiKey"] = "test-only-not-used",
-        ["Ai:Gemini:Model"] = "test-gemini-model",
-        ["Billing:Payment:Provider"] = "fake"
-    })
+    internal NexoraApiFactory(string environment) : this(environment, new Dictionary<string, string?>())
     { }
 
     internal NexoraApiFactory(string environment, IReadOnlyDictionary<string, string?> configurationOverrides) :
-        this((IAiProvider?)null, configurationOverrides) => _environment = environment;
+        this((IAiProvider?)null, MergeEnvironmentOverrides(environment, configurationOverrides)) => _environment = environment;
+
+    private static Dictionary<string, string?> MergeEnvironmentOverrides(string environment, IReadOnlyDictionary<string, string?> overrides)
+    {
+        var dict = new Dictionary<string, string?>
+        {
+            ["Features:Ai"] = "false",
+            ["Features:Payment"] = "false",
+            ["Features:Upload"] = "false",
+            ["Authentication:Jwt:Issuer"] = "Nexora.Tests",
+            ["Authentication:Jwt:Audience"] = "Nexora.Tests.Client",
+            ["Authentication:Jwt:SigningKey"] = "integration-test-signing-key-32-characters-minimum",
+            ["Ai:Provider"] = "gemini",
+            ["Ai:Gemini:ApiKey"] = "test-only-not-used",
+            ["Ai:Gemini:Model"] = "test-gemini-model",
+            ["Billing:Payment:Provider"] = "fake"
+        };
+        if (environment is "Staging" or "Production")
+        {
+            dict["Authentication:EmailVerification:PublicUrl"] = "https://staging.nexora.app";
+            dict["Email:Provider"] = "resend";
+            dict["Email:FromAddress"] = "support@nexora.app";
+            dict["Email:FromName"] = "Nexora";
+            dict["Email:Resend:ApiKey"] = "re_staging_test_api_key_12345";
+            dict["Email:Resend:ApiBaseUrl"] = "https://api.resend.com";
+        }
+        foreach (var (key, value) in overrides)
+        {
+            dict[key] = value;
+        }
+        return dict;
+    }
 
     private NexoraApiFactory(IAiProvider? aiProvider, IReadOnlyDictionary<string, string?>? configurationOverrides, Action<IServiceCollection>? configureServices = null)
     {

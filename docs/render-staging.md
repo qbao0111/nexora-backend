@@ -83,6 +83,8 @@ The frontend team and stakeholders accept the following constraints of Render Fr
 - `Authentication__RefreshCookie__Secure=true`
 - `Billing__Payment__Provider=sepay`
 - `Billing__Sepay__Environment=Sandbox`
+- `Email__Provider=resend`
+- `Email__FromName=Nexora`
 - `Frontend__AllowedOrigins__0=http://localhost:3000`
 - `Frontend__AllowedOrigins__1=http://localhost:5173`
 - `Frontend__AllowedOrigins__2=http://127.0.0.1:3000`
@@ -92,6 +94,9 @@ The frontend team and stakeholders accept the following constraints of Render Fr
 ### Secure Secrets (Configure in Render Dashboard or CLI)
 - `ConnectionStrings__Postgres`: Non-production Neon connection string (`sslmode=require`).
 - `Authentication__Jwt__SigningKey`: 64+ character cryptographically secure key.
+- `Authentication__EmailVerification__PublicUrl`: Frontend URL (e.g. `https://nexora-staging.vercel.app` or custom HTTPS domain).
+- `Email__FromAddress`: Verified sending email address (e.g. `onboarding@resend.dev` or domain address).
+- `Email__Resend__ApiKey`: Resend API key (`re_...`).
 - `Ai__Gemini__ApiKey`: Google Gemini API key.
 - `Ai__Gemini__Model`: `gemini-3.5-flash-lite`.
 - `Billing__Sepay__MerchantId`: SePay Sandbox Merchant ID.

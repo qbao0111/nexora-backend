@@ -39,6 +39,9 @@ ProductionSafety.ValidateDevelopmentAdapters(
     builder.Configuration.GetValue("Features:Ai", true),
     builder.Configuration.GetValue("Features:Payment", true),
     builder.Configuration.GetValue("Features:Upload", true));
+ProductionSafety.ValidateEmailConfiguration(
+    builder.Environment.IsProduction() || builder.Environment.IsStaging(),
+    builder.Configuration);
 builder.Services.AddIntegrations(builder.Configuration);
 builder.Services.AddControllers(options => options.Conventions.Add(new DevelopmentOnlyControllerConvention(builder.Environment)));
 builder.Services.AddOpenApi(OpenApiConfiguration.Configure);

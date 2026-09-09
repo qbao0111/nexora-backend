@@ -1,9 +1,11 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Nexora.Data.Persistence;
 
 namespace Nexora.IntegrationTests;
@@ -400,6 +402,219 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var error = json.RootElement.GetProperty("error");
         Assert.Equal("CSRF_ORIGIN_INVALID", error.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task LegacyUserCreatedBeforeRolloutCutoffIsConfirmedAndCanLogin()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"legacy-{Guid.NewGuid():N}@example.test";
+        var password = "Strong!Pass123";
+        var cutoff = DateTimeOffset.Parse("2026-09-09T12:00:00+00:00", CultureInfo.InvariantCulture);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var userManager = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<Nexora.Data.Identity.ApplicationUser>>();
+            var user = new Nexora.Data.Identity.ApplicationUser
+            {
+                Id = Guid.NewGuid(),
+                UserName = email,
+                Email = email,
+                EmailConfirmed = true,
+                CreatedAt = cutoff,
+                UpdatedAt = cutoff,
+                IsActive = true,
+                SecurityStamp = Guid.NewGuid().ToString("N")
+            };
+            var createResult = await userManager.CreateAsync(user, password);
+            Assert.True(createResult.Succeeded);
+            await userManager.AddToRoleAsync(user, Nexora.Business.Authorization.RoleNames.User);
+
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            db.UserProfiles.Add(new Nexora.Data.Identity.UserProfile
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                DisplayName = "Legacy User",
+                CreatedAt = cutoff,
+                UpdatedAt = cutoff
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        Assert.Contains(login.Headers.GetValues("Set-Cookie"), value => value.StartsWith("nexora.refresh=", StringComparison.Ordinal));
+
+        var accessToken = await ReadAccessTokenAsync(login);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        using var me = await client.GetAsync("/api/v1/me");
+        Assert.Equal(HttpStatusCode.OK, me.StatusCode);
+    }
+
+    [Fact]
+    public async Task MigrationBackfillSetsEmailConfirmedTrueForUsersCreatedBeforeCutoff()
+    {
+        var emailPre = $"pre-backfill-{Guid.NewGuid():N}@example.test";
+        var emailPost = $"post-cutoff-{Guid.NewGuid():N}@example.test";
+        var password = "Strong!Pass123";
+        var preDate = DateTimeOffset.Parse("2026-09-01T00:00:00+00:00", CultureInfo.InvariantCulture);
+        var postDate = DateTimeOffset.Parse("2026-09-11T00:00:00+00:00", CultureInfo.InvariantCulture);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var userManager = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<Nexora.Data.Identity.ApplicationUser>>();
+            var userPre = new Nexora.Data.Identity.ApplicationUser
+            {
+                Id = Guid.NewGuid(),
+                UserName = emailPre,
+                Email = emailPre,
+                EmailConfirmed = false,
+                CreatedAt = preDate,
+                UpdatedAt = preDate,
+                IsActive = true
+            };
+            var userPost = new Nexora.Data.Identity.ApplicationUser
+            {
+                Id = Guid.NewGuid(),
+                UserName = emailPost,
+                Email = emailPost,
+                EmailConfirmed = false,
+                CreatedAt = postDate,
+                UpdatedAt = postDate,
+                IsActive = true
+            };
+            await userManager.CreateAsync(userPre, password);
+            await userManager.CreateAsync(userPost, password);
+
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                UPDATE "asp_net_users"
+                SET "EmailConfirmed" = TRUE
+                WHERE "EmailConfirmed" = FALSE
+                  AND "CreatedAt" < '2026-09-10T00:00:00+00:00';
+                """);
+            db.ChangeTracker.Clear();
+
+            var updatedPre = await userManager.FindByEmailAsync(emailPre);
+            var updatedPost = await userManager.FindByEmailAsync(emailPost);
+            Assert.NotNull(updatedPre);
+            Assert.NotNull(updatedPost);
+            Assert.True(updatedPre.EmailConfirmed);
+            Assert.False(updatedPost.EmailConfirmed);
+        }
+    }
+
+    [Fact]
+    public async Task RegisterWhenEmailSenderFailsReturnsCreatedWithoutSessionAndRequiresVerification()
+    {
+        await using var factory = new NexoraApiFactory(
+            new Dictionary<string, string?>(),
+            services =>
+            {
+                services.RemoveAll<Nexora.Business.Email.IEmailSender>();
+                services.AddSingleton<Nexora.Business.Email.IEmailSender, FailingEmailSender>();
+            });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var email = $"failing-email-{Guid.NewGuid():N}@example.test";
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email,
+            password = "Strong!Pass123",
+            displayName = "Candidate Fail"
+        });
+
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+        Assert.DoesNotContain(register.Headers, header => string.Equals(header.Key, "Set-Cookie", StringComparison.OrdinalIgnoreCase));
+        using (var registrationBody = JsonDocument.Parse(await register.Content.ReadAsStringAsync()))
+        {
+            var data = registrationBody.RootElement.GetProperty("data");
+            Assert.Equal(email, data.GetProperty("email").GetString());
+            Assert.True(data.GetProperty("verificationRequired").GetBoolean());
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var userManager = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<Nexora.Data.Identity.ApplicationUser>>();
+            var user = await userManager.FindByEmailAsync(email);
+            Assert.NotNull(user);
+            Assert.False(user.EmailConfirmed);
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Empty(await db.Entitlements.Where(item => item.UserId == user.Id).ToListAsync());
+        }
+
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.Unauthorized, login.StatusCode);
+        Assert.Equal("EMAIL_NOT_VERIFIED", await ReadErrorCodeAsync(login));
+    }
+
+    [Fact]
+    public async Task ResendVerificationWhenEmailSenderFailsReturnsGenericOkWithoutLeakingFailure()
+    {
+        await using var factory = new NexoraApiFactory(
+            new Dictionary<string, string?>(),
+            services =>
+            {
+                services.RemoveAll<Nexora.Business.Email.IEmailSender>();
+                services.AddSingleton<Nexora.Business.Email.IEmailSender, FailingEmailSender>();
+            });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var email = $"resend-fail-{Guid.NewGuid():N}@example.test";
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email,
+            password = "Strong!Pass123",
+            displayName = "Candidate Resend Fail"
+        });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+
+        using var resendKnown = await client.PostAsJsonAsync("/api/v1/auth/resend-verification", new { email });
+        using var resendUnknown = await client.PostAsJsonAsync("/api/v1/auth/resend-verification", new { email = $"missing-{Guid.NewGuid():N}@example.test" });
+
+        Assert.Equal(HttpStatusCode.OK, resendKnown.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, resendUnknown.StatusCode);
+        Assert.Equal(await resendKnown.Content.ReadAsStringAsync(), await resendUnknown.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public void StagingStartupFailsClosedWhenEmailProviderIsNoop()
+    {
+        using var factory = new NexoraApiFactory("Staging", new Dictionary<string, string?>
+        {
+            ["Email:Provider"] = "noop"
+        });
+        var ex = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
+        Assert.True(ex is InvalidOperationException || ex.InnerException is InvalidOperationException);
+    }
+
+    [Fact]
+    public void StagingStartupFailsClosedWhenPublicUrlIsNotHttps()
+    {
+        using var factory = new NexoraApiFactory("Staging", new Dictionary<string, string?>
+        {
+            ["Email:Provider"] = "resend",
+            ["Email:FromAddress"] = "support@nexora.app",
+            ["Email:FromName"] = "Nexora",
+            ["Email:Resend:ApiKey"] = "re_staging_key",
+            ["Authentication:EmailVerification:PublicUrl"] = "http://localhost:3000"
+        });
+        var ex = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
+        Assert.True(ex is InvalidOperationException || ex.InnerException is InvalidOperationException);
+    }
+
+    private sealed class FailingEmailSender : Nexora.Business.Email.IEmailSender
+    {
+        public Task SendVerificationAsync(Nexora.Business.Email.VerificationEmail message, CancellationToken cancellationToken) =>
+            throw new HttpRequestException("Resend service unreachable.");
+
+        public Task SendPasswordResetAsync(Nexora.Business.Email.PasswordResetEmail message, CancellationToken cancellationToken) =>
+            throw new HttpRequestException("Resend service unreachable.");
+
+        public Task SendReminderAsync(Nexora.Business.Email.ReminderEmail message, CancellationToken cancellationToken) =>
+            throw new HttpRequestException("Resend service unreachable.");
     }
 
     private static async Task RegisterAndVerifyAsync(HttpClient client, string email)
