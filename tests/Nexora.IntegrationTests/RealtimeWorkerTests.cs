@@ -11,7 +11,9 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Nexora.Business.Ai;
 using Nexora.Business.Billing;
 using Nexora.Business.Practice;
+using Nexora.Data.Billing;
 using Nexora.Data.Persistence;
+using Nexora.Data.Practice;
 using Nexora.Data.Realtime;
 using static Nexora.IntegrationTests.RealtimeApiTests;
 
@@ -134,6 +136,92 @@ public sealed class RealtimeWorkerTests
         Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.Action == BillingValues.Void));
     }
 
+    [Fact]
+    public async Task ScenarioAndStarWorkersPublishCompletedEventsAndRestMatches()
+    {
+        using var factory = CreateFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client);
+        await SeedFeatureEntitlementsAsync(factory, owner.UserId, [FeatureValues.Scenario, FeatureValues.StarBuilder], 1);
+        var scenario = await SeedPublishedScenarioAsync(factory);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.Token);
+        using var socket = await ConnectAsync(factory, owner.Token);
+
+        var scenarioAttempt = await PostAsync(client, "/api/v1/scenario-attempts", new { scenarioId = scenario.Id });
+        var scenarioAttemptId = scenarioAttempt.GetProperty("id").GetGuid();
+        await PostAsync(client, $"/api/v1/scenario-attempts/{scenarioAttemptId}/submit", new { answer = "I would analyze the root cause, align stakeholders and measure the result." });
+        var starAttempt = await PostAsync(client, "/api/v1/star-attempts", new
+        {
+            question = "Hãy kể về một lần bạn giải quyết vấn đề.",
+            answer = "Tôi phân tích nguyên nhân, thực hiện thay đổi và đo kết quả."
+        });
+        var starAttemptId = starAttempt.GetProperty("id").GetGuid();
+
+        await ProcessScenarioStarJobsAsync(factory);
+
+        await AssertNotificationAsync(factory, owner.UserId, "scenarioAttempt", scenarioAttemptId, PracticeFeatureValues.Completed);
+        await AssertNotificationAsync(factory, owner.UserId, "starAttempt", starAttemptId, PracticeFeatureValues.Completed);
+        using var broadcaster = CreateBroadcaster(factory);
+        Assert.Equal(2, await broadcaster.BroadcastPendingAsync(CancellationToken.None));
+        var events = new[] { await socket.ReadEventAsync(), await socket.ReadEventAsync() };
+        Assert.Contains(events, item => item.GetProperty("resourceType").GetString() == "scenarioAttempt" &&
+            item.GetProperty("resourceId").GetGuid() == scenarioAttemptId && item.GetProperty("status").GetString() == PracticeFeatureValues.Completed);
+        Assert.Contains(events, item => item.GetProperty("resourceType").GetString() == "starAttempt" &&
+            item.GetProperty("resourceId").GetGuid() == starAttemptId && item.GetProperty("status").GetString() == PracticeFeatureValues.Completed);
+
+        using var scenarioResponse = await client.GetAsync($"/api/v1/scenario-attempts/{scenarioAttemptId}");
+        Assert.Equal(PracticeFeatureValues.Completed, (await DataAsync(scenarioResponse)).GetProperty("status").GetString());
+        using var starResponse = await client.GetAsync($"/api/v1/star-attempts/{starAttemptId}");
+        Assert.Equal(PracticeFeatureValues.Completed, (await DataAsync(starResponse)).GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task ScenarioAndStarWorkerFailuresPublishFailedEventsAndRestMatches()
+    {
+        var ai = new TestAiProvider();
+        ai.EnqueueResponse(AiPurposes.ScenarioEvaluate, new TimeoutException("Synthetic scenario failure"));
+        ai.EnqueueResponse(AiPurposes.ScenarioEvaluate, new TimeoutException("Synthetic scenario failure retry"));
+        ai.EnqueueResponse(AiPurposes.StarEvaluate, new TimeoutException("Synthetic STAR failure"));
+        ai.EnqueueResponse(AiPurposes.StarEvaluate, new TimeoutException("Synthetic STAR failure retry"));
+        using var factory = CreateFactory(configure: services =>
+        {
+            services.RemoveAll<IAiProvider>();
+            services.AddSingleton<IAiProvider>(ai);
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client);
+        await SeedFeatureEntitlementsAsync(factory, owner.UserId, [FeatureValues.Scenario, FeatureValues.StarBuilder], 1);
+        var scenario = await SeedPublishedScenarioAsync(factory);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.Token);
+        using var socket = await ConnectAsync(factory, owner.Token);
+
+        var scenarioAttempt = await PostAsync(client, "/api/v1/scenario-attempts", new { scenarioId = scenario.Id });
+        var scenarioAttemptId = scenarioAttempt.GetProperty("id").GetGuid();
+        await PostAsync(client, $"/api/v1/scenario-attempts/{scenarioAttemptId}/submit", new { answer = "Synthetic answer." });
+        var starAttempt = await PostAsync(client, "/api/v1/star-attempts", new
+        {
+            question = "Hãy kể về một lần bạn giải quyết vấn đề.",
+            answer = "Synthetic STAR answer."
+        });
+        var starAttemptId = starAttempt.GetProperty("id").GetGuid();
+
+        await ProcessScenarioStarJobsAsync(factory);
+
+        await AssertNotificationAsync(factory, owner.UserId, "scenarioAttempt", scenarioAttemptId, PracticeFeatureValues.Failed);
+        await AssertNotificationAsync(factory, owner.UserId, "starAttempt", starAttemptId, PracticeFeatureValues.Failed);
+        using var broadcaster = CreateBroadcaster(factory);
+        Assert.Equal(2, await broadcaster.BroadcastPendingAsync(CancellationToken.None));
+        var events = new[] { await socket.ReadEventAsync(), await socket.ReadEventAsync() };
+        Assert.All(events, item => Assert.Equal(PracticeFeatureValues.Failed, item.GetProperty("status").GetString()));
+
+        using var scenarioResponse = await client.GetAsync($"/api/v1/scenario-attempts/{scenarioAttemptId}");
+        Assert.Equal(PracticeFeatureValues.Failed, (await DataAsync(scenarioResponse)).GetProperty("status").GetString());
+        using var starResponse = await client.GetAsync($"/api/v1/star-attempts/{starAttemptId}");
+        Assert.Equal(PracticeFeatureValues.Failed, (await DataAsync(starResponse)).GetProperty("status").GetString());
+    }
+
     private static async Task AssertNotificationAsync(NexoraApiFactory factory, Guid userId, string type, Guid id, string status)
     {
         using var scope = factory.Services.CreateScope();
@@ -144,6 +232,82 @@ public sealed class RealtimeWorkerTests
         Assert.Equal(type, notification.ResourceType);
         Assert.Equal(status, notification.Status);
         Assert.Null(notification.ProcessedAt);
+    }
+
+    private static async Task SeedFeatureEntitlementsAsync(NexoraApiFactory factory, Guid userId, IReadOnlyCollection<string> featureCodes, int limit)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var plan = new Plan { Id = Guid.NewGuid(), Code = $"realtime-feature-{Guid.NewGuid():N}", Name = "Realtime feature test", IsActive = true, CreatedAt = now };
+        var price = new PlanPrice { Id = Guid.NewGuid(), PlanId = plan.Id, AmountMinor = 1, Currency = "VND", DurationDays = 30, InterviewQuota = 1, IsActive = true, CreatedAt = now };
+        var subscription = new Subscription { Id = Guid.NewGuid(), UserId = userId, Status = BillingValues.Active, StartsAt = now.AddMinutes(-1), EndsAt = now.AddDays(30), CreatedAt = now, UpdatedAt = now };
+        var entitlement = new Entitlement
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            SubscriptionId = subscription.Id,
+            PlanCodeSnapshot = plan.Code,
+            Status = BillingValues.Active,
+            InterviewLimit = 1,
+            StartsAt = subscription.StartsAt,
+            EndsAt = subscription.EndsAt,
+            CreatedAt = now,
+            UpdatedAt = now,
+            ConcurrencyToken = Guid.NewGuid()
+        };
+        db.AddRange(plan, price, subscription, entitlement);
+        foreach (var featureCode in featureCodes)
+        {
+            var featureDefinition = await db.FeatureDefinitions.SingleAsync(item => item.Code == featureCode);
+            db.EntitlementFeatures.Add(new EntitlementFeature
+            {
+                Id = Guid.NewGuid(),
+                EntitlementId = entitlement.Id,
+                FeatureDefinitionId = featureDefinition.Id,
+                FeatureCode = featureCode,
+                IsEnabled = true,
+                Limit = limit,
+                CreatedAt = now,
+                UpdatedAt = now,
+                ConcurrencyToken = Guid.NewGuid()
+            });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<Scenario> SeedPublishedScenarioAsync(NexoraApiFactory factory)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var category = await db.ScenarioCategories.FirstAsync();
+        var scenario = new Scenario
+        {
+            Id = Guid.NewGuid(),
+            Slug = $"realtime-scenario-{Guid.NewGuid():N}",
+            Title = "Realtime scenario test",
+            Summary = "Published scenario for SignalR tests",
+            CategoryId = category.Id,
+            Difficulty = "medium",
+            Competency = "problem_analysis",
+            EstimatedMinutes = 15,
+            Content = "A scenario body for deterministic realtime notification tests.",
+            SortOrder = 1,
+            Status = PracticeFeatureValues.Published,
+            CreatedAt = now,
+            UpdatedAt = now,
+            PublishedAt = now
+        };
+        db.Scenarios.Add(scenario);
+        await db.SaveChangesAsync();
+        return scenario;
+    }
+
+    private static async Task ProcessScenarioStarJobsAsync(NexoraApiFactory factory)
+    {
+        using var scope = factory.Services.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<IScenarioStarJobProcessor>().ProcessPendingAsync(CancellationToken.None);
     }
 
     private static async Task<Guid> UploadResumeAsync(HttpClient client, bool invalid)

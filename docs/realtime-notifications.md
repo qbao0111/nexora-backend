@@ -50,6 +50,8 @@ answers, evaluation, report, provider information or secrets.
 | `resumeAnalysis` | `completed`, `failed` | `GET /api/v1/resume-analyses/{id}` |
 | `interview` | `active`, `failed` | `GET /api/v1/interviews/{id}` |
 | `interview` | `completed` | `GET /api/v1/interviews/{id}/report` (or interview state if that is the mounted view) |
+| `scenarioAttempt` | `completed`, `failed` | `GET /api/v1/scenario-attempts/{id}` |
+| `starAttempt` | `completed`, `failed` | `GET /api/v1/star-attempts/{id}` |
 
 No events for uploaded, extracting, processing, starting or completing.
 **Report generation failure deliberately emits no event.** The existing interview
@@ -89,6 +91,8 @@ connection.on("resourceChanged", async event => {
       ? `/interviews/${id}/report`
       : `/interviews/${id}`;
   }
+  if (event.resourceType === "scenarioAttempt") path = `/scenario-attempts/${id}`;
+  if (event.resourceType === "starAttempt") path = `/star-attempts/${id}`;
   if (!path) return;
   seen.add(event.eventId); // before awaiting: concurrent duplicate delivery is ignored
   if (seen.size > 1000) seen.delete(seen.values().next().value);
