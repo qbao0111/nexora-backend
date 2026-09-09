@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
@@ -79,6 +80,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
         });
         builder.ConfigureServices(services =>
         {
+            services.AddDataProtection().UseEphemeralDataProtectionProvider();
             services.RemoveAll<DbContextOptions<NexoraDbContext>>();
             services.RemoveAll<IDbContextOptionsConfiguration<NexoraDbContext>>();
             services.AddDbContext<NexoraDbContext>(options => options.UseSqlite(_connectionString));

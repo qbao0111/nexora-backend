@@ -68,6 +68,71 @@ public sealed record ScenarioAttemptView(
     DateTimeOffset CreatedAt,
     DateTimeOffset? CompletedAt);
 
+public sealed record ScenarioAttemptHistoryItem(
+    Guid Id,
+    int AttemptNumber,
+    string Status,
+    string? Answer,
+    int? OverallScore,
+    int? PreviousScore,
+    int? ScoreDelta,
+    bool? Improved,
+    string? ErrorCode,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? CompletedAt);
+
+public sealed record ScenarioAttemptComparison(
+    int? CurrentScore,
+    int? PreviousScore,
+    int? Delta,
+    bool? Improved);
+
+public sealed record ScenarioAttemptHistoryView(
+    Guid ScenarioId,
+    string ScenarioSlug,
+    string ScenarioTitle,
+    string CategorySlug,
+    string CategoryName,
+    string Difficulty,
+    string Competency,
+    IReadOnlyCollection<ScenarioAttemptHistoryItem> Attempts,
+    ScenarioAttemptComparison Comparison,
+    int? LatestScore,
+    int? BestScore);
+
+public sealed record ScenarioTrackProgress(
+    string CategorySlug,
+    string CategoryName,
+    int AttemptCount,
+    int CompletedAttempts,
+    double? AverageScore,
+    int? LatestScore);
+
+public sealed record ScenarioCompetencyProgress(
+    string Competency,
+    int AttemptCount,
+    int CompletedAttempts,
+    double? AverageScore,
+    int? BestScore,
+    int? LatestScore);
+
+public sealed record ScenarioDifficultyProgress(
+    string Difficulty,
+    int AttemptCount,
+    int CompletedAttempts,
+    double? AverageScore);
+
+public sealed record ScenarioProgressView(
+    string RecommendedDifficulty,
+    int AttemptCount,
+    int CompletedAttempts,
+    double? AverageScore,
+    int? LatestScore,
+    int? BestScore,
+    IReadOnlyCollection<ScenarioTrackProgress> Tracks,
+    IReadOnlyCollection<ScenarioCompetencyProgress> Competencies,
+    IReadOnlyCollection<ScenarioDifficultyProgress> Difficulties);
+
 public sealed record StarAttemptView(
     Guid Id,
     string Question,
@@ -99,8 +164,11 @@ public interface IScenarioService
     Task<ScenarioDetailView> GetScenarioAsync(string slugOrId, CancellationToken cancellationToken);
     Task<ScenarioAttemptView> CreateAttemptAsync(Guid userId, Guid scenarioId, string idempotencyKey, CancellationToken cancellationToken);
     Task<ScenarioAttemptView> SubmitAttemptAsync(Guid userId, Guid attemptId, string answer, string idempotencyKey, CancellationToken cancellationToken);
+    Task<ScenarioAttemptView> RetryAttemptAsync(Guid userId, Guid scenarioId, string idempotencyKey, CancellationToken cancellationToken);
     Task<ScenarioAttemptView> GetAttemptAsync(Guid userId, Guid attemptId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<ScenarioAttemptView>> GetAttemptsAsync(Guid userId, CancellationToken cancellationToken);
+    Task<ScenarioAttemptHistoryView> GetAttemptHistoryAsync(Guid userId, string slugOrId, CancellationToken cancellationToken);
+    Task<ScenarioProgressView> GetProgressAsync(Guid userId, CancellationToken cancellationToken);
 }
 
 public sealed record ScenarioPage(int Total, IReadOnlyCollection<ScenarioCardView> Items);

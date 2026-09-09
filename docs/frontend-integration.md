@@ -269,18 +269,22 @@ Stable feature codes: `cv_analysis`, `interview`, `scenario`, `star_builder`, `a
 
 ### Quy trình tương tác API
 1. `GET /api/v1/scenarios` (`200`, Bearer): lists published scenarios with category, difficulty (`easy`, `medium`, `hard`), and competency. Browsing scenarios does NOT consume quota. Hỗ trợ query params: `category`, `difficulty`, `competency`, `search`, `page`, `pageSize`.
-2. `GET /api/v1/scenarios/{id-or-slug}` (`200`, Bearer): fetches scenario details bao gồm toàn bộ nội dung markdown (`content`).
-3. `POST /api/v1/scenario-attempts` (`201`, Bearer + `Idempotency-Key`):
+2. `GET /api/v1/scenarios/categories` (`200`, Bearer): returns active tracks/categories for grouping the library. Use the returned `slug` as the `category` filter.
+3. `GET /api/v1/scenarios/progress` (`200`, Bearer): returns the user's scenario progression, including track/category aggregates, competency aggregates, difficulty aggregates, latest/best score and `recommendedDifficulty`. Only completed attempts with a valid `overallScore` contribute to score aggregates. A latest completed score of `80+` advances one difficulty level (`easy → medium → hard`); lower scores keep the latest level. With no completed attempt, the recommendation is `easy`.
+4. `GET /api/v1/scenarios/{id-or-slug}` (`200`, Bearer): fetches scenario details bao gồm toàn bộ nội dung markdown (`content`).
+5. `POST /api/v1/scenario-attempts` (`201`, Bearer + `Idempotency-Key`):
    ```json
    { "scenarioId": "..." }
    ```
    Creates or returns the user's active draft attempt.
-4. `POST /api/v1/scenario-attempts/{attemptId}/submit` (`202`, Bearer + `Idempotency-Key`):
+6. `POST /api/v1/scenarios/{scenarioId}/retry` (`201`, Bearer + `Idempotency-Key`): creates a new draft for an already finished scenario attempt. It returns `409 SCENARIO_ATTEMPT_IN_PROGRESS` when the latest attempt is still a draft, queued or processing.
+7. `GET /api/v1/scenarios/{id-or-slug}/attempts` (`200`, Bearer): returns this user's newest-first attempt history for one scenario. Each completed attempt includes `overallScore`, `previousScore`, `scoreDelta` and `improved`; failed/incomplete attempts do not affect score comparison. The top-level `comparison` compares the latest two usable attempts with `currentScore`, `previousScore`, `delta` and `improved`. Raw evaluation JSON is intentionally not included in this history response.
+8. `POST /api/v1/scenario-attempts/{attemptId}/submit` (`202`, Bearer + `Idempotency-Key`):
    ```json
    { "answer": "Detailed structured answer addressing the prompt..." }
    ```
    Reserves 1 scenario quota event and queues background AI evaluation.
-5. Poll `GET /api/v1/scenario-attempts/{attemptId}` (`200`):
+9. Poll `GET /api/v1/scenario-attempts/{attemptId}` (`200`):
    Status moves `submitted → processing → completed` (or `failed`). Upon successful evaluation, 1 quota is consumed. If evaluation fails, the reserved quota is voided.
    Evaluation output includes:
    `overallScore`, `dimensions: [{ criterion, score, evidence, feedback }]`, `strengths`, `gaps`, `recommendedApproach`, and `feedback`.

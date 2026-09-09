@@ -12,6 +12,13 @@ public sealed record ScenarioCardResponse(Guid Id, string Slug, string Title, st
 public sealed record ScenarioDetailResponse(Guid Id, string Slug, string Title, string Summary, string CategorySlug, string CategoryName, string Difficulty, string Competency, int EstimatedMinutes, string Content);
 public sealed record ScenarioPageResponse(int Total, IReadOnlyCollection<ScenarioCardResponse> Items);
 public sealed record ScenarioAttemptResponse(Guid Id, Guid ScenarioId, string ScenarioTitle, string Status, string? Answer, object? Evaluation, string? ErrorCode, DateTimeOffset CreatedAt, DateTimeOffset? CompletedAt);
+public sealed record ScenarioAttemptHistoryItemResponse(Guid Id, int AttemptNumber, string Status, string? Answer, int? OverallScore, int? PreviousScore, int? ScoreDelta, bool? Improved, string? ErrorCode, DateTimeOffset CreatedAt, DateTimeOffset? CompletedAt);
+public sealed record ScenarioAttemptComparisonResponse(int? CurrentScore, int? PreviousScore, int? Delta, bool? Improved);
+public sealed record ScenarioAttemptHistoryResponse(Guid ScenarioId, string ScenarioSlug, string ScenarioTitle, string CategorySlug, string CategoryName, string Difficulty, string Competency, IReadOnlyCollection<ScenarioAttemptHistoryItemResponse> Attempts, ScenarioAttemptComparisonResponse Comparison, int? LatestScore, int? BestScore);
+public sealed record ScenarioTrackProgressResponse(string CategorySlug, string CategoryName, int AttemptCount, int CompletedAttempts, double? AverageScore, int? LatestScore);
+public sealed record ScenarioCompetencyProgressResponse(string Competency, int AttemptCount, int CompletedAttempts, double? AverageScore, int? BestScore, int? LatestScore);
+public sealed record ScenarioDifficultyProgressResponse(string Difficulty, int AttemptCount, int CompletedAttempts, double? AverageScore);
+public sealed record ScenarioProgressResponse(string RecommendedDifficulty, int AttemptCount, int CompletedAttempts, double? AverageScore, int? LatestScore, int? BestScore, IReadOnlyCollection<ScenarioTrackProgressResponse> Tracks, IReadOnlyCollection<ScenarioCompetencyProgressResponse> Competencies, IReadOnlyCollection<ScenarioDifficultyProgressResponse> Difficulties);
 public sealed record StarAttemptResponse(Guid Id, string Question, string Answer, string Status, object? Evaluation, string? ErrorCode, DateTimeOffset CreatedAt, DateTimeOffset? CompletedAt);
 
 public sealed record ProgressResponse(
