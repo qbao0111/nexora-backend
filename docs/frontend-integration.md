@@ -41,7 +41,9 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
    { "email": "candidate@example.com", "password": "...", "displayName": "Candidate" }
    ```
 
-   Registration returns `{ "email": "...", "verificationRequired": true }` and does not set a refresh cookie. The verification email link contains the `userId` and one-time Identity token; POST them to `/auth/verify-email`. Only after verification does login return `data.accessToken`, set the refresh cookie, and provision the default 100-year Free Plan entitlement with 1 mock interview. Verification retries do not create duplicate entitlements.
+Registration returns `{ "email": "...", "verificationRequired": true }` and does not set a refresh cookie. The verification email link contains the `userId` and one-time Identity token; POST them to `/auth/verify-email`. Only after verification does login return `data.accessToken`, set the refresh cookie, and provision the default 100-year Free Plan entitlement with 1 mock interview. Verification retries do not create duplicate entitlements.
+
+For password recovery, call `POST /auth/forgot-password` with `{ "email": "..." }`. The response is intentionally generic for both existing and unknown emails. If a reset email arrives, POST its `userId`, `token` and the new password to `/auth/reset-password`; a successful reset revokes existing sessions, so clear the in-memory access token and show the login screen.
 
 2. `GET /me` (`200`) to hydrate the current user, assigned roles (`["User"]`), and server-owned billing/quota state.
 

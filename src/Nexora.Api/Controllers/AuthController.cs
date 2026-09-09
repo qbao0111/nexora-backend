@@ -47,6 +47,27 @@ public sealed class AuthController(
             "Nếu tài khoản cần xác minh, chúng tôi đã gửi email hướng dẫn đến địa chỉ này.")));
     }
 
+    [AllowAnonymous, HttpPost("forgot-password"), EnableRateLimiting(RateLimitPolicies.PasswordRecovery)]
+    public async Task<ActionResult<ApiResponse<PasswordRecoveryResponse>>> ForgotPassword(ForgotPasswordRequest request, CancellationToken cancellationToken)
+    {
+        EnsureTrustedCookieOrigin();
+        using var lease = loginEmailRateLimiter.Acquire(request.Email);
+        if (!lease.IsAcquired) return RateLimited(lease);
+
+        await authService.ForgotPasswordAsync(new ForgotPasswordCommand(request.Email), cancellationToken);
+        return Ok(new ApiResponse<PasswordRecoveryResponse>(new(
+            "Nếu tài khoản cần đặt lại mật khẩu, chúng tôi đã gửi email hướng dẫn đến địa chỉ này.")));
+    }
+
+    [AllowAnonymous, HttpPost("reset-password"), EnableRateLimiting(RateLimitPolicies.PasswordRecovery)]
+    public async Task<ActionResult<ApiResponse<PasswordRecoveryResponse>>> ResetPassword(ResetPasswordRequest request, CancellationToken cancellationToken)
+    {
+        EnsureTrustedCookieOrigin();
+        await authService.ResetPasswordAsync(new ResetPasswordCommand(request.UserId, request.Token, request.NewPassword), cancellationToken);
+        return Ok(new ApiResponse<PasswordRecoveryResponse>(new(
+            "Mật khẩu đã được đặt lại. Vui lòng đăng nhập lại.")));
+    }
+
     [AllowAnonymous, HttpPost("login"), EnableRateLimiting(RateLimitPolicies.Authentication)]
     public async Task<ActionResult<ApiResponse<AuthSessionResponse>>> Login(LoginRequest request, CancellationToken cancellationToken)
     {

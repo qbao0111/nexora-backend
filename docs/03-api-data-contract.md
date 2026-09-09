@@ -23,6 +23,8 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/auth/register` | Tạo account chưa xác minh và gửi email verification; không tạo session. |
 | POST | `/auth/verify-email` | Xác minh email bằng `userId` + Identity token; cấp Free entitlement idempotently. |
 | POST | `/auth/resend-verification` | Gửi lại email verification với response generic và rate limit theo email. |
+| POST | `/auth/forgot-password` | Yêu cầu email đặt lại mật khẩu với response generic; rate limit theo IP và email chuẩn hoá. |
+| POST | `/auth/reset-password` | Đặt lại mật khẩu bằng `userId` + Identity token; revoke toàn bộ session sau khi thành công. |
 | POST | `/auth/login` | Tạo session sau khi credentials hợp lệ và email đã xác minh. |
 | POST | `/auth/refresh` | Xoay refresh token trong cookie. |
 | GET | `/me` | Profile và entitlement hiện hành. |
@@ -66,6 +68,12 @@ Tất cả route dưới đây yêu cầu policy `Admin`, reason code đối v�
 `POST /api/v1/auth/register` trả `201` với `{ "data": { "email": "...", "verificationRequired": true } }` và không đặt refresh cookie. Email chứa link frontend dạng `/verify-email?userId={guid}&token={IdentityToken}`; frontend gửi hai giá trị đó tới `POST /api/v1/auth/verify-email`.
 
 Tài khoản chưa xác minh không thể login và không được cấp access/refresh session; login trả `401 EMAIL_NOT_VERIFIED`. Verify thành công đặt `EmailConfirmed=true` và provision Free entitlement trong cùng transaction theo cách idempotent. Gửi lại qua `POST /api/v1/auth/resend-verification` luôn trả thông điệp generic để không tiết lộ email có tồn tại hay không và bị rate limit theo email chuẩn hoá.
+
+### Khôi phục mật khẩu
+
+`POST /api/v1/auth/forgot-password` nhận `{ "email": "..." }` và luôn trả `200` với cùng thông điệp an toàn dù tài khoản tồn tại hay không. Với tài khoản đang hoạt động, email reset chứa link frontend dạng `/reset-password?userId={guid}&token={IdentityToken}`. Endpoint bị giới hạn theo cả IP client và email đã chuẩn hoá.
+
+Frontend gửi `userId`, `token` và `newPassword` tới `POST /api/v1/auth/reset-password`. Token sai hoặc hết hạn trả `400 PASSWORD_RESET_INVALID` với thông điệp chung. Reset thành công đổi password, revoke toàn bộ refresh token và cập nhật security stamp, vì vậy access token và refresh token cũ đều không còn dùng được.
 
 ### Export và xoá dữ liệu cá nhân
 

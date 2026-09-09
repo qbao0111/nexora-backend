@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Nexora.Business.Auth;
@@ -15,13 +16,14 @@ using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Auth;
 
-public sealed class IdentityAuthService(
+public sealed partial class IdentityAuthService(
     UserManager<ApplicationUser> userManager,
     SignInManager<ApplicationUser> signInManager,
     NexoraDbContext dbContext,
     IOptions<JwtOptions> jwtOptions,
     IOptions<EmailVerificationOptions> emailVerificationOptions,
     IEmailSender emailSender,
+    ILogger<IdentityAuthService> logger,
     TimeProvider timeProvider) : IAuthService
 {
     public const string SecurityStampClaim = "nexora:security_stamp";
@@ -96,6 +98,64 @@ public sealed class IdentityAuthService(
             return;
 
         await SendVerificationEmailAsync(user, cancellationToken, invalidatePreviousTokens: true);
+    }
+
+    public async Task ForgotPasswordAsync(ForgotPasswordCommand command, CancellationToken cancellationToken)
+    {
+        var user = await userManager.FindByEmailAsync(NormalizeEmail(command.Email));
+        if (user is null || !user.IsActive || user.DeletionRequestedAt is not null || user.DeletedAt is not null)
+            return;
+
+        var token = await userManager.GeneratePasswordResetTokenAsync(user);
+        var baseUrl = _emailVerificationOptions.PublicUrl.TrimEnd('/');
+        var link = new Uri($"{baseUrl}/reset-password?userId={user.Id:D}&token={Uri.EscapeDataString(token)}", UriKind.Absolute);
+        try
+        {
+            await emailSender.SendPasswordResetAsync(
+                new PasswordResetEmail(new EmailRecipient(user.Email!), link), cancellationToken);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            PasswordResetEmailTimedOut(logger);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            PasswordResetEmailDeliveryFailed(logger, exception);
+        }
+    }
+
+    public async Task ResetPasswordAsync(ResetPasswordCommand command, CancellationToken cancellationToken)
+    {
+        var user = command.UserId == Guid.Empty
+            ? null
+            : await userManager.FindByIdAsync(command.UserId.ToString());
+        if (user is null || !user.IsActive || user.DeletionRequestedAt is not null || user.DeletedAt is not null)
+            throw InvalidPasswordReset();
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+        var resetResult = await userManager.ResetPasswordAsync(user, command.Token, command.NewPassword);
+        if (!resetResult.Succeeded)
+        {
+            if (resetResult.Errors.Any(error => string.Equals(error.Code, "InvalidToken", StringComparison.OrdinalIgnoreCase)))
+                throw InvalidPasswordReset();
+            throw IdentityValidation(resetResult);
+        }
+
+        var now = timeProvider.GetUtcNow();
+        await dbContext.RefreshTokens
+            .Where(token => token.UserId == user.Id && token.RevokedAt == null)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(token => token.RevokedAt, now), cancellationToken);
+        var stampResult = await userManager.UpdateSecurityStampAsync(user);
+        if (!stampResult.Succeeded)
+            throw new BusinessException("SESSION_REVOCATION_FAILED", "Không thể cập nhật bảo mật sau khi đặt lại mật khẩu.", BusinessErrorKind.ExternalFailure);
+
+        user.UpdatedAt = now;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<AuthSession> LoginAsync(LoginUserCommand command, CancellationToken cancellationToken)
@@ -333,8 +393,16 @@ public sealed class IdentityAuthService(
     private static string? NormalizeDisplayName(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static BusinessException InvalidEmailVerification() =>
         new("EMAIL_VERIFICATION_INVALID", "Liên kết xác minh email không hợp lệ hoặc đã hết hạn.", BusinessErrorKind.Validation);
+    private static BusinessException InvalidPasswordReset() =>
+        new("PASSWORD_RESET_INVALID", "Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.", BusinessErrorKind.Validation);
     private static BusinessException InvalidRefreshToken() => new("INVALID_REFRESH_TOKEN", "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.", BusinessErrorKind.Unauthorized);
     private static BusinessException UserNotFound() => new("USER_NOT_FOUND", "Không tìm thấy tài khoản.", BusinessErrorKind.NotFound);
     private static BusinessException IdentityValidation(IdentityResult result) =>
         new("IDENTITY_VALIDATION_FAILED", string.Join(" ", result.Errors.Select(error => error.Description)), BusinessErrorKind.Validation);
+
+    [LoggerMessage(LogLevel.Warning, "Password reset email delivery timed out.")]
+    private static partial void PasswordResetEmailTimedOut(ILogger logger);
+
+    [LoggerMessage(LogLevel.Error, "Password reset email delivery failed.")]
+    private static partial void PasswordResetEmailDeliveryFailed(ILogger logger, Exception exception);
 }

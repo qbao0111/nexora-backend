@@ -469,13 +469,13 @@ Tasks:
 
 ### B3. Password recovery [P0]
 
-- [ ] `POST /auth/forgot-password`.
-- [ ] Response generic dù email tồn tại hay không.
-- [ ] Rate limit theo IP/email normalized.
-- [ ] Gửi reset link qua Resend.
-- [ ] `POST /auth/reset-password`.
-- [ ] Reset thành công revoke refresh tokens + update security stamp.
-- [ ] Token invalid/expired trả error an toàn, không leak account existence.
+- [x] `POST /auth/forgot-password`.
+- [x] Response generic dù email tồn tại hay không.
+- [x] Rate limit theo IP/email normalized.
+- [x] Gửi reset link qua Resend.
+- [x] `POST /auth/reset-password`.
+- [x] Reset thành công revoke refresh tokens + update security stamp.
+- [x] Token invalid/expired trả error an toàn, không leak account existence.
 
 ### B4. Change password existing [P0]
 

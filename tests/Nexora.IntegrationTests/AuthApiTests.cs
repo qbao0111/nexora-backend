@@ -167,6 +167,123 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
     }
 
     [Fact]
+    public async Task ForgotPasswordReturnsSameGenericResponseForKnownAndUnknownEmail()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"forgot-{Guid.NewGuid():N}@example.test";
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+
+        using var known = await client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email });
+        using var unknown = await client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email = $"missing-{Guid.NewGuid():N}@example.test" });
+        Assert.Equal(HttpStatusCode.OK, known.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, unknown.StatusCode);
+        Assert.Equal(await known.Content.ReadAsStringAsync(), await unknown.Content.ReadAsStringAsync());
+        Assert.NotNull(TestEmailInbox.GetPasswordResetLink(email));
+    }
+
+    [Fact]
+    public async Task PasswordResetRevokesSessionsAndRequiresTheNewPassword()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"reset-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var accessToken = await ReadAccessTokenAsync(login);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+        using var forgot = await client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email });
+        Assert.Equal(HttpStatusCode.OK, forgot.StatusCode);
+        await TestEmailInbox.ResetPasswordAsync(client, email, "New!StrongPass456");
+
+        using var oldAccess = await client.GetAsync("/api/v1/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, oldAccess.StatusCode);
+        using var oldRefresh = await client.PostAsync("/api/v1/auth/refresh", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, oldRefresh.StatusCode);
+
+        using (var oldPassword = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" }))
+            Assert.Equal(HttpStatusCode.Unauthorized, oldPassword.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<Nexora.Data.Identity.ApplicationUser>>();
+        var user = await userManager.FindByEmailAsync(email);
+        Assert.NotNull(user);
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.All(await db.RefreshTokens.Where(token => token.UserId == user.Id).ToListAsync(), token => Assert.NotNull(token.RevokedAt));
+
+        using var newPassword = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "New!StrongPass456" });
+        Assert.Equal(HttpStatusCode.OK, newPassword.StatusCode);
+    }
+
+    [Fact]
+    public async Task InvalidPasswordResetTokenUsesSafeErrorForExistingAndUnknownUser()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"invalid-reset-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+        Guid userId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var userManager = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<Nexora.Data.Identity.ApplicationUser>>();
+            userId = (await userManager.FindByEmailAsync(email))!.Id;
+        }
+
+        using var existing = await client.PostAsJsonAsync("/api/v1/auth/reset-password", new
+        {
+            userId,
+            token = "invalid-token",
+            newPassword = "New!StrongPass456"
+        });
+        using var unknown = await client.PostAsJsonAsync("/api/v1/auth/reset-password", new
+        {
+            userId = Guid.NewGuid(),
+            token = "invalid-token",
+            newPassword = "New!StrongPass456"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, existing.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
+        Assert.Equal(await ReadErrorCodeAsync(existing), await ReadErrorCodeAsync(unknown));
+        Assert.Equal("PASSWORD_RESET_INVALID", await ReadErrorCodeAsync(existing));
+    }
+
+    [Fact]
+    public async Task ForgotPasswordRateLimitsNormalizedEmail()
+    {
+        await using var factory = new NexoraApiFactory(new Dictionary<string, string?>
+        {
+            ["RateLimits:LoginEmail:PermitLimit"] = "1",
+            ["RateLimits:PasswordRecovery:PermitLimit"] = "1000"
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var email = $"normalized-{Guid.NewGuid():N}@example.test";
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+
+        using var first = await client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email = email.ToUpperInvariant() });
+        using var second = await client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email });
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, second.StatusCode);
+    }
+
+    [Fact]
+    public async Task ForgotPasswordRateLimitsClientIpAcrossDifferentEmails()
+    {
+        await using var factory = new NexoraApiFactory(new Dictionary<string, string?>
+        {
+            ["RateLimits:LoginEmail:PermitLimit"] = "1000",
+            ["RateLimits:PasswordRecovery:PermitLimit"] = "1"
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        using var first = await client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email = $"ip-one-{Guid.NewGuid():N}@example.test" });
+        using var second = await client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email = $"ip-two-{Guid.NewGuid():N}@example.test" });
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, second.StatusCode);
+    }
+
+    [Fact]
     public async Task SameOriginAuthMutationIsPermittedForInternalClients()
     {
         using var client = _factory.CreateHttpsClient();
@@ -235,4 +352,10 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
 
     private static string ExtractRefreshToken(string cookie) =>
         cookie.Split(';', 2)[0].Split('=', 2)[1];
+
+    private static async Task<string> ReadErrorCodeAsync(HttpResponseMessage response)
+    {
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return json.RootElement.GetProperty("error").GetProperty("code").GetString()!;
+    }
 }

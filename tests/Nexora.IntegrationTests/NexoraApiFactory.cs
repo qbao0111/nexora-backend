@@ -80,6 +80,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
                 ["Ai:Gemini:ApiKey"] = "test-only-not-used",
                 ["Ai:Gemini:Model"] = "test-gemini-model",
                 ["RateLimits:Authentication:PermitLimit"] = "1000",
+                ["RateLimits:PasswordRecovery:PermitLimit"] = "1000",
                 ["RateLimits:LoginEmail:PermitLimit"] = "1000",
                 ["Storage:Local:RootPath"] = Path.Combine(Path.GetTempPath(), "nexora-api-tests")
             };
