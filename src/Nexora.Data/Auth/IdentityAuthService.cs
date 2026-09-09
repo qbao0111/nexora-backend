@@ -273,8 +273,23 @@ public sealed partial class IdentityAuthService(
         var token = await userManager.GenerateEmailConfirmationTokenAsync(user);
         var baseUrl = _emailVerificationOptions.PublicUrl.TrimEnd('/');
         var link = new Uri($"{baseUrl}/verify-email?userId={user.Id:D}&token={Uri.EscapeDataString(token)}", UriKind.Absolute);
-        await emailSender.SendVerificationAsync(
-            new VerificationEmail(new EmailRecipient(user.Email!), link), cancellationToken);
+        try
+        {
+            await emailSender.SendVerificationAsync(
+                new VerificationEmail(new EmailRecipient(user.Email!), link), cancellationToken);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            VerificationEmailTimedOut(logger);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            VerificationEmailDeliveryFailed(logger, exception);
+        }
     }
 
     private async Task EnsureFreeEntitlementAsync(Guid userId, DateTimeOffset now, CancellationToken cancellationToken)
@@ -399,6 +414,12 @@ public sealed partial class IdentityAuthService(
     private static BusinessException UserNotFound() => new("USER_NOT_FOUND", "Không tìm thấy tài khoản.", BusinessErrorKind.NotFound);
     private static BusinessException IdentityValidation(IdentityResult result) =>
         new("IDENTITY_VALIDATION_FAILED", string.Join(" ", result.Errors.Select(error => error.Description)), BusinessErrorKind.Validation);
+
+    [LoggerMessage(LogLevel.Warning, "Verification email delivery timed out.")]
+    private static partial void VerificationEmailTimedOut(ILogger logger);
+
+    [LoggerMessage(LogLevel.Error, "Verification email delivery failed.")]
+    private static partial void VerificationEmailDeliveryFailed(ILogger logger, Exception exception);
 
     [LoggerMessage(LogLevel.Warning, "Password reset email delivery timed out.")]
     private static partial void PasswordResetEmailTimedOut(ILogger logger);

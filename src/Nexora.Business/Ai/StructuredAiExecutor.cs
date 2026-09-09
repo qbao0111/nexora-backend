@@ -25,6 +25,7 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
         AiValidationResult<T>? lastValidation = null;
         AiProviderException? lastProviderException = null;
         AiReasoningEffortOverride? reasoningOverride = null;
+        var outputTruncationRetry = false;
 
         for (var attempt = 1; attempt <= MaxAttemptsPerPurpose; attempt++)
         {
@@ -43,10 +44,11 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                 operation.SchemaVersion,
                 untrustedInput,
                 operation.OutputSchema,
-                operation.MaxOutputTokens,
+                operation.GetEffectiveMaxOutputTokens(attempt, outputTruncationRetry),
                 correlationId,
                 currentInstructions,
                 currentReasoningOverride);
+            outputTruncationRetry = false;
 
             if (currentReasoningOverride is not null)
             {
@@ -103,7 +105,22 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
             catch (AiProviderException ex)
             {
                 lastProviderException = ex;
-                LogProviderRequestFailed(logger, operation.Purpose, ex.Kind.ToString(), attempt, correlationId);
+                var retryReason = ex.RetryHint switch
+                {
+                    AiProviderRetryHint.LowerReasoningEffort => "reasoning_budget_exhausted",
+                    AiProviderRetryHint.OutputTruncated => "output_truncated",
+                    _ => "provider_failure"
+                };
+                LogProviderRequestFailed(
+                    logger,
+                    operation.Purpose,
+                    ex.Kind.ToString(),
+                    request.MaxOutputTokens,
+                    ex.RetryHint.ToString(),
+                    retryReason,
+                    attempt,
+                    stopwatch.ElapsedMilliseconds,
+                    correlationId);
 
                 if (ex.Kind == AiProviderFailureKind.InvalidResponse &&
                     ex.RetryHint == AiProviderRetryHint.LowerReasoningEffort &&
@@ -111,6 +128,20 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                     attempt < MaxAttemptsPerPurpose)
                 {
                     reasoningOverride = AiReasoningEffortOverride.Low;
+                }
+                else if (ex.Kind == AiProviderFailureKind.InvalidResponse &&
+                    ex.RetryHint == AiProviderRetryHint.OutputTruncated &&
+                    operation.SupportsOutputTruncationRetry &&
+                    lastValidation is null &&
+                    attempt < MaxAttemptsPerPurpose)
+                {
+                    LogOutputTruncationRetry(
+                        logger,
+                        operation.Purpose,
+                        operation.GetEffectiveMaxOutputTokens(attempt + 1, outputTruncationRetry: true),
+                        attempt + 1,
+                        correlationId);
+                    outputTruncationRetry = true;
                 }
 
                 if (ex.Kind is AiProviderFailureKind.Configuration or AiProviderFailureKind.Authentication ||
@@ -150,8 +181,20 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
     [LoggerMessage(LogLevel.Error, "AI structured execution failed terminal: purpose={Purpose}, failureReason={FailureReason}, stage={Stage}, attempt={Attempt}, outcome=failed, correlationId={CorrelationId}")]
     private static partial void LogExecutionTerminalFailure(ILogger logger, string purpose, string failureReason, string stage, int attempt, string correlationId);
 
-    [LoggerMessage(LogLevel.Warning, "AI provider request failed: purpose={Purpose}, failureKind={FailureKind}, attempt={Attempt}, correlationId={CorrelationId}")]
-    private static partial void LogProviderRequestFailed(ILogger logger, string purpose, string failureKind, int attempt, string correlationId);
+    [LoggerMessage(LogLevel.Warning, "AI provider request failed: purpose={Purpose}, failureKind={FailureKind}, effectiveBudget={EffectiveBudget}, retryHint={RetryHint}, retryReason={RetryReason}, attempt={Attempt}, latencyMs={LatencyMs}, correlationId={CorrelationId}")]
+    private static partial void LogProviderRequestFailed(
+        ILogger logger,
+        string purpose,
+        string failureKind,
+        int effectiveBudget,
+        string retryHint,
+        string retryReason,
+        int attempt,
+        long latencyMs,
+        string correlationId);
+
+    [LoggerMessage(LogLevel.Information, "AI structured retry after provider output truncation: purpose={Purpose}, effectiveBudget={EffectiveBudget}, attempt={Attempt}, retryReason=output_truncated, correlationId={CorrelationId}")]
+    private static partial void LogOutputTruncationRetry(ILogger logger, string purpose, int effectiveBudget, int attempt, string correlationId);
 
     [LoggerMessage(LogLevel.Information, "AI structured retry using reasoning override: purpose={Purpose}, effectiveEffort={EffectiveEffort}, attempt={Attempt}, retryReason=reasoning_budget_exhausted, correlationId={CorrelationId}")]
     private static partial void LogReasoningFallbackRetry(ILogger logger, string purpose, string effectiveEffort, int attempt, string correlationId);

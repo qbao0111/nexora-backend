@@ -15,6 +15,7 @@ using Nexora.Data.Billing;
 using Nexora.Data.Persistence;
 using Nexora.Data.Practice;
 using Nexora.Data.Realtime;
+using UglyToad.PdfPig.Writer;
 using static Nexora.IntegrationTests.RealtimeApiTests;
 
 namespace Nexora.IntegrationTests;
@@ -313,7 +314,12 @@ public sealed class RealtimeWorkerTests
     private static async Task<Guid> UploadResumeAsync(HttpClient client, bool invalid)
     {
         byte[] bytes;
-        if (invalid) bytes = Encoding.ASCII.GetBytes("%PDF-1.7\nSynthetic unreadable document");
+        if (invalid)
+        {
+            var pdf = new PdfDocumentBuilder();
+            pdf.AddPage(612, 792);
+            bytes = pdf.Build();
+        }
         else
         {
             using var stream = new MemoryStream();

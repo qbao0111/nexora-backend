@@ -110,6 +110,8 @@ POST /api/v1/interviews
 
 Sau khi `POST /uploads/presign`, client PUT đúng bytes file vào `uploadUrl`, rồi gọi `POST /resumes` với `uploadToken`. Response resume ban đầu có `status: "uploaded"`; client poll `GET /api/v1/resumes/{id}` cho tới `ready` hoặc `failed`. Worker dùng `extracting` cho local PdfPig/OpenXML, `ocr_fallback` khi quality gate yêu cầu document fallback Gemini, rồi `ready` khi đã lưu canonical extracted text. Khi cả hai đường đọc thất bại, status là `failed` và response có:
 
+Upload giữ giới hạn mặc định 10 MiB và kiểm tra cả kích thước byte, cặp extension/MIME, chữ ký và container tài liệu trước khi lưu private object. PDF có container hợp lệ nhưng bị mã hóa vẫn được lưu để quyết định khả năng đọc/OCR ở boundary extraction; lỗi mật khẩu hoặc không đọc được không bị biến thành lỗi format upload. Lỗi upload dùng mã ổn định: `UPLOAD_SIZE_ZERO`, `UPLOAD_SIZE_EXCEEDED`, `UPLOAD_TYPE_UNSUPPORTED`, `UPLOAD_SIZE_MISMATCH`, `UPLOAD_SIGNATURE_INVALID`, `UPLOAD_CONTAINER_INVALID`, `UPLOAD_CONTAINER_LIMIT`; intent sai/hết hạn/đã dùng là `UPLOAD_INTENT_INVALID`. Các lỗi validation này trả HTTP 400 theo contract hiện tại; intent không tồn tại khi finalize trả `UPLOAD_NOT_FOUND`/404. `PUT` cùng một intent chỉ có một lần thắng, request replay không tạo object thứ hai.
+
 ```json
 {
   "data": {

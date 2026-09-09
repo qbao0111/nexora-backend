@@ -50,7 +50,8 @@ public static class DependencyInjection
             .Validate(options => string.IsNullOrWhiteSpace(options.Model) || options.Model.Trim().Length <= 80,
                 "Ai:Gemini:Model must be 80 characters or fewer.")
             .Validate(options => options.TimeoutSeconds is >= 1 and <= 60, "Gemini timeout must be between 1 and 60 seconds.")
-            .Validate(options => options.MaxAttempts is >= 1 and <= 3, "Gemini attempts must be between 1 and 3.")
+            .Validate(options => options.MaxAttempts == 1,
+                "Gemini MaxAttempts must be exactly 1; StructuredAiExecutor owns retries.")
             .Validate(options => options.RetryBaseDelayMilliseconds is >= 0 and <= 5_000, "Gemini retry delay must be between 0 and 5000 milliseconds.")
             .ValidateOnStart();
         services.AddHttpClient<GeminiAiProvider>();

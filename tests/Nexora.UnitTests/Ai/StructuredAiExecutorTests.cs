@@ -112,6 +112,76 @@ public sealed class StructuredAiExecutorTests
     }
 
     [Fact]
+    public async Task ResumeAnalysisRetriesOutputTruncationAtLargerBudgetOnlyOnce()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "truncated",
+            retryHint: AiProviderRetryHint.OutputTruncated));
+        fakeProvider.EnqueueResult(new ResumeAnalysisOutput(["Strength"], ["Gap"], ["Recommendation"]));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.ResumeAnalysis,
+            "candidate input",
+            new AiOperationContext("resume-truncation"),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.Attempts);
+        Assert.False(result.RepairUsed);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Equal(4_096, fakeProvider.Requests[0].MaxOutputTokens);
+        Assert.Equal(8_192, fakeProvider.Requests[1].MaxOutputTokens);
+        Assert.All(fakeProvider.Requests, request => Assert.Null(request.ReasoningEffortOverride));
+    }
+
+    [Fact]
+    public async Task ResumeAnalysisStopsAfterTwoOutputTruncationsWithoutFabricatedResult()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "truncated 1",
+            retryHint: AiProviderRetryHint.OutputTruncated));
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "truncated 2",
+            retryHint: AiProviderRetryHint.OutputTruncated));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.ResumeAnalysis,
+            "candidate input",
+            new AiOperationContext("resume-truncation-terminal"),
+            CancellationToken.None));
+
+        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Equal(4_096, fakeProvider.Requests[0].MaxOutputTokens);
+        Assert.Equal(8_192, fakeProvider.Requests[1].MaxOutputTokens);
+    }
+
+    [Fact]
+    public async Task ResumeAnalysisSemanticRepairKeepsInitialBudget()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(new ResumeAnalysisOutput([], [], []));
+        fakeProvider.EnqueueResult(new ResumeAnalysisOutput(["Strength"], ["Gap"], ["Recommendation"]));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.ResumeAnalysis,
+            "candidate input",
+            new AiOperationContext("resume-semantic-repair"),
+            CancellationToken.None);
+
+        Assert.True(result.RepairUsed);
+        Assert.Equal(4_096, fakeProvider.Requests[0].MaxOutputTokens);
+        Assert.Equal(4_096, fakeProvider.Requests[1].MaxOutputTokens);
+    }
+
+    [Fact]
     public async Task ExecuteAsyncDoesNotRetryNonTransientProviderError()
     {
         var fakeProvider = new MockAiProvider();

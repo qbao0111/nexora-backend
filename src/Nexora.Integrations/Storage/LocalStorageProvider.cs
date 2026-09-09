@@ -28,9 +28,34 @@ public sealed class LocalStorageProvider : IStorageProvider
             .Replace(Path.DirectorySeparatorChar, '/');
         var fullPath = ResolvePrivatePath(storageKey);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        await using var destination = new FileStream(fullPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true);
-        await content.CopyToAsync(destination, cancellationToken);
-        return new StoredObject(storageKey, Path.GetFileName(fileName), contentType, destination.Length);
+        var fileCreated = false;
+        try
+        {
+            long storedLength;
+            await using (var destination = new FileStream(fullPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
+            {
+                fileCreated = true;
+                await content.CopyToAsync(destination, cancellationToken);
+                storedLength = destination.Length;
+            }
+            return new StoredObject(storageKey, Path.GetFileName(fileName), contentType, storedLength);
+        }
+        catch
+        {
+            // A cancelled/failed stream must not leave an orphaned private object.
+            try
+            {
+                // Only remove a file created by this call. If CreateNew failed because
+                // a key already exists, the existing private object belongs to another
+                // operation and must not be deleted.
+                if (fileCreated && File.Exists(fullPath)) File.Delete(fullPath);
+            }
+            catch
+            {
+                // Preserve the original upload failure; cleanup is best effort.
+            }
+            throw;
+        }
     }
 
     public Task<Stream> OpenReadAsync(string storageKey, CancellationToken cancellationToken)
