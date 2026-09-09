@@ -347,13 +347,127 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
         using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await ReadAccessTokenAsync(login));
 
-        using var change = await client.PostAsJsonAsync("/api/v1/me/password", new
+        // 7 characters (fails minimum length 8)
+        using var change7 = await client.PostAsJsonAsync("/api/v1/me/password", new
         {
             currentPassword = "Strong!Pass123",
-            newPassword = "short"
+            newPassword = "Aa1!567"
         });
-        Assert.Equal(HttpStatusCode.BadRequest, change.StatusCode);
-        Assert.Equal("VALIDATION_ERROR", await ReadErrorCodeAsync(change));
+        Assert.Equal(HttpStatusCode.BadRequest, change7.StatusCode);
+        Assert.Equal("VALIDATION_ERROR", await ReadErrorCodeAsync(change7));
+    }
+
+    [Fact]
+    public async Task ChangePasswordAcceptsValidEightCharacterPassword()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"change-password-valid-8-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await ReadAccessTokenAsync(login));
+
+        // 8 characters with required complexity
+        using var change8 = await client.PostAsJsonAsync("/api/v1/me/password", new
+        {
+            currentPassword = "Strong!Pass123",
+            newPassword = "Aa1!5678"
+        });
+        Assert.Equal(HttpStatusCode.NoContent, change8.StatusCode);
+
+        using var oldLogin = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.Unauthorized, oldLogin.StatusCode);
+
+        using var newLogin = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Aa1!5678" });
+        Assert.Equal(HttpStatusCode.OK, newLogin.StatusCode);
+    }
+
+    [Fact]
+    public async Task RegisterEnforcesEightTo128CharacterPasswordPolicy()
+    {
+        using var client = _factory.CreateHttpsClient();
+
+        // 7 characters (fails minimum length 8)
+        var email7 = $"reg-7-{Guid.NewGuid():N}@example.test";
+        using var reg7 = await client.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email = email7,
+            password = "Aa1!567",
+            displayName = "User 7"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, reg7.StatusCode);
+        Assert.Equal("VALIDATION_ERROR", await ReadErrorCodeAsync(reg7));
+
+        // Exactly 8 characters with required complexity
+        var email8 = $"reg-8-{Guid.NewGuid():N}@example.test";
+        using var reg8 = await client.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email = email8,
+            password = "Aa1!5678",
+            displayName = "User 8"
+        });
+        Assert.Equal(HttpStatusCode.Created, reg8.StatusCode);
+
+        // 129 characters (> 128 max length)
+        var email129 = $"reg-129-{Guid.NewGuid():N}@example.test";
+        using var reg129 = await client.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email = email129,
+            password = new string('A', 126) + "a1!",
+            displayName = "User 129"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, reg129.StatusCode);
+        Assert.Equal("VALIDATION_ERROR", await ReadErrorCodeAsync(reg129));
+    }
+
+    [Fact]
+    public async Task ResetPasswordEnforcesEightCharacterPasswordPolicy()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"reset-policy-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+
+        using var forgot = await client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email });
+        Assert.Equal(HttpStatusCode.OK, forgot.StatusCode);
+
+        var resetLink = TestEmailInbox.GetPasswordResetLink(email);
+        var query = resetLink.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Split('=', 2))
+            .ToDictionary(part => WebUtility.UrlDecode(part[0]), part => WebUtility.UrlDecode(part.ElementAtOrDefault(1) ?? string.Empty), StringComparer.Ordinal);
+        var userId = Guid.Parse(query["userId"]);
+        var token = query["token"];
+
+        // 7 characters (fails minimum length 8)
+        using var reset7 = await client.PostAsJsonAsync("/api/v1/auth/reset-password", new
+        {
+            userId,
+            token,
+            newPassword = "Aa1!567"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, reset7.StatusCode);
+        Assert.Equal("VALIDATION_ERROR", await ReadErrorCodeAsync(reset7));
+
+        // Exactly 8 characters with required complexity
+        using var reset8 = await client.PostAsJsonAsync("/api/v1/auth/reset-password", new
+        {
+            userId,
+            token,
+            newPassword = "Aa1!5678"
+        });
+        Assert.Equal(HttpStatusCode.OK, reset8.StatusCode);
+
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Aa1!5678" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+    }
+
+    [Fact]
+    public void IdentityOptionsRequiresEightCharacterMinimum()
+    {
+        var identityOptions = _factory.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Identity.IdentityOptions>>().Value;
+        Assert.Equal(8, identityOptions.Password.RequiredLength);
+        Assert.True(identityOptions.Password.RequireDigit);
+        Assert.True(identityOptions.Password.RequireLowercase);
+        Assert.True(identityOptions.Password.RequireUppercase);
+        Assert.True(identityOptions.Password.RequireNonAlphanumeric);
     }
 
     [Fact]
