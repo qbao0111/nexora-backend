@@ -279,6 +279,12 @@ public sealed partial class DeepSeekAiProvider(
         var finishReason = ReadFinishReason(root);
         LogUsage(request, configuration, policy, stopwatch.ElapsedMilliseconds, usage, finishReason);
 
+        // A length finish reason is authoritative provider metadata. Inspect it before
+        // deserializing content so a parseable prefix can never be accepted as a
+        // complete structured result.
+        if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
+            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason);
+
         if (!root.TryGetProperty("choices", out var choices) ||
             choices.ValueKind != JsonValueKind.Array ||
             choices.GetArrayLength() == 0 ||
@@ -327,6 +333,14 @@ public sealed partial class DeepSeekAiProvider(
                 AiProviderFailureKind.InvalidResponse,
                 "AI provider exhausted its reasoning budget before returning structured output.",
                 retryHint: AiProviderRetryHint.LowerReasoningEffort);
+        }
+
+        if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
+        {
+            return new AiProviderException(
+                AiProviderFailureKind.InvalidResponse,
+                "AI provider truncated structured output.",
+                retryHint: AiProviderRetryHint.OutputTruncated);
         }
 
         return new AiProviderException(

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Nexora.Business.Ai;
@@ -48,6 +49,20 @@ public sealed class DeepSeekProviderSelectionTests
     }
 
     [Fact]
+    public void GeminiProviderRequiresSingleAdapterAttemptBecauseExecutorOwnsRetryBudget()
+    {
+        using var services = new ServiceCollection()
+            .AddLogging()
+            .AddIntegrations(Configuration("gemini", geminiMaxAttempts: 2))
+            .BuildServiceProvider();
+
+        var exception = Assert.Throws<OptionsValidationException>(() =>
+            services.GetRequiredService<IOptions<GeminiOptions>>().Value);
+
+        Assert.Contains("exactly 1", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OfficialDeepSeekBaseUrlIsAcceptedWhenAiIsEnabled()
     {
         using var services = BuildDeepSeekServices("https://api.deepseek.com");
@@ -85,7 +100,8 @@ public sealed class DeepSeekProviderSelectionTests
     private static IConfiguration Configuration(
         string provider,
         bool aiEnabled = false,
-        string? deepSeekBaseUrl = null) =>
+        string? deepSeekBaseUrl = null,
+        int geminiMaxAttempts = 1) =>
         new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -93,6 +109,7 @@ public sealed class DeepSeekProviderSelectionTests
                 ["Ai:Provider"] = provider,
                 ["Ai:Gemini:ApiKey"] = "test-gemini-key",
                 ["Ai:Gemini:Model"] = "test-gemini-model",
+                ["Ai:Gemini:MaxAttempts"] = geminiMaxAttempts.ToString(CultureInfo.InvariantCulture),
                 ["Ai:DeepSeek:ApiKey"] = "test-deepseek-key",
                 ["Ai:DeepSeek:BaseUrl"] = deepSeekBaseUrl ?? "https://api.deepseek.com",
                 ["Ai:DeepSeek:Model"] = "deepseek-v4-flash",

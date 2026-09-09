@@ -208,7 +208,7 @@ public sealed class DeepSeekAiProviderTests
     }
 
     [Fact]
-    public async Task LowReasoningExhaustionDoesNotEmitLowerReasoningHint()
+    public async Task LowReasoningLengthEmitsOutputTruncatedHint()
     {
         var handler = new RecordingHandler(_ => ExhaustedResponse(AiOperations.ResumeAnalysis.MaxOutputTokens));
         using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
@@ -219,7 +219,7 @@ public sealed class DeepSeekAiProviderTests
             CancellationToken.None));
 
         Assert.Equal(AiProviderFailureKind.InvalidResponse, exception.Kind);
-        Assert.Equal(AiProviderRetryHint.None, exception.RetryHint);
+        Assert.Equal(AiProviderRetryHint.OutputTruncated, exception.RetryHint);
         Assert.Equal(1, handler.Calls);
         using var request = JsonDocument.Parse(handler.RequestBody!);
         Assert.Equal("low", request.RootElement.GetProperty("reasoning_effort").GetString());
@@ -255,6 +255,8 @@ public sealed class DeepSeekAiProviderTests
         using var secondRequest = RequestBody(handler, 1);
         Assert.Equal("low", firstRequest.RootElement.GetProperty("reasoning_effort").GetString());
         Assert.Equal("low", secondRequest.RootElement.GetProperty("reasoning_effort").GetString());
+        Assert.Equal(4_096, recordingProvider.Requests[0].MaxOutputTokens);
+        Assert.Equal(8_192, recordingProvider.Requests[1].MaxOutputTokens);
         Assert.Contains(providerLogger.Messages, message =>
             message.Contains("DeepSeek usage telemetry", StringComparison.Ordinal) &&
             message.Contains("purpose=resume.analysis", StringComparison.Ordinal));
@@ -294,17 +296,18 @@ public sealed class DeepSeekAiProviderTests
     }
 
     [Fact]
-    public async Task LengthFinishReasonWithUsableJsonRemainsSuccess()
+    public async Task LengthFinishReasonWithUsableJsonIsRejectedBeforeDeserialization()
     {
-        var handler = new RecordingHandler(_ => LengthResponse("{\"content\":\"ok\"}"));
+        var handler = new RecordingHandler(_ => LengthResponse("{\"content\":\"ok\"}", 4_096));
         using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
         var provider = CreateProvider(handler);
 
-        var result = await provider.GenerateStructuredAsync<GeneratedQuestion>(
-            Request(AiPurposes.InterviewEvaluate, schema, maxOutputTokens: 6_000),
-            CancellationToken.None);
+        var exception = await Assert.ThrowsAsync<AiProviderException>(() => provider.GenerateStructuredAsync<GeneratedQuestion>(
+            Request(AiPurposes.ResumeAnalysis, schema, maxOutputTokens: 4_096),
+            CancellationToken.None));
 
-        Assert.Equal("ok", result.Content);
+        Assert.Equal(AiProviderFailureKind.InvalidResponse, exception.Kind);
+        Assert.Equal(AiProviderRetryHint.OutputTruncated, exception.RetryHint);
         Assert.Equal(1, handler.Calls);
     }
 
@@ -584,13 +587,13 @@ public sealed class DeepSeekAiProviderTests
             "application/json")
     };
 
-    private static HttpResponseMessage LengthResponse(string content) => new(HttpStatusCode.OK)
+    private static HttpResponseMessage LengthResponse(string content, int maxOutputTokens) => new(HttpStatusCode.OK)
     {
         Content = new StringContent(
             JsonSerializer.Serialize(new
             {
                 choices = new[] { new { message = new { content }, finish_reason = "length" } },
-                usage = new { completion_tokens = 6_000, completion_tokens_details = new { reasoning_tokens = 6_000 } }
+                usage = new { completion_tokens = maxOutputTokens, completion_tokens_details = new { reasoning_tokens = maxOutputTokens } }
             }),
             Encoding.UTF8,
             "application/json")
