@@ -39,19 +39,37 @@ public sealed class GeminiAiProviderTests
     }
 
     [Fact]
-    public async Task GenerateStructuredAsyncRetriesRateLimitOnlyWithinConfiguredBound()
+    public async Task GenerateStructuredAsyncRejectsNestedRetryConfiguration()
     {
         var attempts = 0;
-        var handler = new StubHandler((_, _) => Task.FromResult(++attempts == 1
-            ? Json(HttpStatusCode.TooManyRequests, """{"error":{"message":"quota"}}""")
-            : Json(HttpStatusCode.OK, """{"candidates":[{"content":{"parts":[{"text":"{\"content\":\"Recovered\"}"}]}}]}""")));
+        var handler = new StubHandler((_, _) =>
+        {
+            attempts++;
+            return Task.FromResult(Json(HttpStatusCode.TooManyRequests, """{"error":{"message":"quota"}}"""));
+        });
         using var schema = JsonDocument.Parse("""{"type":"object","properties":{"content":{"type":"string"}},"required":["content"]}""");
         var provider = CreateProvider(handler, maxAttempts: 2);
 
-        var result = await provider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.followup", schema), CancellationToken.None);
+        var exception = await Assert.ThrowsAsync<AiProviderException>(() => provider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.followup", schema), CancellationToken.None));
 
-        Assert.Equal("Recovered", result.Content);
-        Assert.Equal(2, attempts);
+        Assert.Equal(AiProviderFailureKind.Configuration, exception.Kind);
+        Assert.Equal(0, attempts);
+    }
+
+    [Fact]
+    public async Task GenerateStructuredAsyncRejectsMaxTokensBeforeAcceptingJsonPrefix()
+    {
+        var handler = new StubHandler((_, _) => Task.FromResult(Json(
+            HttpStatusCode.OK,
+            """{"candidates":[{"finishReason":"MAX_TOKENS","content":{"parts":[{"text":"{\"content\":\"prefix\"}"}]}}]}""")));
+        using var schema = JsonDocument.Parse("{}");
+        var provider = CreateProvider(handler);
+
+        var exception = await Assert.ThrowsAsync<AiProviderException>(() => provider.GenerateStructuredAsync<GeneratedQuestion>(
+            Request("resume.analysis", schema), CancellationToken.None));
+
+        Assert.Equal(AiProviderFailureKind.InvalidResponse, exception.Kind);
+        Assert.Equal(AiProviderRetryHint.OutputTruncated, exception.RetryHint);
     }
 
     [Fact]
@@ -79,13 +97,13 @@ public sealed class GeminiAiProviderTests
             return Task.FromResult(Json(HttpStatusCode.OK, """{"candidates":[]}"""));
         });
         using var schema = JsonDocument.Parse("{}");
-        var provider = CreateProvider(handler, maxAttempts: 2);
+        var provider = CreateProvider(handler);
 
         var exception = await Assert.ThrowsAsync<AiProviderException>(() =>
             provider.GenerateStructuredAsync<GeneratedQuestion>(Request("interview.followup", schema), CancellationToken.None));
 
         Assert.Equal(AiProviderFailureKind.InvalidResponse, exception.Kind);
-        Assert.Equal(2, attempts);
+        Assert.Equal(1, attempts);
     }
 
     [Fact]

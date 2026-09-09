@@ -25,7 +25,9 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
     public async Task<T> GenerateStructuredAsync<T>(AiRequest request, CancellationToken cancellationToken)
     {
         var configuration = options.Value;
-        if (string.IsNullOrWhiteSpace(configuration.ApiKey) || string.IsNullOrWhiteSpace(configuration.Model))
+        if (string.IsNullOrWhiteSpace(configuration.ApiKey) ||
+            string.IsNullOrWhiteSpace(configuration.Model) ||
+            configuration.MaxAttempts != 1)
             throw new AiProviderException(AiProviderFailureKind.Configuration, "AI provider configuration is incomplete.");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(configuration.TimeoutSeconds));
@@ -95,11 +97,30 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
     private static async Task<T> ReadStructuredResponseAsync<T>(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         using var payload = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
-        if (!payload.RootElement.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0 ||
-            !candidates[0].TryGetProperty("content", out var content) ||
-            !content.TryGetProperty("parts", out var parts) || parts.GetArrayLength() == 0 ||
+        if (!payload.RootElement.TryGetProperty("candidates", out var candidates) ||
+            candidates.ValueKind != JsonValueKind.Array || candidates.GetArrayLength() == 0 ||
+            candidates[0].ValueKind != JsonValueKind.Object)
+            throw new JsonException("Structured response content was missing.");
+
+        if (candidates[0].TryGetProperty("finishReason", out var finishReason) &&
+            finishReason.ValueKind == JsonValueKind.String &&
+            finishReason.GetString() is { } reason &&
+            (reason.Equals("MAX_TOKENS", StringComparison.OrdinalIgnoreCase) ||
+             reason.Equals("length", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new AiProviderException(
+                AiProviderFailureKind.InvalidResponse,
+                "AI provider truncated structured output.",
+                retryHint: AiProviderRetryHint.OutputTruncated);
+        }
+
+        if (!candidates[0].TryGetProperty("content", out var content) ||
+            content.ValueKind != JsonValueKind.Object ||
+            !content.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array || parts.GetArrayLength() == 0 ||
+            parts[0].ValueKind != JsonValueKind.Object ||
             !parts[0].TryGetProperty("text", out var textElement))
             throw new JsonException("Structured response content was missing.");
+
         var json = textElement.GetString();
         return JsonSerializer.Deserialize<T>(json ?? string.Empty, JsonOptions)
             ?? throw new JsonException("Structured response was empty.");

@@ -17,6 +17,8 @@ public static class AiPurposes
 
 public abstract class AiOperationDefinition<T>
 {
+    private const int MaximumEffectiveOutputTokens = 8_192;
+
     public abstract string Purpose { get; }
     public abstract string PromptVersion { get; }
     public abstract string SchemaVersion { get; }
@@ -24,6 +26,27 @@ public abstract class AiOperationDefinition<T>
     public abstract int MaxOutputTokens { get; }
     public abstract JsonDocument OutputSchema { get; }
     public abstract string Instructions { get; }
+
+    /// <summary>
+    /// Returns the bounded output budget for this attempt. Operations may opt into a
+    /// purpose-specific second-attempt budget, but the executor remains the owner of
+    /// the global two-call limit.
+    /// </summary>
+    public int GetEffectiveMaxOutputTokens(int attempt) => GetEffectiveMaxOutputTokens(attempt, outputTruncationRetry: false);
+
+    public virtual int GetEffectiveMaxOutputTokens(int attempt, bool outputTruncationRetry)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(attempt, 1);
+
+        return ValidateEffectiveMaxOutputTokens(MaxOutputTokens);
+    }
+
+    public virtual bool SupportsOutputTruncationRetry => false;
+
+    protected static int ValidateEffectiveMaxOutputTokens(int value) =>
+        value is < 1 or > MaximumEffectiveOutputTokens
+            ? throw new InvalidOperationException("AI output token budget is outside the supported bounds.")
+            : value;
 
     public abstract AiValidationResult<T> NormalizeAndValidate(T? raw, AiOperationContext context);
 
@@ -327,11 +350,19 @@ public sealed class ResumeProfileOperation : AiOperationDefinition<ResumeProfile
 
 public sealed class ResumeAnalysisOperation : AiOperationDefinition<ResumeAnalysisOutput>
 {
+    private const int InitialOutputTokens = 4_096;
+    private const int TruncationRetryOutputTokens = 8_192;
+
     public override string Purpose => AiPurposes.ResumeAnalysis;
     public override string PromptVersion => "resume-analysis-v2";
     public override string SchemaVersion => "resume-analysis-v2";
     public override string RubricVersion => "analysis-v2";
-    public override int MaxOutputTokens => 1_500;
+    public override int MaxOutputTokens => InitialOutputTokens;
+
+    public override bool SupportsOutputTruncationRetry => true;
+
+    public override int GetEffectiveMaxOutputTokens(int attempt, bool outputTruncationRetry) =>
+        ValidateEffectiveMaxOutputTokens(attempt == 2 && outputTruncationRetry ? TruncationRetryOutputTokens : InitialOutputTokens);
 
     public override JsonDocument OutputSchema { get; } = JsonDocument.Parse("""
         {
