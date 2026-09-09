@@ -12,7 +12,9 @@ public sealed class JobDescriptionsController(IPracticeService practiceService) 
     [HttpPost]
     public async Task<ActionResult<ApiResponse<JobDescriptionView>>> Create(CreateJobDescriptionRequest request, CancellationToken cancellationToken)
     {
-        var jobDescription = await practiceService.CreateJobDescriptionAsync(User.GetRequiredUserId(), request.Title, request.Content, cancellationToken);
+        var jobDescription = await practiceService.CreateJobDescriptionAsync(
+            User.GetRequiredUserId(), request.Title, request.Content, cancellationToken,
+            Request.Headers["Idempotency-Key"].ToString());
         return StatusCode(201, new ApiResponse<JobDescriptionView>(jobDescription));
     }
 }

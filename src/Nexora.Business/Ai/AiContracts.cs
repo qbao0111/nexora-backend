@@ -43,7 +43,8 @@ public enum AiReasoningEffortOverride
 public enum AiProviderRetryHint
 {
     None,
-    LowerReasoningEffort
+    LowerReasoningEffort,
+    OutputTruncated
 }
 
 public sealed class AiProviderException(

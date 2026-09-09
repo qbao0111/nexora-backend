@@ -31,7 +31,7 @@ reconnect and retain slow 15–30 second fallback polling. See the
 [complete realtime integration contract](realtime-notifications.md), including the
 intentional absence of a report-failure event.
 
-For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse that key and the identical body when retrying the same request. Generate a new key for a new action. Required mutations are checkout, resume analysis, interview start, answer, interview completion and deletion request. Register/login, upload presign, raw upload, resume finalization, JD creation and GET requests do not need a key.
+For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse that key and the identical body when retrying the same request. Generate a new key for a new action. Required mutations are checkout, resume analysis, interview start, answer, interview completion and deletion request. Register/login, upload presign, raw upload, resume finalization and GET requests do not need a key. A standalone `POST /job-descriptions` may omit the header, but the CV-analysis coordinator sends its stable operation key on JD creation so a lost response cannot create a duplicate JD.
 
 ## Real CV → JD → analysis flow
 
@@ -85,7 +85,7 @@ For password recovery, call `POST /auth/forgot-password` with `{ "email": "..." 
    { "title": "Backend Developer", "content": "...real job description..." }
    ```
 
-   Save `data.id` as `jobDescriptionId`.
+   Save `data.id` as `jobDescriptionId`. For the coordinated CV-analysis flow, send the same stable `Idempotency-Key` used for the subsequent analysis request; this makes JD creation replay-safe. Standalone JD creation may omit it.
 
 7. `POST /resume-analyses` (`201`, Bearer + idempotency key):
 

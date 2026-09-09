@@ -149,38 +149,76 @@ public sealed class PdfDocxDocumentExtractor(IOptions<DocumentExtractionQualityO
 
     private DocumentExtractionResult ExtractDocx(Stream content, CancellationToken cancellationToken)
     {
-        using var document = WordprocessingDocument.Open(content, false);
-        var body = document.MainDocumentPart?.Document?.Body
-            ?? throw new InvalidDataException("DOCX document has no body.");
-        var blocks = new List<string>();
-
-        foreach (var element in body.Elements())
+        var effectiveStream = PrepareDocxStream(content);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            switch (element)
+            using var document = WordprocessingDocument.Open(effectiveStream, false);
+            var body = document.MainDocumentPart?.Document?.Body
+                ?? throw new InvalidDataException("DOCX document has no body.");
+            var blocks = new List<string>();
+
+            foreach (var element in body.Elements())
             {
-                case Paragraph paragraph:
-                    AddBlock(blocks, paragraph.InnerText);
-                    break;
-                case Table table:
-                    foreach (var row in table.Elements<TableRow>())
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        var cells = row.Elements<TableCell>()
-                            .Select(cell => string.Join(" ", cell.Descendants<Paragraph>()
-                                .Select(paragraph => CollapseWhitespace(paragraph.InnerText))
-                                .Where(value => value.Length > 0)))
-                            .Where(value => value.Length > 0)
-                            .ToArray();
-                        if (cells.Length > 0) AddBlock(blocks, string.Join(" | ", cells));
-                    }
-                    break;
+                cancellationToken.ThrowIfCancellationRequested();
+                switch (element)
+                {
+                    case Paragraph paragraph:
+                        AddBlock(blocks, paragraph.InnerText);
+                        break;
+                    case Table table:
+                        foreach (var row in table.Elements<TableRow>())
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            var cells = row.Elements<TableCell>()
+                                .Select(cell => string.Join(" ", cell.Descendants<Paragraph>()
+                                    .Select(paragraph => CollapseWhitespace(paragraph.InnerText))
+                                    .Where(value => value.Length > 0)))
+                                .Where(value => value.Length > 0)
+                                .ToArray();
+                            if (cells.Length > 0) AddBlock(blocks, string.Join(" | ", cells));
+                        }
+                        break;
+                }
             }
+
+            var warnings = new List<string>();
+            var text = NormalizePages([string.Join("\n", blocks)], warnings);
+            return Evaluate(text, 1, DocumentExtractionMethod.DocxOpenXml, warnings);
+        }
+        finally
+        {
+            if (!ReferenceEquals(effectiveStream, content))
+                effectiveStream.Dispose();
+        }
+    }
+
+    private static Stream PrepareDocxStream(Stream content)
+    {
+        if (!content.CanSeek || content.Length < 4) return content;
+        content.Position = 0;
+        var header = new byte[Math.Min(content.Length, 1024)];
+        var read = content.Read(header, 0, header.Length);
+        content.Position = 0;
+        if (read < 4) return content;
+
+        var slice = header.AsSpan(0, read);
+        if (slice.Length >= 3 && slice[0] == 0xEF && slice[1] == 0xBB && slice[2] == 0xBF)
+            slice = slice[3..];
+
+        while (slice.Length > 0 && slice[0] is (byte)'\r' or (byte)'\n' or (byte)'\t' or (byte)' ')
+            slice = slice[1..];
+
+        var preambleLength = read - slice.Length;
+        if (preambleLength > 0 && slice.Length >= 4 && slice[0] == 0x50 && slice[1] == 0x4B && slice[2] == 0x03 && slice[3] == 0x04)
+        {
+            content.Position = preambleLength;
+            var subStream = new MemoryStream(checked((int)(content.Length - preambleLength)));
+            content.CopyTo(subStream);
+            subStream.Position = 0;
+            return subStream;
         }
 
-        var warnings = new List<string>();
-        var text = NormalizePages([string.Join("\n", blocks)], warnings);
-        return Evaluate(text, 1, DocumentExtractionMethod.DocxOpenXml, warnings);
+        return content;
     }
 
     private static void AddBlock(List<string> blocks, string? value)

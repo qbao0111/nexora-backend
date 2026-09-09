@@ -135,7 +135,7 @@ Tạo một UUID:
 
 Một ý định thao tác mới → một key mới. Retry cùng ý định → giữ nguyên key **và body**.
 Không đổi key liên tục chỉ vì mạng timeout; không dùng cùng key cho hai payload khác nhau.
-Không cần key cho GET, register/login, presign, finalize CV hoặc tạo JD.
+Không cần key cho GET, register/login, presign hoặc finalize CV. Tạo JD độc lập có thể không gửi key; trong flow CV → JD → analysis, dùng cùng một key ổn định cho tạo JD và tạo analysis để retry không sinh JD trùng.
 
 ### Shortcut Development: chọn file + nhập JD
 
@@ -158,7 +158,7 @@ Dùng cùng tài khoản/token cho toàn bộ luồng.
 | 1 | POST `/uploads/presign` | `200`; lưu `data.token`, `data.uploadUrl`. |
 | 2 | PUT `/uploads/{token}` | Gửi raw file; `204`, không có JSON body. |
 | 3 | POST `/resumes` | `201`; lưu `data.id` thành resumeId. |
-| 4 | POST `/job-descriptions` | `201`; lưu `data.id` thành jobDescriptionId. |
+| 4 | POST `/job-descriptions` | `201`; lưu `data.id` thành jobDescriptionId. Trong flow phối hợp, gửi cùng `Idempotency-Key` với bước 5. |
 | 5 | POST `/resume-analyses` | Có Idempotency-Key; `201`; lưu analysisId. |
 | 6 | GET `/resume-analyses/{id}` | `200`; poll đến `completed` hoặc `failed`. |
 
@@ -328,7 +328,11 @@ Swagger cùng origin API nên test được Swagger **không chứng minh** CORS
 | `400 IDEMPOTENCY_KEY_REQUIRED` | Điền header key cho đúng mutation. |
 | `409 IDEMPOTENCY_CONFLICT` | Cùng key nhưng payload khác; khôi phục payload cũ cho retry hoặc tạo ý định mới với key mới. |
 | `409 RESUME_NOT_READY` | CV chưa ready hoặc extraction failed; kiểm tra Worker cùng DB/storage với API. |
-| `400 INVALID_FILE` | Đúng PDF/DOCX, đúng size byte/MIME/signature; đừng đổi đuôi EXE thành PDF. |
+| `400 UPLOAD_SIZE_ZERO` / `UPLOAD_SIZE_EXCEEDED` | File rỗng hoặc vượt mặc định 10 MiB; chọn file khác. |
+| `400 UPLOAD_TYPE_UNSUPPORTED` | Extension/MIME phải là cặp PDF hoặc DOCX được hỗ trợ. |
+| `400 UPLOAD_SIZE_MISMATCH` | Body PUT phải đúng số byte đã gửi khi presign; tạo intent mới nếu file snapshot đã đổi. |
+| `400 UPLOAD_SIGNATURE_INVALID` | Nội dung không khớp MIME đã khai báo; đừng đổi đuôi EXE thành PDF. |
+| `400 UPLOAD_CONTAINER_INVALID` / `UPLOAD_CONTAINER_LIMIT` | PDF phải parse được; DOCX phải là package OpenXML hợp lệ và nằm trong giới hạn kiểm tra. |
 | `404 UPLOAD_INTENT_INVALID` | Token sai/hết hạn/đã dùng/API vừa restart; presign mới và upload lại. |
 | `404 UPLOAD_NOT_FOUND` | Chưa PUT xong, sai owner/token hoặc intent bị mất; làm lại chuỗi upload. |
 | `403 QUOTA_EXCEEDED` | Dùng helper fake checkout trên DEV, refetch /me. |
