@@ -237,8 +237,8 @@ public sealed partial class IdentityAuthService(
     {
         if (string.IsNullOrWhiteSpace(currentPassword) || string.IsNullOrWhiteSpace(newPassword))
             throw new BusinessException("INVALID_PASSWORD", "Mật khẩu không được để trống.", BusinessErrorKind.Validation);
-        if (newPassword.Length < 10 || newPassword.Length > 128)
-            throw new BusinessException("PASSWORD_LENGTH_INVALID", "Mật khẩu mới phải từ 10 đến 128 ký tự.", BusinessErrorKind.Validation);
+        if (newPassword.Length < 8 || newPassword.Length > 128)
+            throw new BusinessException("PASSWORD_LENGTH_INVALID", "Mật khẩu mới phải từ 8 đến 128 ký tự.", BusinessErrorKind.Validation);
 
         var user = await userManager.FindByIdAsync(userId.ToString());
         if (user is null || !user.IsActive || user.DeletionRequestedAt is not null || user.DeletedAt is not null)
