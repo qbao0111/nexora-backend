@@ -201,6 +201,22 @@ Report có thêm `starSummary` khi có ít nhất một answer STAR-applicable:
 }
 ```
 
+### Scenario Practice v2
+
+Scenario catalogue data is server-owned and published scenarios are grouped by their active category/track:
+
+```text
+GET /api/v1/scenarios/categories
+GET /api/v1/scenarios?category={slug}&difficulty={easy|medium|hard}&competency={slug}
+GET /api/v1/scenarios/progress
+GET /api/v1/scenarios/{id-or-slug}/attempts
+POST /api/v1/scenarios/{scenarioId}/retry
+```
+
+`POST .../retry` requires `Idempotency-Key` and creates a new draft only after the user's latest attempt for that scenario is terminal (`completed` or `failed`). A draft, queued or processing latest attempt returns `409 SCENARIO_ATTEMPT_IN_PROGRESS`. Attempt history is owner-scoped and returned newest-first. It exposes `overallScore`, `previousScore`, `scoreDelta` and `improved` only for completed attempts with a valid 0–100 evaluation score; it does not expose raw evaluation JSON. The top-level `comparison` contains `currentScore`, `previousScore`, `delta` and `improved` for the latest two usable attempts, or `null` previous values when only one usable attempt exists.
+
+`GET /api/v1/scenarios/progress` aggregates completed scenario scores by category/track, competency and difficulty. Failed or incomplete attempts are counted as attempts but never included in score averages. The server recommends `easy` when there is no completed attempt; after a completed attempt, a score of at least `80` advances one level (`easy → medium → hard`) and a lower score keeps the latest level. This is coaching progress only, not a hiring assessment.
+
 ### Error envelope
 
 ```json

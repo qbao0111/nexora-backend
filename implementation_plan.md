@@ -746,13 +746,13 @@ FE nhận notification -> refetch REST một lần.
 
 Không sửa Interview files.
 
-- [ ] Track/category grouping.
-- [ ] Difficulty progression.
-- [ ] Retry cùng scenario.
-- [ ] Attempt history.
-- [ ] Compare score attempt gần nhất.
-- [ ] Competency aggregate.
-- [ ] Saved/bookmark nếu effort thấp.
+- [x] Track/category grouping qua public category catalogue, category filter và track progress aggregate.
+- [x] Difficulty progression theo score completed gần nhất (`80+` tăng một level, thấp hơn giữ level hiện tại).
+- [x] Retry cùng scenario qua endpoint idempotent, chặn retry khi attempt trước còn active.
+- [x] Attempt history theo từng scenario, owner-scoped.
+- [x] Compare score attempt gần nhất bằng `previousScore` và `scoreDelta`.
+- [x] Competency aggregate trong scenario progress.
+- [ ] Saved/bookmark (optional): deferred vì cần schema/migration user-scenario riêng; không thêm migration ngoài ownership của workstream.
 
 Không cần branching scenario ở P1 nếu timeline căng.
 
