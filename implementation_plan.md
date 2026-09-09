@@ -726,6 +726,9 @@ Backend:
 
 Current SignalR layer đã có resource notifications; bổ sung scenario/star nếu FE còn poll nhanh.
 
+- [x] Persist notification khi Scenario/STAR attempt transition thành `completed` hoặc `failed`.
+- [x] SignalR/WebSocket integration test refetch REST resource và giữ đúng owner/payload contract.
+
 Emit khi persisted state thực sự đổi:
 
 ```text

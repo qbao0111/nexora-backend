@@ -514,6 +514,7 @@ public sealed partial class ScenarioStarService(
         attempt.EvaluationJson = JsonSerializer.Serialize(result, JsonOptions);
         attempt.Status = PracticeFeatureValues.Completed;
         attempt.CompletedAt = attempt.UpdatedAt = timeProvider.GetUtcNow();
+        EnqueueResourceChanged(attempt.UserId, "scenarioAttempt", attempt.Id, attempt.Status, attempt.CompletedAt.Value);
         MarkProcessed(job, timeProvider.GetUtcNow());
         if (attempt.UsageReservationId.HasValue)
             await featureEntitlementService.ConsumeAsync(attempt.UserId, attempt.UsageReservationId.Value, cancellationToken);
@@ -540,6 +541,7 @@ public sealed partial class ScenarioStarService(
         attempt.EvaluationJson = JsonSerializer.Serialize(evaluation, JsonOptions);
         attempt.Status = PracticeFeatureValues.Completed;
         attempt.CompletedAt = attempt.UpdatedAt = timeProvider.GetUtcNow();
+        EnqueueResourceChanged(attempt.UserId, "starAttempt", attempt.Id, attempt.Status, attempt.CompletedAt.Value);
         MarkProcessed(job, timeProvider.GetUtcNow());
         if (attempt.UsageReservationId.HasValue)
             await featureEntitlementService.ConsumeAsync(attempt.UserId, attempt.UsageReservationId.Value, cancellationToken);
@@ -563,6 +565,7 @@ public sealed partial class ScenarioStarService(
             attempt.UpdatedAt = current.ProcessedAt.Value;
             if (attempt.UsageReservationId.HasValue)
                 await featureEntitlementService.VoidAsync(attempt.UserId, attempt.UsageReservationId.Value, cancellationToken);
+            EnqueueResourceChanged(attempt.UserId, "scenarioAttempt", attempt.Id, attempt.Status, attempt.UpdatedAt);
         }
         else if (current.Type == PracticeFeatureValues.StarEvaluationJob)
         {
@@ -572,6 +575,7 @@ public sealed partial class ScenarioStarService(
             attempt.UpdatedAt = current.ProcessedAt.Value;
             if (attempt.UsageReservationId.HasValue)
                 await featureEntitlementService.VoidAsync(attempt.UserId, attempt.UsageReservationId.Value, cancellationToken);
+            EnqueueResourceChanged(attempt.UserId, "starAttempt", attempt.Id, attempt.Status, attempt.UpdatedAt);
         }
         await dbContext.SaveChangesAsync(cancellationToken);
         await CommitAsync(transaction, cancellationToken);
@@ -607,6 +611,16 @@ public sealed partial class ScenarioStarService(
         new(attempt.Id, attempt.Question, attempt.Answer, attempt.Status, Parse(attempt.EvaluationJson), attempt.ErrorCode, attempt.CreatedAt, attempt.CompletedAt);
 
     private static JsonElement? Parse(string? value) => string.IsNullOrWhiteSpace(value) ? null : JsonSerializer.Deserialize<JsonElement>(value);
+
+    private void EnqueueResourceChanged(Guid userId, string resourceType, Guid resourceId, string status, DateTimeOffset occurredAt) =>
+        dbContext.RealtimeNotifications.Add(new Nexora.Data.Realtime.RealtimeNotification
+        {
+            UserId = userId,
+            ResourceType = resourceType,
+            ResourceId = resourceId,
+            Status = status,
+            CreatedAt = occurredAt
+        });
 
     private string CurrentModelVersion => string.IsNullOrWhiteSpace(aiProvider.ModelVersion)
         ? throw new InvalidOperationException("The configured AI provider must expose a model version.")
