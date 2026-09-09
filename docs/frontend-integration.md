@@ -14,7 +14,7 @@ CORS:       http://localhost:3000, http://localhost:5173,
             https://nexora-staging.vercel.app (when deployed)
 ```
 
-Use one hostname consistently (`localhost` is recommended). Browser requests use `credentials: "include"`, including register, login, refresh and logout. The response contains a short-lived `accessToken`; keep it in memory only and send it as `Authorization: Bearer <accessToken>`. The refresh token is an HttpOnly cookie and is never read or stored by JavaScript.
+Use one hostname consistently (`localhost` is recommended). Browser requests use `credentials: "include"`, including login, refresh and logout. Registration returns a verification-required response without a session; open the email link, then POST its `userId` and `token` to `/api/v1/auth/verify-email` before logging in. The login response contains a short-lived `accessToken`; keep it in memory only and send it as `Authorization: Bearer <accessToken>`. The refresh token is an HttpOnly cookie and is never read or stored by JavaScript.
 
 When a protected request receives one `401`, call `POST /auth/refresh` once through a shared refresh lock, replace the in-memory token and retry the original request once. If refresh fails, clear memory and show the login screen. Do not loop refresh or put either token in `localStorage`.
 
@@ -35,17 +35,19 @@ For each user intent, generate one UUID and send it as `Idempotency-Key`. Reuse 
 
 ## Real CV → JD → analysis flow
 
-1. `POST /auth/register` (`201`) or `/auth/login` (`200`):
+1. `POST /auth/register` (`201`), verify the email, then `/auth/login` (`200`):
 
    ```json
    { "email": "candidate@example.com", "password": "...", "displayName": "Candidate" }
    ```
 
-   Save `data.accessToken` in memory. The response also sets the refresh cookie. Newly registered users automatically receive the `User` role and a default 100-year Free Plan entitlement with 1 mock interview.
+Registration returns `{ "email": "...", "verificationRequired": true }` and does not set a refresh cookie. The verification email link contains the `userId` and one-time Identity token; POST them to `/auth/verify-email`. Only after verification does login return `data.accessToken`, set the refresh cookie, and provision the default 100-year Free Plan entitlement with 1 mock interview. Verification retries do not create duplicate entitlements.
+
+For password recovery, call `POST /auth/forgot-password` with `{ "email": "..." }`. The response is intentionally generic for both existing and unknown emails. If a reset email arrives, POST its `userId`, `token` and the new password to `/auth/reset-password`; a successful reset revokes existing sessions, so clear the in-memory access token and show the login screen.
 
 2. `GET /me` (`200`) to hydrate the current user, assigned roles (`["User"]`), and server-owned billing/quota state.
 
-   `POST /me/password` (`200`, Bearer):
+   `POST /me/password` (`204`, Bearer):
    ```json
    { "currentPassword": "...", "newPassword": "..." }
    ```

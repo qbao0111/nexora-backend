@@ -11,6 +11,7 @@ namespace Nexora.Api.Infrastructure;
 public static class RateLimitPolicies
 {
     public const string Authentication = "authentication";
+    public const string PasswordRecovery = "password-recovery";
     public const string Refresh = "refresh";
     public const string Upload = "upload";
     public const string Checkout = "checkout";
@@ -61,6 +62,7 @@ public static class HardeningExtensions
         services.AddRateLimiter(options =>
         {
             AddFixedWindow(options, configuration, RateLimitPolicies.Authentication, "Authentication", 5, 15, ByIp);
+            AddFixedWindow(options, configuration, RateLimitPolicies.PasswordRecovery, "PasswordRecovery", 5, 15, ByIp);
             AddFixedWindow(options, configuration, RateLimitPolicies.Refresh, "Refresh", 30, 60, ByRefreshSession);
             AddFixedWindow(options, configuration, RateLimitPolicies.Upload, "Upload", 10, 60, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.Checkout, "Checkout", 5, 60, ByUser);

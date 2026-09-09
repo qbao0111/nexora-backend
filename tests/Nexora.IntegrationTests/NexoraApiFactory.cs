@@ -8,7 +8,9 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Nexora.Business.Ai;
+using Nexora.Business.Email;
 using Nexora.Data.Persistence;
 
 namespace Nexora.IntegrationTests;
@@ -17,6 +19,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
 {
     private readonly string _connectionString = $"Data Source=nexora-{Guid.NewGuid():N};Mode=Memory;Cache=Shared;Default Timeout=5";
     private readonly SqliteConnection _connection;
+    private readonly object _databaseLock = new();
     private readonly IAiProvider _aiProvider;
     private readonly IReadOnlyDictionary<string, string?>? _configurationOverrides;
     private readonly Action<IServiceCollection>? _configureServices;
@@ -29,19 +32,42 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
     internal NexoraApiFactory(IReadOnlyDictionary<string, string?> configurationOverrides) : this((IAiProvider?)null, configurationOverrides) { }
     internal NexoraApiFactory(IReadOnlyDictionary<string, string?> configurationOverrides, Action<IServiceCollection> configureServices) : this((IAiProvider?)null, configurationOverrides, configureServices) { }
 
-    internal NexoraApiFactory(string environment) : this((IAiProvider?)null, new Dictionary<string, string?>
+    internal NexoraApiFactory(string environment) : this(environment, new Dictionary<string, string?>())
+    { }
+
+    internal NexoraApiFactory(string environment, IReadOnlyDictionary<string, string?> configurationOverrides) :
+        this((IAiProvider?)null, MergeEnvironmentOverrides(environment, configurationOverrides)) => _environment = environment;
+
+    private static Dictionary<string, string?> MergeEnvironmentOverrides(string environment, IReadOnlyDictionary<string, string?> overrides)
     {
-        ["Features:Ai"] = "false",
-        ["Features:Payment"] = "false",
-        ["Features:Upload"] = "false",
-        ["Authentication:Jwt:Issuer"] = "Nexora.Tests",
-        ["Authentication:Jwt:Audience"] = "Nexora.Tests.Client",
-        ["Authentication:Jwt:SigningKey"] = "integration-test-signing-key-32-characters-minimum",
-        ["Ai:Provider"] = "gemini",
-        ["Ai:Gemini:ApiKey"] = "test-only-not-used",
-        ["Ai:Gemini:Model"] = "test-gemini-model",
-        ["Billing:Payment:Provider"] = "fake"
-    }) => _environment = environment;
+        var dict = new Dictionary<string, string?>
+        {
+            ["Features:Ai"] = "false",
+            ["Features:Payment"] = "false",
+            ["Features:Upload"] = "false",
+            ["Authentication:Jwt:Issuer"] = "Nexora.Tests",
+            ["Authentication:Jwt:Audience"] = "Nexora.Tests.Client",
+            ["Authentication:Jwt:SigningKey"] = "integration-test-signing-key-32-characters-minimum",
+            ["Ai:Provider"] = "gemini",
+            ["Ai:Gemini:ApiKey"] = "test-only-not-used",
+            ["Ai:Gemini:Model"] = "test-gemini-model",
+            ["Billing:Payment:Provider"] = "fake"
+        };
+        if (environment is "Staging" or "Production")
+        {
+            dict["Authentication:EmailVerification:PublicUrl"] = "https://staging.nexora.app";
+            dict["Email:Provider"] = "resend";
+            dict["Email:FromAddress"] = "support@nexora.app";
+            dict["Email:FromName"] = "Nexora";
+            dict["Email:Resend:ApiKey"] = "re_staging_test_api_key_12345";
+            dict["Email:Resend:ApiBaseUrl"] = "https://api.resend.com";
+        }
+        foreach (var (key, value) in overrides)
+        {
+            dict[key] = value;
+        }
+        return dict;
+    }
 
     private NexoraApiFactory(IAiProvider? aiProvider, IReadOnlyDictionary<string, string?>? configurationOverrides, Action<IServiceCollection>? configureServices = null)
     {
@@ -55,6 +81,11 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment(_environment);
+        builder.ConfigureLogging(logging =>
+        {
+            logging.ClearProviders();
+            logging.AddConsole();
+        });
         builder.ConfigureAppConfiguration((_, configuration) =>
         {
             var values = new Dictionary<string, string?>
@@ -63,6 +94,8 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
                 ["Authentication:Jwt:SigningKey"] = "integration-test-signing-key-32-characters-minimum",
                 ["Authentication:Jwt:Issuer"] = "Nexora.Tests",
                 ["Authentication:Jwt:Audience"] = "Nexora.Tests.Client",
+                ["Authentication:EmailVerification:PublicUrl"] = "http://localhost:3000",
+                ["Authentication:EmailVerification:TokenLifespanHours"] = "24",
                 ["Billing:Payment:Provider"] = "fake",
                 ["Billing:FakePayment:WebhookSecret"] = "phase2-test-webhook-key-material",
                 ["Billing:FakePayment:TimestampToleranceMinutes"] = "5",
@@ -71,6 +104,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
                 ["Ai:Gemini:ApiKey"] = "test-only-not-used",
                 ["Ai:Gemini:Model"] = "test-gemini-model",
                 ["RateLimits:Authentication:PermitLimit"] = "1000",
+                ["RateLimits:PasswordRecovery:PermitLimit"] = "1000",
                 ["RateLimits:LoginEmail:PermitLimit"] = "1000",
                 ["Storage:Local:RootPath"] = Path.Combine(Path.GetTempPath(), "nexora-api-tests")
             };
@@ -86,6 +120,8 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
             services.AddDbContext<NexoraDbContext>(options => options.UseSqlite(_connectionString));
             services.RemoveAll<IAiProvider>();
             services.AddSingleton(_aiProvider);
+            services.RemoveAll<IEmailSender>();
+            services.AddSingleton<IEmailSender, RecordingEmailSender>();
             _configureServices?.Invoke(services);
         });
     }
@@ -111,8 +147,11 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
 
     public void InitializeDatabase()
     {
-        using var scope = Services.CreateScope();
-        scope.ServiceProvider.GetRequiredService<NexoraDbContext>().Database.EnsureCreated();
+        lock (_databaseLock)
+        {
+            using var scope = Services.CreateScope();
+            scope.ServiceProvider.GetRequiredService<NexoraDbContext>().Database.EnsureCreated();
+        }
     }
 
     protected override void Dispose(bool disposing)

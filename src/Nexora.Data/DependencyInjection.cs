@@ -24,7 +24,7 @@ public static class DependencyInjection
         services.AddIdentityCore<ApplicationUser>(options =>
         {
             options.User.RequireUniqueEmail = true;
-            options.Password.RequiredLength = 10;
+            options.Password.RequiredLength = 8;
             options.Password.RequireDigit = true;
             options.Password.RequireLowercase = true;
             options.Password.RequireUppercase = true;
@@ -33,6 +33,20 @@ public static class DependencyInjection
             options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
         }).AddRoles<IdentityRole<Guid>>().AddEntityFrameworkStores<NexoraDbContext>()
           .AddSignInManager().AddDefaultTokenProviders();
+
+        services.AddOptions<EmailVerificationOptions>()
+            .Bind(configuration.GetSection(EmailVerificationOptions.SectionName))
+            .Validate(options => Uri.TryCreate(options.PublicUrl, UriKind.Absolute, out var uri) &&
+                                  (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps),
+                "Authentication:EmailVerification:PublicUrl must be an absolute HTTP(S) URL.")
+            .Validate(options => options.TokenLifespanHours is >= 1 and <= 72,
+                "Authentication:EmailVerification:TokenLifespanHours must be between 1 and 72.")
+            .ValidateOnStart();
+        services.Configure<DataProtectionTokenProviderOptions>(options =>
+        {
+            var hours = configuration.GetValue<int?>($"{EmailVerificationOptions.SectionName}:TokenLifespanHours") ?? 24;
+            options.TokenLifespan = TimeSpan.FromHours(hours);
+        });
 
         services.AddOptions<JwtOptions>().Bind(configuration.GetSection(JwtOptions.SectionName))
             .Validate(options => options.SigningKey.Length >= 32, "Authentication:Jwt:SigningKey must contain at least 32 characters.")

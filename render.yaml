@@ -45,6 +45,16 @@ services:
         sync: false
       - key: Billing__Sepay__SecretKey
         sync: false
+      - key: Email__Provider
+        value: resend
+      - key: Email__FromAddress
+        sync: false
+      - key: Email__FromName
+        value: Nexora
+      - key: Email__Resend__ApiKey
+        sync: false
+      - key: Authentication__EmailVerification__PublicUrl
+        sync: false
       - key: Frontend__AllowedOrigins__0
         value: http://localhost:3000
       - key: Frontend__AllowedOrigins__1

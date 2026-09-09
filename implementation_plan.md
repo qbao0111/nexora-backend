@@ -448,41 +448,41 @@ Hoặc generic `SendAsync(EmailMessage)` nếu muốn giảm coupling.
 
 Tasks:
 
-- [ ] `ResendEmailSender` trong `Nexora.Integrations/Email`.
-- [ ] Development/testing có fake/no-op/recording sender.
-- [ ] Config validation fail-closed production nếu Resend enabled nhưng thiếu key/domain.
-- [ ] Không log token verification/reset.
-- [ ] Template tiếng Việt responsive tối thiểu.
-- [ ] From domain được cấu hình, không hard-code.
+- [x] `ResendEmailSender` trong `Nexora.Integrations/Email`.
+- [x] Development/testing có fake/no-op/recording sender.
+- [x] Config validation fail-closed production nếu Resend enabled nhưng thiếu key/domain.
+- [x] Không log token verification/reset.
+- [x] Template tiếng Việt responsive tối thiểu.
+- [x] From domain được cấu hình, không hard-code.
 
 ### B2. Email verification [P0]
 
-- [ ] Register tạo account chưa verified.
-- [ ] Generate verification token bằng ASP.NET Identity token provider.
-- [ ] Link verification chỉ chứa one-time token + user identifier cần thiết.
-- [ ] TTL hợp lý.
-- [ ] `POST /auth/verify-email` hoặc GET callback contract rõ ràng.
-- [ ] `POST /auth/resend-verification` rate limit.
-- [ ] Login account chưa verify trả `EMAIL_NOT_VERIFIED`.
-- [ ] Free entitlement provisioning phải idempotent và chỉ usable sau verify.
-- [ ] Không cho spam tạo nhiều entitlement bằng retry verification.
+- [x] Register tạo account chưa verified.
+- [x] Generate verification token bằng ASP.NET Identity token provider.
+- [x] Link verification chỉ chứa one-time token + user identifier cần thiết.
+- [x] TTL hợp lý.
+- [x] `POST /auth/verify-email` hoặc GET callback contract rõ ràng.
+- [x] `POST /auth/resend-verification` rate limit.
+- [x] Login account chưa verify trả `EMAIL_NOT_VERIFIED`.
+- [x] Free entitlement provisioning phải idempotent và chỉ usable sau verify.
+- [x] Không cho spam tạo nhiều entitlement bằng retry verification.
 
 ### B3. Password recovery [P0]
 
-- [ ] `POST /auth/forgot-password`.
-- [ ] Response generic dù email tồn tại hay không.
-- [ ] Rate limit theo IP/email normalized.
-- [ ] Gửi reset link qua Resend.
-- [ ] `POST /auth/reset-password`.
-- [ ] Reset thành công revoke refresh tokens + update security stamp.
-- [ ] Token invalid/expired trả error an toàn, không leak account existence.
+- [x] `POST /auth/forgot-password`.
+- [x] Response generic dù email tồn tại hay không.
+- [x] Rate limit theo IP/email normalized.
+- [x] Gửi reset link qua Resend.
+- [x] `POST /auth/reset-password`.
+- [x] Reset thành công revoke refresh tokens + update security stamp.
+- [x] Token invalid/expired trả error an toàn, không leak account existence.
 
 ### B4. Change password existing [P0]
 
 Backend đã có logic đổi mật khẩu.
 
-- [ ] Verify contract + regression tests.
-- [ ] FE gọi `POST /api/v1/me/password`.
+- [x] Verify contract + regression tests.
+- [x] Backend contract documented for FE: `POST /api/v1/me/password`.
 - [ ] UX yêu cầu current password + new password + confirm.
 - [ ] Sau success FE logout/re-bootstrap vì BE revoke sessions.
 
@@ -714,17 +714,20 @@ Backend:
 
 ## B5. Auth regression/hardening [P0]
 
-- [ ] Register/verify/login/refresh/logout happy path.
-- [ ] Unverified account không gọi AI.
-- [ ] Verification resend rate-limit.
-- [ ] Password reset revokes sessions.
-- [ ] Deleted/inactive user fail closed.
-- [ ] Security stamp vẫn tương thích SignalR JWT validation.
-- [ ] Refresh cookie cross-site production config test.
+- [x] Register/verify/login/refresh/logout happy path.
+- [x] Unverified account không gọi AI.
+- [x] Verification resend rate-limit.
+- [x] Password reset revokes sessions.
+- [x] Deleted/inactive user fail closed.
+- [x] Security stamp vẫn tương thích SignalR JWT validation.
+- [x] Refresh cookie cross-site production config test.
 
 ## B6. Scenario async SignalR parity [P1]
 
 Current SignalR layer đã có resource notifications; bổ sung scenario/star nếu FE còn poll nhanh.
+
+- [x] Persist notification khi Scenario/STAR attempt transition thành `completed` hoặc `failed`.
+- [x] SignalR/WebSocket integration test refetch REST resource và giữ đúng owner/payload contract.
 
 Emit khi persisted state thực sự đổi:
 
