@@ -193,6 +193,24 @@ POST /api/v1/scenarios/{scenarioId}/retry
 
 `GET /api/v1/scenarios/progress` aggregates completed scenario scores by category/track, competency and difficulty. Failed or incomplete attempts are counted as attempts but never included in score averages. The server recommends `easy` when there is no completed attempt; after a completed attempt, a score of at least `80` advances one level (`easy → medium → hard`) and a lower score keeps the latest level. This is coaching progress only, not a hiring assessment.
 
+### STAR Story Bank
+
+The Story Bank is a user-owned, persistent resource separate from one-off `StarAttempt` records. Only a completed STAR attempt with four detected, grounded STAR component evidences can be saved:
+
+```text
+POST /api/v1/star-stories
+GET  /api/v1/star-stories?search={text}&tag={tag}&page={n}&pageSize={n}
+GET  /api/v1/star-stories/{storyId}
+PATCH /api/v1/star-stories/{storyId}
+POST /api/v1/star-stories/{storyId}/evaluate
+```
+
+The create and evaluate requests require `Idempotency-Key`. Create accepts `sourceAttemptId`, an optional title and up to eight tags. Reusing a key with the same payload replays the same story; using it with different data returns `409 IDEMPOTENCY_CONFLICT`. Tags are trimmed, lower-cased and deduplicated case-insensitively. Ownership is always taken from the authenticated principal; source attempts and stories from another user return the normal `404` ownership response.
+
+List responses contain `id`, `title`, `tags`, `latestScore`, `createdAt` and `updatedAt`, ordered by `updatedAt DESC`. Search is deterministic and owner-scoped across title, tags and STAR text; `tag` performs an exact normalized-tag filter. Detail responses additionally contain the persisted `situation`, `task`, `action`, `result`, and the latest structured evaluation metadata. Normal edits never call AI and preserve the last valid score. Evaluation uses the current persisted story snapshot, reuses the existing `star.evaluate` validator and `star_builder` quota, consumes quota only after a valid evaluation is persisted, and voids the reservation on failure. A failed re-evaluation does not replace the previous valid score/evaluation.
+
+STAR Story content is intentionally isolated from Interview generation and evaluation. It is never injected into interview context or used as a pre-written answer before the user answers a question.
+
 ### Error envelope
 
 ```json
@@ -223,7 +241,7 @@ POST /api/v1/scenarios/{scenarioId}/retry
 | Billing | `plans`, `plan_prices`, `orders`, `payment_events`, `subscriptions`, `entitlements`, `usage_events` |
 | CV | `resumes`, `resume_files`, `job_descriptions`, `resume_analyses` |
 | Interview | `interview_sessions`, `interview_questions`, `interview_answers`, `interview_reports` |
-| Practice | `scenario_attempts`, `star_drafts`, `star_feedback` |
+| Practice | `scenario_attempts`, `star_attempts`, `star_stories` |
 | Operations | `idempotency_keys`, `outbox_events`, `audit_logs` |
 
 ### Cột bắt buộc và constraints

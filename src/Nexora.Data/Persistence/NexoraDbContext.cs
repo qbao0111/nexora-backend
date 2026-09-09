@@ -40,6 +40,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<Scenario> Scenarios => Set<Scenario>();
     public DbSet<ScenarioAttempt> ScenarioAttempts => Set<ScenarioAttempt>();
     public DbSet<StarAttempt> StarAttempts => Set<StarAttempt>();
+    public DbSet<StarStory> StarStories => Set<StarStory>();
     public DbSet<Nexora.Data.Realtime.RealtimeNotification> RealtimeNotifications => Set<Nexora.Data.Realtime.RealtimeNotification>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -232,6 +233,23 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.Property(item => item.PromptVersion).HasMaxLength(80);
             entity.Property(item => item.SchemaVersion).HasMaxLength(80);
             entity.Property(item => item.ErrorCode).HasMaxLength(80);
+            entity.HasOne(item => item.User).WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<StarStory>(entity =>
+        {
+            entity.ToTable("star_stories");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.UserId, item.UpdatedAt });
+            entity.Property(item => item.Title).HasMaxLength(160).IsRequired();
+            entity.Property(item => item.TagsJson).HasMaxLength(1_000).HasColumnType("jsonb").IsRequired();
+            entity.Property(item => item.Situation).HasMaxLength(8_000).IsRequired();
+            entity.Property(item => item.Task).HasMaxLength(8_000).IsRequired();
+            entity.Property(item => item.Action).HasMaxLength(8_000).IsRequired();
+            entity.Property(item => item.Result).HasMaxLength(8_000).IsRequired();
+            entity.Property(item => item.LatestEvaluationJson).HasColumnType("jsonb");
+            entity.Property(item => item.LatestModelVersion).HasMaxLength(80);
+            entity.Property(item => item.LatestPromptVersion).HasMaxLength(80);
+            entity.Property(item => item.LatestSchemaVersion).HasMaxLength(80);
             entity.HasOne(item => item.User).WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);
         });
     }

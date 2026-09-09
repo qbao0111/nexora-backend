@@ -58,6 +58,7 @@ public static class DependencyInjection
         services.AddScoped<IFeatureEntitlementService, FeatureEntitlementService>();
         services.AddScoped<IScenarioService, ScenarioStarService>();
         services.AddScoped<IStarAttemptService, ScenarioStarService>();
+        services.AddScoped<IStarStoryService, StarStoryService>();
         services.AddScoped<IProgressService, ScenarioStarService>();
         services.AddScoped<IScenarioStarJobProcessor, ScenarioStarService>();
         services.AddSingleton<IResumeContextBuilder, ResumeContextBuilder>();

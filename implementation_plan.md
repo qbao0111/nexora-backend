@@ -774,12 +774,12 @@ StarStory
 
 Tasks:
 
-- [ ] Convert/save từ STAR attempt thành story.
-- [ ] Edit story.
-- [ ] Re-evaluate sau edit theo quota/policy.
-- [ ] List/search story bank.
-- [ ] Tags: leadership, ownership, conflict, teamwork, problem-solving...
-- [ ] Không tự expose story nội dung cho interviewer trước khi user trả lời.
+- [x] Convert/save từ STAR attempt thành story.
+- [x] Edit story.
+- [x] Re-evaluate sau edit theo quota/policy.
+- [x] List/search story bank.
+- [x] Tags: leadership, ownership, conflict, teamwork, problem-solving...
+- [x] Không tự expose story nội dung cho interviewer trước khi user trả lời.
 
 ---
 

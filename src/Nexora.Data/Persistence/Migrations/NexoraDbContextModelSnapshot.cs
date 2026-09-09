@@ -1948,6 +1948,79 @@ namespace Nexora.Data.Persistence.Migrations
                     b.ToTable("star_attempts", (string)null);
                 });
 
+            modelBuilder.Entity("Nexora.Data.Practice.StarStory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(8000)
+                        .HasColumnType("character varying(8000)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("LatestEvaluatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LatestEvaluationJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("LatestModelVersion")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("LatestPromptVersion")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("LatestSchemaVersion")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<int?>("LatestScore")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Result")
+                        .IsRequired()
+                        .HasMaxLength(8000)
+                        .HasColumnType("character varying(8000)");
+
+                    b.Property<string>("Situation")
+                        .IsRequired()
+                        .HasMaxLength(8000)
+                        .HasColumnType("character varying(8000)");
+
+                    b.Property<string>("TagsJson")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Task")
+                        .IsRequired()
+                        .HasMaxLength(8000)
+                        .HasColumnType("character varying(8000)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "UpdatedAt");
+
+                    b.ToTable("star_stories", (string)null);
+                });
+
             modelBuilder.Entity("Nexora.Data.Practice.StoredFile", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2507,6 +2580,17 @@ namespace Nexora.Data.Persistence.Migrations
                 });
 
             modelBuilder.Entity("Nexora.Data.Practice.StarAttempt", b =>
+                {
+                    b.HasOne("Nexora.Data.Identity.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Nexora.Data.Practice.StarStory", b =>
                 {
                     b.HasOne("Nexora.Data.Identity.ApplicationUser", "User")
                         .WithMany()

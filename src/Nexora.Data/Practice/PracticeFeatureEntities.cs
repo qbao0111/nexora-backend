@@ -73,3 +73,24 @@ public sealed class StarAttempt
     public DateTimeOffset? CompletedAt { get; set; }
     public ApplicationUser User { get; set; } = null!;
 }
+
+public sealed class StarStory
+{
+    public Guid Id { get; set; }
+    public Guid UserId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string TagsJson { get; set; } = "[]";
+    public string Situation { get; set; } = string.Empty;
+    public string Task { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public string Result { get; set; } = string.Empty;
+    public int? LatestScore { get; set; }
+    public string? LatestEvaluationJson { get; set; }
+    public string? LatestModelVersion { get; set; }
+    public string? LatestPromptVersion { get; set; }
+    public string? LatestSchemaVersion { get; set; }
+    public DateTimeOffset? LatestEvaluatedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public ApplicationUser User { get; set; } = null!;
+}

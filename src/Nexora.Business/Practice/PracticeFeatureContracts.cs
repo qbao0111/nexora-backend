@@ -143,6 +143,30 @@ public sealed record StarAttemptView(
     DateTimeOffset CreatedAt,
     DateTimeOffset? CompletedAt);
 
+public sealed record StarStoryListItemView(
+    Guid Id,
+    string Title,
+    IReadOnlyCollection<string> Tags,
+    int? LatestScore,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+public sealed record StarStoryDetailView(
+    Guid Id,
+    string Title,
+    IReadOnlyCollection<string> Tags,
+    string Situation,
+    string Task,
+    string Action,
+    string Result,
+    int? LatestScore,
+    object? LatestEvaluation,
+    DateTimeOffset? LatestEvaluatedAt,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+public sealed record StarStoryPage(int Total, IReadOnlyCollection<StarStoryListItemView> Items);
+
 public sealed record ProgressView(
     int CompletedInterviews,
     IReadOnlyCollection<RecentInterviewScore> RecentInterviewScores,
@@ -178,6 +202,18 @@ public interface IStarAttemptService
     Task<StarAttemptView> CreateAsync(Guid userId, string question, string answer, string idempotencyKey, CancellationToken cancellationToken);
     Task<StarAttemptView> GetAsync(Guid userId, Guid attemptId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<StarAttemptView>> GetManyAsync(Guid userId, CancellationToken cancellationToken);
+}
+
+public sealed record StarStoryCreateCommand(Guid SourceAttemptId, string? Title, IReadOnlyCollection<string>? Tags);
+public sealed record StarStoryUpdateCommand(string Title, IReadOnlyCollection<string>? Tags, string Situation, string Task, string Action, string Result);
+
+public interface IStarStoryService
+{
+    Task<StarStoryDetailView> CreateFromAttemptAsync(Guid userId, StarStoryCreateCommand command, string idempotencyKey, CancellationToken cancellationToken);
+    Task<StarStoryPage> ListAsync(Guid userId, string? search, string? tag, int? page, int? pageSize, CancellationToken cancellationToken);
+    Task<StarStoryDetailView> GetAsync(Guid userId, Guid storyId, CancellationToken cancellationToken);
+    Task<StarStoryDetailView> UpdateAsync(Guid userId, Guid storyId, StarStoryUpdateCommand command, CancellationToken cancellationToken);
+    Task<StarStoryDetailView> EvaluateAsync(Guid userId, Guid storyId, string idempotencyKey, CancellationToken cancellationToken);
 }
 
 public interface IProgressService

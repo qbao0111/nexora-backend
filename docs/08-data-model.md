@@ -28,7 +28,9 @@ ApplicationUser 1--N Subscription 1--N Entitlement 1--N UsageEvent
 | `resumes`, `stored_files` | CV file + extracted text | `storage_key` private; checksum, MIME, scan/extract state. |
 | `job_descriptions`, `resume_analyses` | JD và output analysis | input snapshot/model/prompt version. |
 | `interview_sessions`, `interview_questions`, `interview_answers`, `interview_reports` | Practice loop | answer unique per official question, session state machine. |
-| `star_drafts`, `scenario_attempts` | Practice support | owner ID, version/status. |
+| `star_attempts`, `star_stories`, `scenario_attempts` | Practice support | owner ID, STAR attempt status, reusable Story Bank content and latest score. |
+
+`star_stories` is a user-owned reusable STAR resource separate from one-off `star_attempts`. It stores normalized title/tags, the four user-provided STAR fields, and the latest valid structured evaluation metadata. It has an index on `(user_id, updated_at)` for owner-scoped newest-first list/search. Story content is not part of Interview question-generation or answer-evaluation context.
 | `idempotency_keys`, `outbox_events`, `audit_logs` | Reliability/operations | expiry/retention job. |
 | `data_privacy_requests` | Audit/retry state cho export/delete workflow | unique `(user_id, idempotency_key)`; không FK cascade để audit còn lại sau anonymization. |
 | `realtime_notifications` | Minimal owner-targeted resource-change delivery metadata | `Id`, `UserId`, `ResourceType`, `ResourceId`, `Status`, `CreatedAt`, nullable `ProcessedAt`/`NextAttemptAt`, `Attempts`; pending index `(ProcessedAt, CreatedAt)`. Inserted with resource transition; see [delivery contract](realtime-notifications.md). |

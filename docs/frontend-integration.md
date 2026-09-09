@@ -304,6 +304,55 @@ Stable feature codes: `cv_analysis`, `interview`, `scenario`, `star_builder`, `a
    Upon successful evaluation, quota is consumed; upon terminal failure, quota is voided.
 3. `GET /api/v1/star-attempts` (`200`, Bearer): lists the user's recent standalone STAR attempts.
 
+## STAR Story Bank
+
+The Story Bank stores reusable user-owned stories without changing the one-off attempt flow. After a completed STAR attempt has usable grounded Situation/Task/Action/Result evidence, save it with:
+
+```http
+POST /api/v1/star-stories
+Authorization: Bearer <access-token>
+Idempotency-Key: story-save-<stable-client-key>
+Content-Type: application/json
+
+{
+  "sourceAttemptId": "...",
+  "title": "Checkout recovery",
+  "tags": ["leadership", "ownership"]
+}
+```
+
+The create response contains the new `id`, title, normalized tags, four persisted STAR fields, `latestScore`, and timestamps. Retrying with the same key and identical payload replays the same story; do not reuse a key for a different body.
+
+Use `GET /api/v1/star-stories?search=checkout&tag=leadership&page=1&pageSize=20` for an owner-scoped list. List items contain only `id`, `title`, `tags`, `latestScore`, `createdAt` and `updatedAt`; the default order is most recently updated first. Use `GET /api/v1/star-stories/{storyId}` for full STAR content. A different user's story is returned as `404` and must not be distinguished in the UI.
+
+Edit the current story without triggering AI:
+
+```http
+PATCH /api/v1/star-stories/{storyId}
+Content-Type: application/json
+
+{
+  "title": "Checkout recovery",
+  "tags": ["leadership", "ownership"],
+  "situation": "...",
+  "task": "...",
+  "action": "...",
+  "result": "..."
+}
+```
+
+The title and all four STAR fields must be nonblank and no longer than 8,000 characters for a STAR field. Tags are trimmed, lower-cased and deduplicated, with at most eight tags of 40 characters each. The previous valid score remains until the user explicitly requests evaluation.
+
+Re-evaluate the current persisted content with a fresh idempotency key:
+
+```http
+POST /api/v1/star-stories/{storyId}/evaluate
+Authorization: Bearer <access-token>
+Idempotency-Key: story-evaluate-<stable-client-key>
+```
+
+This operation uses the existing `star_builder` entitlement and the provider-neutral structured STAR validator. A successful evaluation updates `latestScore` and latest evaluation metadata; a provider/validation failure voids the reservation and leaves the previous valid score intact. Replaying the same successful key does not call AI or consume a second quota unit. Story text is preparation data only and is never automatically sent to Interview question generation/evaluation or used as an answer before the user responds.
+
 ## Progress Analytics Flow
 
 `GET /api/v1/progress` (`200`, Bearer) is gated by the `progress_analytics` feature entitlement.
