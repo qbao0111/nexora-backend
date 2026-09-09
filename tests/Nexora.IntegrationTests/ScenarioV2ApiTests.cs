@@ -209,6 +209,107 @@ public sealed class ScenarioV2ApiTests
         Assert.Equal(90, difficulty.GetProperty("averageScore").GetDouble());
     }
 
+    [Fact]
+    public async Task ScenarioProgressRecommendedDifficultyAndScoreBoundsEnforced()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        // 1. No completed attempts -> recommended is "easy"
+        using var initialResp = await client.GetAsync("/api/v1/scenarios/progress");
+        Assert.Equal(HttpStatusCode.OK, initialResp.StatusCode);
+        var initialProgress = await DataAsync(initialResp);
+        Assert.Equal("easy", initialProgress.GetProperty("recommendedDifficulty").GetString());
+        Assert.Equal(0, initialProgress.GetProperty("completedAttempts").GetInt32());
+
+        // 2. Score < 80 on medium -> keeps current difficulty ("medium")
+        var mediumScenario = await SeedScenarioAsync(factory, "banking", "medium", "risk_management");
+        await SeedCompletedAttemptAsync(factory, account.UserId, mediumScenario.Id, 75);
+
+        using var medResp = await client.GetAsync("/api/v1/scenarios/progress");
+        var medProgress = await DataAsync(medResp);
+        Assert.Equal("medium", medProgress.GetProperty("recommendedDifficulty").GetString());
+
+        // 3. Score >= 80 on easy -> advances to "medium"
+        var easyScenario = await SeedScenarioAsync(factory, "ecommerce", "easy", "customer_focus");
+        await SeedCompletedAttemptAsync(factory, account.UserId, easyScenario.Id, 85);
+
+        using var easyResp = await client.GetAsync("/api/v1/scenarios/progress");
+        var easyProgress = await DataAsync(easyResp);
+        Assert.Equal("medium", easyProgress.GetProperty("recommendedDifficulty").GetString());
+
+        // 4. Hard never advances beyond hard
+        var hardScenario = await SeedScenarioAsync(factory, "logistics", "hard", "incident_response");
+        await SeedCompletedAttemptAsync(factory, account.UserId, hardScenario.Id, 95);
+
+        using var hardResp = await client.GetAsync("/api/v1/scenarios/progress");
+        var hardProgress = await DataAsync(hardResp);
+        Assert.Equal("hard", hardProgress.GetProperty("recommendedDifficulty").GetString());
+
+        // 5. Invalid/out-of-range evaluation scores (>100, <0, non-numeric) are ignored
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var now = DateTimeOffset.UtcNow.AddSeconds(10);
+        db.ScenarioAttempts.AddRange(
+            new ScenarioAttempt
+            {
+                Id = Guid.NewGuid(),
+                UserId = account.UserId,
+                ScenarioId = hardScenario.Id,
+                Status = PracticeFeatureValues.Completed,
+                Answer = "out-of-range-high",
+                EvaluationJson = "{\"overallScore\":150}",
+                ModelVersion = "test-model",
+                PromptVersion = "test-prompt",
+                SchemaVersion = "test-schema",
+                CreatedAt = now,
+                UpdatedAt = now,
+                CompletedAt = now
+            },
+            new ScenarioAttempt
+            {
+                Id = Guid.NewGuid(),
+                UserId = account.UserId,
+                ScenarioId = hardScenario.Id,
+                Status = PracticeFeatureValues.Completed,
+                Answer = "out-of-range-low",
+                EvaluationJson = "{\"overallScore\":-5}",
+                ModelVersion = "test-model",
+                PromptVersion = "test-prompt",
+                SchemaVersion = "test-schema",
+                CreatedAt = now.AddSeconds(1),
+                UpdatedAt = now.AddSeconds(1),
+                CompletedAt = now.AddSeconds(1)
+            },
+            new ScenarioAttempt
+            {
+                Id = Guid.NewGuid(),
+                UserId = account.UserId,
+                ScenarioId = hardScenario.Id,
+                Status = PracticeFeatureValues.Completed,
+                Answer = "non-numeric",
+                EvaluationJson = "{\"overallScore\":\"invalid\"}",
+                ModelVersion = "test-model",
+                PromptVersion = "test-prompt",
+                SchemaVersion = "test-schema",
+                CreatedAt = now.AddSeconds(2),
+                UpdatedAt = now.AddSeconds(2),
+                CompletedAt = now.AddSeconds(2)
+            }
+        );
+        await db.SaveChangesAsync();
+
+        using var boundsResp = await client.GetAsync("/api/v1/scenarios/progress");
+        var boundsProgress = await DataAsync(boundsResp);
+        // Valid completed attempts remain 3 (75, 85, 95)
+        Assert.Equal(3, boundsProgress.GetProperty("completedAttempts").GetInt32());
+        // Average is (75 + 85 + 95) / 3 = 85.0
+        Assert.Equal(85.0, boundsProgress.GetProperty("averageScore").GetDouble());
+    }
+
     private static async Task SeedFailedAttemptAsync(NexoraApiFactory factory, Guid userId, Guid scenarioId)
     {
         using var scope = factory.Services.CreateScope();
@@ -376,6 +477,7 @@ public sealed class ScenarioV2ApiTests
             displayName = "Scenario v2 candidate"
         });
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        await TestEmailInbox.VerifyAsync(client, email);
         using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         var data = await DataAsync(login);
