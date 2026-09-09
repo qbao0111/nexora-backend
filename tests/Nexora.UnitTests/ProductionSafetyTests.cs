@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Nexora.Integrations;
 
 namespace Nexora.UnitTests;
@@ -16,5 +17,92 @@ public sealed class ProductionSafetyTests
     {
         ProductionSafety.ValidateDevelopmentAdapters(true, aiEnabled: false, paymentEnabled: false, uploadEnabled: false);
         ProductionSafety.ValidateDevelopmentAdapters(false, aiEnabled: true, paymentEnabled: true, uploadEnabled: true);
+    }
+
+    [Fact]
+    public void ValidateEmailConfigurationInDevelopmentOrTestingAllowsNoopAndHttp()
+    {
+        var config = CreateEmailConfig(provider: "noop", publicUrl: "http://localhost:3000");
+        ProductionSafety.ValidateEmailConfiguration(false, config);
+    }
+
+    [Theory]
+    [InlineData("noop")]
+    [InlineData("")]
+    [InlineData("sendgrid")]
+    public void ValidateEmailConfigurationInProductionOrStagingFailsIfProviderIsNotResend(string provider)
+    {
+        var config = CreateEmailConfig(provider: provider);
+        Assert.Throws<InvalidOperationException>(() =>
+            ProductionSafety.ValidateEmailConfiguration(true, config));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("invalid-email")]
+    [InlineData("test@localhost")]
+    public void ValidateEmailConfigurationInProductionOrStagingFailsIfFromAddressIsInvalid(string fromAddress)
+    {
+        var config = CreateEmailConfig(fromAddress: fromAddress);
+        Assert.Throws<InvalidOperationException>(() =>
+            ProductionSafety.ValidateEmailConfiguration(true, config));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ValidateEmailConfigurationInProductionOrStagingFailsIfApiKeyIsMissing(string apiKey)
+    {
+        var config = CreateEmailConfig(apiKey: apiKey);
+        Assert.Throws<InvalidOperationException>(() =>
+            ProductionSafety.ValidateEmailConfiguration(true, config));
+    }
+
+    [Fact]
+    public void ValidateEmailConfigurationInProductionOrStagingFailsIfApiBaseUrlIsNotOfficialResend()
+    {
+        var config = CreateEmailConfig(apiBaseUrl: "https://custom.api.com");
+        Assert.Throws<InvalidOperationException>(() =>
+            ProductionSafety.ValidateEmailConfiguration(true, config));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("http://staging.nexora.app")]
+    [InlineData("http://localhost:3000")]
+    [InlineData("https://localhost:3000")]
+    public void ValidateEmailConfigurationInProductionOrStagingFailsIfPublicUrlIsNotHttpsOrIsLoopback(string publicUrl)
+    {
+        var config = CreateEmailConfig(publicUrl: publicUrl);
+        Assert.Throws<InvalidOperationException>(() =>
+            ProductionSafety.ValidateEmailConfiguration(true, config));
+    }
+
+    [Fact]
+    public void ValidateEmailConfigurationInProductionOrStagingPassesWhenValid()
+    {
+        var config = CreateEmailConfig();
+        ProductionSafety.ValidateEmailConfiguration(true, config);
+    }
+
+    private static IConfiguration CreateEmailConfig(
+        string provider = "resend",
+        string fromAddress = "support@nexora.app",
+        string fromName = "Nexora",
+        string apiKey = "re_valid_key_12345",
+        string apiBaseUrl = "https://api.resend.com",
+        string publicUrl = "https://staging.nexora.app")
+    {
+        return new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Email:Provider"] = provider,
+                ["Email:FromAddress"] = fromAddress,
+                ["Email:FromName"] = fromName,
+                ["Email:Resend:ApiKey"] = apiKey,
+                ["Email:Resend:ApiBaseUrl"] = apiBaseUrl,
+                ["Authentication:EmailVerification:PublicUrl"] = publicUrl
+            })
+            .Build();
     }
 }

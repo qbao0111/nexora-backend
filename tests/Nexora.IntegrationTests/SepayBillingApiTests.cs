@@ -174,9 +174,13 @@ public sealed class SepayBillingApiTests : IDisposable
 
     private static async Task<Account> RegisterAsync(HttpClient client)
     {
-        using var response = await client.PostAsJsonAsync("/api/v1/auth/register", new { email = $"sepay-{Guid.NewGuid():N}@example.test", password = "Strong!Pass123", displayName = "SePay candidate" });
+        var email = $"sepay-{Guid.NewGuid():N}@example.test";
+        using var response = await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password = "Strong!Pass123", displayName = "SePay candidate" });
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        await TestEmailInbox.VerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        using var json = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         var data = json.RootElement.GetProperty("data");
         return new Account(data.GetProperty("user").GetProperty("id").GetGuid(), data.GetProperty("accessToken").GetString()!);
     }

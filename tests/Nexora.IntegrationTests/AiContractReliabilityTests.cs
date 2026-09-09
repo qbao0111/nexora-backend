@@ -516,14 +516,18 @@ public sealed class AiContractReliabilityTests
 
     private static async Task<Account> RegisterAsync(HttpClient client)
     {
+        var email = $"ai-test-{Guid.NewGuid():N}@example.test";
         using var response = await client.PostAsJsonAsync("/api/v1/auth/register", new
         {
-            email = $"ai-test-{Guid.NewGuid():N}@example.test",
+            email,
             password = "Strong!Pass123",
             displayName = "AI Test Candidate"
         });
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var data = await DataAsync(response);
+        await TestEmailInbox.VerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var data = await DataAsync(login);
         return new Account(data.GetProperty("user").GetProperty("id").GetGuid(), data.GetProperty("accessToken").GetString()!);
     }
 

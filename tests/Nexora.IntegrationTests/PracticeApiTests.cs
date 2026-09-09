@@ -435,14 +435,18 @@ public sealed class PracticeApiTests
 
     private static async Task<Account> RegisterAsync(HttpClient client)
     {
+        var email = $"practice-{Guid.NewGuid():N}@example.test";
         using var response = await client.PostAsJsonAsync("/api/v1/auth/register", new
         {
-            email = $"practice-{Guid.NewGuid():N}@example.test",
+            email,
             password = "Strong!Pass123",
             displayName = "Practice candidate"
         });
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var data = await DataAsync(response);
+        await TestEmailInbox.VerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var data = await DataAsync(login);
         return new Account(data.GetProperty("user").GetProperty("id").GetGuid(), data.GetProperty("accessToken").GetString()!);
     }
 

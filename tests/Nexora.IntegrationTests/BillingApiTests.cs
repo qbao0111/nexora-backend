@@ -274,14 +274,18 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
 
     private static async Task<Account> RegisterAsync(HttpClient client)
     {
+        var email = $"billing-{Guid.NewGuid():N}@example.test";
         using var response = await client.PostAsJsonAsync("/api/v1/auth/register", new
         {
-            email = $"billing-{Guid.NewGuid():N}@example.test",
+            email,
             password = "Strong!Pass123",
             displayName = "Billing candidate"
         });
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        await TestEmailInbox.VerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        using var json = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         var data = json.RootElement.GetProperty("data");
         return new Account(data.GetProperty("user").GetProperty("id").GetGuid(), data.GetProperty("accessToken").GetString()!);
     }
