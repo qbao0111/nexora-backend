@@ -481,3 +481,4 @@ This log records completed implementation milestones and verification evidence. 
 
 - Added implementation-plan rules requiring each teammate to read `project_log.md` and verify dependency branch/commit/PR status before starting a dependent task.
 - Required completed tasks to record date, branch, commit/PR, scope, tests and remaining blockers in the log so parallel work has one shared readiness ledger.
+- Added the same workflow to `README.md`, including an AI-oriented preflight sequence, a copyable log-entry template and rules to keep secrets, sensitive user data and unverified claims out of the ledger.

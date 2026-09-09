@@ -5,7 +5,7 @@
 **Current milestone:** Real browser/API/PostgreSQL flow is the development verification path; Gemini remains the default text provider and DeepSeek V4 Flash is available on this local evaluation branch
 
 **Specification baseline:** Approved implementation baseline
-**Last updated:** 2026-09-07
+**Last updated:** 2026-09-09
 
 Nexora is an AI-powered interview-practice application. Its journey is **CV/JD → personalised mock interview → rubric/evidence-based feedback → report → further practice**. The MVP is a coaching product, not a covert assistant for live interviews.
 
@@ -19,6 +19,41 @@ The backend is a .NET 10 modular monolith using ASP.NET Core 10, Entity Framewor
 4. Review [project_log.md](project_log.md) for completed slices and verification evidence.
 
 New teammates should follow [Team Development Setup](docs/development-setup.md). A team member with a fresh machine can use Neon and does not need to install PostgreSQL locally.
+
+## Team and AI implementation workflow
+
+Use this order before starting any implementation task:
+
+1. Read [AGENTS.md](AGENTS.md) and [SPEC.md](SPEC.md).
+2. Find the related requirement IDs and business rules in [docs/SRS.md](docs/SRS.md), then read the owning detailed document from [docs/README.md](docs/README.md).
+3. Read the newest entries in [project_log.md](project_log.md) and check the current `main`, related branches and open PRs.
+4. Confirm that every dependency is marked complete with a branch, commit or PR. If the dependency is not confirmed, stop before editing dependent files and sync with its owner.
+5. Create a dedicated branch from the latest `main`; keep one coherent goal per PR and avoid hot files owned by another workstream.
+
+The `project_log.md` file is the shared progress and readiness ledger. It does not replace the specification: contracts and behavior still come from `AGENTS.md`, `SPEC.md`, `docs/SRS.md` and the owning detailed document. The log tells an agent what has actually finished and what is safe to build on.
+
+### How to write a useful `project_log.md` entry
+
+Add one factual entry in the same PR as the completed work. Use this template:
+
+```markdown
+## YYYY-MM-DD — <capability or slice>
+
+- Status: Completed | Blocked
+- Owner: <name or team>
+- Branch: `<branch-name>`
+- Commit/PR: `<commit-sha>` / `#<number>`
+- Scope: <what changed and what did not change>
+- Contracts/traceability: <SRS, ADR, API or data-contract IDs/links>
+- Files/modules: <important paths only>
+- Verification: <exact tests, build, migration or manual checks and results>
+- Dependencies: <completed prerequisite or `None`>
+- Remaining blockers/follow-up: <explicit item or `None`>
+```
+
+Write outcomes, not plans. Keep entries specific enough for an AI agent to answer: “Is this dependency complete, where is the code, and how was it verified?” Never put API keys, connection strings, tokens, raw CV/transcript content or unverified claims in the log. If work is partial, use `Status: Blocked` and name the exact blocker; do not imply that a branch or PR is ready when it is not.
+
+When a task depends on another teammate, the dependent agent should proceed only after the log records `Status: Completed` and a concrete commit or merged PR to sync. After syncing, record any follow-up or conflict resolution in its own entry.
 
 ## Internal development with Neon
 
