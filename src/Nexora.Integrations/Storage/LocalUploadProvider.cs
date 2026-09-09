@@ -201,24 +201,62 @@ public sealed partial class LocalUploadProvider(
             (".pdf", "application/pdf") or
             (".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
 
+    private static ReadOnlySpan<byte> SkipLeadingPreamble(ReadOnlySpan<byte> content)
+    {
+        var slice = content;
+        if (slice.Length >= 3 && slice[0] == 0xEF && slice[1] == 0xBB && slice[2] == 0xBF)
+            slice = slice[3..];
+
+        while (slice.Length > 0 && slice[0] is (byte)'\r' or (byte)'\n' or (byte)'\t' or (byte)' ')
+            slice = slice[1..];
+
+        return slice;
+    }
+
     private static bool HasSignature(ReadOnlySpan<byte> content, string contentType) => contentType switch
     {
-        "application/pdf" => content.StartsWith("%PDF-"u8),
+        "application/pdf" => HasPdfSignature(content),
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => IsZipSignature(content),
         _ => false
     };
 
+    private static bool HasPdfSignature(ReadOnlySpan<byte> content)
+    {
+        if (content.IsEmpty) return false;
+
+        var trimmed = SkipLeadingPreamble(content);
+        if (trimmed.StartsWith("%PDF-"u8)) return true;
+
+        // ISO 32000-1 § 7.5.2 permits %PDF- within the first 1024 bytes
+        var window = content[..Math.Min(content.Length, 1024)];
+        var index = window.IndexOf("%PDF-"u8);
+        if (index <= 0) return false;
+
+        var preamble = window[..index];
+        foreach (var b in preamble)
+        {
+            if (b is not ((byte)'\r' or (byte)'\n' or (byte)'\t' or (byte)' ' or 0xEF or 0xBB or 0xBF or (byte)'%'))
+                return false;
+        }
+
+        return true;
+    }
+
     private static string DetectContentType(ReadOnlySpan<byte> content)
     {
-        if (content.StartsWith("%PDF-"u8)) return "application/pdf";
+        if (HasPdfSignature(content)) return "application/pdf";
         if (IsZipSignature(content)) return "application/zip";
         return "unknown";
     }
 
-    private static bool IsZipSignature(ReadOnlySpan<byte> content) =>
-        content.Length >= 4 &&
-        content[0] == 0x50 && content[1] == 0x4B &&
-        content[2] == 0x03 && content[3] == 0x04;
+    private static bool IsZipSignature(ReadOnlySpan<byte> content)
+    {
+        if (content.IsEmpty) return false;
+        var trimmed = SkipLeadingPreamble(content);
+        return trimmed.Length >= 4 &&
+               trimmed[0] == 0x50 && trimmed[1] == 0x4B &&
+               trimmed[2] == 0x03 && trimmed[3] == 0x04;
+    }
 
     private static async Task<ContainerFailure?> ValidateContainerAsync(
         byte[] content,
@@ -259,12 +297,16 @@ public sealed partial class LocalUploadProvider(
         return await ValidateDocxContainerAsync(content, cancellationToken);
     }
 
+    private static int GetPreambleLength(ReadOnlySpan<byte> content) =>
+        content.Length - SkipLeadingPreamble(content).Length;
+
     private static async Task<ContainerFailure?> ValidateDocxContainerAsync(byte[] content, CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            await using var source = new MemoryStream(content, writable: false);
+            var preambleLength = GetPreambleLength(content);
+            await using var source = new MemoryStream(content, preambleLength, content.Length - preambleLength, writable: false);
             using var archive = new ZipArchive(source, ZipArchiveMode.Read, leaveOpen: false);
             if (archive.Entries.Count == 0 || archive.Entries.Count > MaximumDocxEntries)
                 return new ContainerFailure("UPLOAD_CONTAINER_INVALID", "DOCX container không hợp lệ.", "docx_entry_count");
@@ -298,7 +340,7 @@ public sealed partial class LocalUploadProvider(
                 return new ContainerFailure("UPLOAD_CONTAINER_INVALID", "DOCX container chứa XML không hợp lệ.", "docx_xml");
 
             cancellationToken.ThrowIfCancellationRequested();
-            await using var packageStream = new MemoryStream(content, writable: false);
+            await using var packageStream = new MemoryStream(content, preambleLength, content.Length - preambleLength, writable: false);
             using var document = WordprocessingDocument.Open(packageStream, false);
             if (document.MainDocumentPart?.Document?.Body is null)
                 return new ContainerFailure("UPLOAD_CONTAINER_INVALID", "DOCX container không có nội dung tài liệu.", "docx_body");

@@ -121,6 +121,62 @@ public sealed class LocalUploadProviderTests
         Assert.Equal("UPLOAD_INTENT_INVALID", expiredException.Code);
     }
 
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    [InlineData("   \r\n")]
+    public async Task UploadAcceptsPdfWithLeadingWhitespacePreamble(string preamble)
+    {
+        var storage = new RecordingStorage();
+        var provider = CreateProvider(storage);
+        var preambleBytes = Encoding.ASCII.GetBytes(preamble);
+        var validPdf = ValidPdf();
+        var bytes = preambleBytes.Concat(validPdf).ToArray();
+
+        var intent = await provider.CreateIntentAsync(UserId, "cv_online.pdf", PdfType, bytes.Length, CancellationToken.None);
+        await provider.UploadAsync(intent.Token, new MemoryStream(bytes), CancellationToken.None);
+
+        var completed = await provider.GetCompletedAsync(UserId, intent.Token, CancellationToken.None);
+        Assert.Equal(bytes.Length, completed.Size);
+        Assert.Equal(1, storage.SaveCalls);
+    }
+
+    [Fact]
+    public async Task UploadAcceptsPdfWithLeadingUtf8Bom()
+    {
+        var storage = new RecordingStorage();
+        var provider = CreateProvider(storage);
+        var bom = new byte[] { 0xEF, 0xBB, 0xBF };
+        var validPdf = ValidPdf();
+        var bytes = bom.Concat(validPdf).ToArray();
+
+        var intent = await provider.CreateIntentAsync(UserId, "bom.pdf", PdfType, bytes.Length, CancellationToken.None);
+        await provider.UploadAsync(intent.Token, new MemoryStream(bytes), CancellationToken.None);
+
+        var completed = await provider.GetCompletedAsync(UserId, intent.Token, CancellationToken.None);
+        Assert.Equal(bytes.Length, completed.Size);
+        Assert.Equal(1, storage.SaveCalls);
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public async Task UploadAcceptsDocxWithLeadingWhitespacePreamble(string preamble)
+    {
+        var storage = new RecordingStorage();
+        var provider = CreateProvider(storage);
+        var preambleBytes = Encoding.ASCII.GetBytes(preamble);
+        var validDocx = ValidDocx();
+        var bytes = preambleBytes.Concat(validDocx).ToArray();
+
+        var intent = await provider.CreateIntentAsync(UserId, "cv_online.docx", DocxType, bytes.Length, CancellationToken.None);
+        await provider.UploadAsync(intent.Token, new MemoryStream(bytes), CancellationToken.None);
+
+        var completed = await provider.GetCompletedAsync(UserId, intent.Token, CancellationToken.None);
+        Assert.Equal(bytes.Length, completed.Size);
+        Assert.Equal(1, storage.SaveCalls);
+    }
+
     private static LocalUploadProvider CreateProvider(RecordingStorage? storage = null, TimeProvider? clock = null) =>
         new(
             storage ?? new RecordingStorage(),
