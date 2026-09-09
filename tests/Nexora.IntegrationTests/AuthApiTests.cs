@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Nexora.Data.Persistence;
+using Nexora.Data.Persistence.Migrations;
 
 namespace Nexora.IntegrationTests;
 
@@ -405,24 +406,25 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
     }
 
     [Fact]
-    public async Task LegacyUserCreatedBeforeRolloutCutoffIsConfirmedAndCanLogin()
+    public async Task LegacyUserCanLoginAfterBackfillMigration()
     {
         using var client = _factory.CreateHttpsClient();
         var email = $"legacy-{Guid.NewGuid():N}@example.test";
         var password = "Strong!Pass123";
-        var cutoff = DateTimeOffset.Parse("2026-09-09T12:00:00+00:00", CultureInfo.InvariantCulture);
 
         using (var scope = _factory.Services.CreateScope())
         {
             var userManager = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<Nexora.Data.Identity.ApplicationUser>>();
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+
             var user = new Nexora.Data.Identity.ApplicationUser
             {
                 Id = Guid.NewGuid(),
                 UserName = email,
                 Email = email,
-                EmailConfirmed = true,
-                CreatedAt = cutoff,
-                UpdatedAt = cutoff,
+                EmailConfirmed = false,
+                CreatedAt = DateTimeOffset.UtcNow.AddMonths(-1),
+                UpdatedAt = DateTimeOffset.UtcNow.AddMonths(-1),
                 IsActive = true,
                 SecurityStamp = Guid.NewGuid().ToString("N")
             };
@@ -430,79 +432,179 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
             Assert.True(createResult.Succeeded);
             await userManager.AddToRoleAsync(user, Nexora.Business.Authorization.RoleNames.User);
 
-            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
             db.UserProfiles.Add(new Nexora.Data.Identity.UserProfile
             {
                 Id = Guid.NewGuid(),
                 UserId = user.Id,
                 DisplayName = "Legacy User",
-                CreatedAt = cutoff,
-                UpdatedAt = cutoff
+                CreatedAt = user.CreatedAt,
+                UpdatedAt = user.UpdatedAt
             });
+
+            // Historical evidence: pre-verification session / refresh token
+            db.RefreshTokens.Add(new Nexora.Data.Identity.RefreshToken
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                TokenHash = Guid.NewGuid().ToString("N"),
+                CreatedAt = user.CreatedAt,
+                ExpiresAt = user.CreatedAt.AddDays(7),
+                ConcurrencyToken = Guid.NewGuid()
+            });
+
             await db.SaveChangesAsync();
         }
 
-        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password });
-        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
-        Assert.Contains(login.Headers.GetValues("Set-Cookie"), value => value.StartsWith("nexora.refresh=", StringComparison.Ordinal));
+        // Before backfill: unconfirmed user cannot log in
+        using (var loginBefore = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password }))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, loginBefore.StatusCode);
+            using var errorDoc = JsonDocument.Parse(await loginBefore.Content.ReadAsStringAsync());
+            Assert.Equal("EMAIL_NOT_VERIFIED", errorDoc.RootElement.GetProperty("error").GetProperty("code").GetString());
+        }
 
-        var accessToken = await ReadAccessTokenAsync(login);
+        // Run data-driven migration backfill
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            await db.Database.ExecuteSqlRawAsync(EmailVerificationBackfill.BackfillSql);
+        }
+
+        // After backfill: legacy user logs in successfully and obtains session
+        using var loginAfter = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password });
+        Assert.Equal(HttpStatusCode.OK, loginAfter.StatusCode);
+        Assert.Contains(loginAfter.Headers.GetValues("Set-Cookie"), value => value.StartsWith("nexora.refresh=", StringComparison.Ordinal));
+
+        var accessToken = await ReadAccessTokenAsync(loginAfter);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         using var me = await client.GetAsync("/api/v1/me");
         Assert.Equal(HttpStatusCode.OK, me.StatusCode);
     }
 
     [Fact]
-    public async Task MigrationBackfillSetsEmailConfirmedTrueForUsersCreatedBeforeCutoff()
+    public async Task MigrationBackfillDataCriterionAppliesOnlyToLegacyUsersWithHistoricalEvidence()
     {
-        var emailPre = $"pre-backfill-{Guid.NewGuid():N}@example.test";
-        var emailPost = $"post-cutoff-{Guid.NewGuid():N}@example.test";
+        var emailA1 = $"legacy-token-{Guid.NewGuid():N}@example.test";
+        var emailA2 = $"legacy-sub-{Guid.NewGuid():N}@example.test";
+        var emailB = $"new-unverified-{Guid.NewGuid():N}@example.test";
+        var emailC = $"already-verified-{Guid.NewGuid():N}@example.test";
         var password = "Strong!Pass123";
-        var preDate = DateTimeOffset.Parse("2026-09-01T00:00:00+00:00", CultureInfo.InvariantCulture);
-        var postDate = DateTimeOffset.Parse("2026-09-11T00:00:00+00:00", CultureInfo.InvariantCulture);
 
         using (var scope = _factory.Services.CreateScope())
         {
             var userManager = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<Nexora.Data.Identity.ApplicationUser>>();
-            var userPre = new Nexora.Data.Identity.ApplicationUser
-            {
-                Id = Guid.NewGuid(),
-                UserName = emailPre,
-                Email = emailPre,
-                EmailConfirmed = false,
-                CreatedAt = preDate,
-                UpdatedAt = preDate,
-                IsActive = true
-            };
-            var userPost = new Nexora.Data.Identity.ApplicationUser
-            {
-                Id = Guid.NewGuid(),
-                UserName = emailPost,
-                Email = emailPost,
-                EmailConfirmed = false,
-                CreatedAt = postDate,
-                UpdatedAt = postDate,
-                IsActive = true
-            };
-            await userManager.CreateAsync(userPre, password);
-            await userManager.CreateAsync(userPost, password);
-
             var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-            await db.Database.ExecuteSqlRawAsync(
-                """
-                UPDATE "asp_net_users"
-                SET "EmailConfirmed" = TRUE
-                WHERE "EmailConfirmed" = FALSE
-                  AND "CreatedAt" < '2026-09-10T00:00:00+00:00';
-                """);
+
+            // Case A1: Legacy user with historical refresh token (pre-rollout session)
+            var userA1 = new Nexora.Data.Identity.ApplicationUser
+            {
+                Id = Guid.NewGuid(),
+                UserName = emailA1,
+                Email = emailA1,
+                EmailConfirmed = false,
+                IsActive = true
+            };
+            Assert.True((await userManager.CreateAsync(userA1, password)).Succeeded);
+            db.RefreshTokens.Add(new Nexora.Data.Identity.RefreshToken
+            {
+                Id = Guid.NewGuid(),
+                UserId = userA1.Id,
+                TokenHash = Guid.NewGuid().ToString("N"),
+                CreatedAt = DateTimeOffset.UtcNow.AddDays(-5),
+                ExpiresAt = DateTimeOffset.UtcNow.AddDays(2),
+                ConcurrencyToken = Guid.NewGuid()
+            });
+
+            // Case A2: Legacy user with historical entitlement and subscription
+            var userA2 = new Nexora.Data.Identity.ApplicationUser
+            {
+                Id = Guid.NewGuid(),
+                UserName = emailA2,
+                Email = emailA2,
+                EmailConfirmed = false,
+                IsActive = true
+            };
+            Assert.True((await userManager.CreateAsync(userA2, password)).Succeeded);
+            var subId = Guid.NewGuid();
+            db.Subscriptions.Add(new Nexora.Data.Billing.Subscription
+            {
+                Id = subId,
+                UserId = userA2.Id,
+                Status = "active",
+                StartsAt = DateTimeOffset.UtcNow.AddDays(-10),
+                EndsAt = DateTimeOffset.UtcNow.AddYears(1),
+                CreatedAt = DateTimeOffset.UtcNow.AddDays(-10),
+                UpdatedAt = DateTimeOffset.UtcNow.AddDays(-10)
+            });
+            db.Entitlements.Add(new Nexora.Data.Billing.Entitlement
+            {
+                Id = Guid.NewGuid(),
+                UserId = userA2.Id,
+                SubscriptionId = subId,
+                PlanCodeSnapshot = "free",
+                Status = "active",
+                InterviewLimit = 1,
+                StartsAt = DateTimeOffset.UtcNow.AddDays(-10),
+                EndsAt = DateTimeOffset.UtcNow.AddYears(1),
+                CreatedAt = DateTimeOffset.UtcNow.AddDays(-10),
+                UpdatedAt = DateTimeOffset.UtcNow.AddDays(-10),
+                ConcurrencyToken = Guid.NewGuid()
+            });
+
+            // Case B: New unverified user (profile only, no refresh tokens, no entitlements)
+            var userB = new Nexora.Data.Identity.ApplicationUser
+            {
+                Id = Guid.NewGuid(),
+                UserName = emailB,
+                Email = emailB,
+                EmailConfirmed = false,
+                IsActive = true
+            };
+            Assert.True((await userManager.CreateAsync(userB, password)).Succeeded);
+            db.UserProfiles.Add(new Nexora.Data.Identity.UserProfile
+            {
+                Id = Guid.NewGuid(),
+                UserId = userB.Id,
+                DisplayName = "Unverified User",
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+
+            // Case C: Already verified user
+            var userC = new Nexora.Data.Identity.ApplicationUser
+            {
+                Id = Guid.NewGuid(),
+                UserName = emailC,
+                Email = emailC,
+                EmailConfirmed = true,
+                IsActive = true
+            };
+            Assert.True((await userManager.CreateAsync(userC, password)).Succeeded);
+
+            await db.SaveChangesAsync();
+
+            // Run migration backfill SQL
+            await db.Database.ExecuteSqlRawAsync(EmailVerificationBackfill.BackfillSql);
             db.ChangeTracker.Clear();
 
-            var updatedPre = await userManager.FindByEmailAsync(emailPre);
-            var updatedPost = await userManager.FindByEmailAsync(emailPost);
-            Assert.NotNull(updatedPre);
-            Assert.NotNull(updatedPost);
-            Assert.True(updatedPre.EmailConfirmed);
-            Assert.False(updatedPost.EmailConfirmed);
+            var updatedA1 = await userManager.FindByEmailAsync(emailA1);
+            var updatedA2 = await userManager.FindByEmailAsync(emailA2);
+            var updatedB = await userManager.FindByEmailAsync(emailB);
+            var updatedC = await userManager.FindByEmailAsync(emailC);
+
+            Assert.NotNull(updatedA1);
+            Assert.NotNull(updatedA2);
+            Assert.NotNull(updatedB);
+            Assert.NotNull(updatedC);
+
+            // Case A1: backfilled to true via historical refresh token
+            Assert.True(updatedA1.EmailConfirmed);
+            // Case A2: backfilled to true via historical subscription/entitlement
+            Assert.True(updatedA2.EmailConfirmed);
+            // Case B: remains false (no historical evidence)
+            Assert.False(updatedB.EmailConfirmed);
+            // Case C: remains true (already verified)
+            Assert.True(updatedC.EmailConfirmed);
         }
     }
 
