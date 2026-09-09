@@ -178,7 +178,7 @@ public sealed class StarStoryService(
     {
         var key = RequireKey(idempotencyKey);
         var snapshot = await FindOwnedStoryAsync(userId, storyId, cancellationToken);
-        var fingerprint = Fingerprint(storyId, snapshot.UpdatedAt);
+        var fingerprint = Fingerprint(storyId, snapshot.Situation, snapshot.Task, snapshot.Action, snapshot.Result);
         var prior = await FindIdempotencyAsync(userId, EvaluateOperation, key, cancellationToken);
         if (prior is not null)
         {

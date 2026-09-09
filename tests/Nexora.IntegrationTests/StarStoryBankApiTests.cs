@@ -162,6 +162,7 @@ public sealed class StarStoryBankApiTests
         var ai = new TestAiProvider();
         ai.EnqueueResponse(AiPurposes.StarEvaluate, ValidEvaluation(95));
         ai.EnqueueResponse(AiPurposes.StarEvaluate, new AiProviderException(AiProviderFailureKind.Unavailable, "temporary test failure"));
+        ai.EnqueueResponse(AiPurposes.StarEvaluate, new AiProviderException(AiProviderFailureKind.Unavailable, "temporary test failure"));
         using var factory = new NexoraApiFactory(ai);
         factory.InitializeDatabase();
         using var ownerClient = factory.CreateHttpsClient();
