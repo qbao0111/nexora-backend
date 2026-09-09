@@ -1,11 +1,11 @@
 # Nexora
 
-**Status:** **REAL INTERNAL DEVELOPMENT FLOW (GEMINI)**
+**Status:** **REAL INTERNAL DEVELOPMENT FLOW (GEMINI DEFAULT; OPTIONAL DEEPSEEK LOCAL TEST)**
 
-**Current milestone:** Real browser/API/PostgreSQL/Gemini flow is the development verification path
+**Current milestone:** Real browser/API/PostgreSQL flow is the development verification path; Gemini remains the default text provider and DeepSeek V4 Flash is available on this local evaluation branch
 
 **Specification baseline:** Approved implementation baseline
-**Last updated:** 2026-09-02
+**Last updated:** 2026-09-07
 
 Nexora is an AI-powered interview-practice application. Its journey is **CV/JD → personalised mock interview → rubric/evidence-based feedback → report → further practice**. The MVP is a coaching product, not a covert assistant for live interviews.
 
@@ -73,18 +73,26 @@ dotnet run --project src/Nexora.Api --no-launch-profile
 dotnet run --project src/Nexora.Worker --no-launch-profile
 ```
 
-Both processes use the same ignored `.nexora-local/storage` path when launched from the repository root. Development uses Gemini for AI, `LocalStorageProvider` for private files, and a config-selected payment adapter. The default remains `FakePaymentProvider`; SePay Sandbox can be enabled explicitly for internal payment testing with no production provider decision. Readiness is `/api/v1/health`; liveness is `/health/live`.
+Both processes use the same ignored `.nexora-local/storage` path when launched from the repository root. Development defaults to Gemini text AI, with optional DeepSeek V4 Flash text evaluation selected through `Ai:Provider=deepseek`; document OCR fallback remains Gemini in either mode. `LocalStorageProvider` handles private files and payment is config-selected. The default remains `FakePaymentProvider`; SePay Sandbox can be enabled explicitly for internal payment testing with no production provider decision. Readiness is `/api/v1/health`; liveness is `/health/live`.
 
-### Gemini development configuration
+### AI provider development configuration
 
-Gemini is the only application AI provider. Configure its development key and model through user-secrets:
+Gemini remains the default text provider and must stay configured because the document OCR fallback is Gemini. Configure its development key and model through user-secrets:
 
 ```powershell
 dotnet user-secrets set "Ai:Gemini:ApiKey" "YOUR_DEVELOPMENT_KEY" --project src/Nexora.Api
 dotnet user-secrets set "Ai:Gemini:Model" "YOUR_CONFIGURED_MODEL" --project src/Nexora.Api
 ```
 
-Restart API and Worker after changing secrets. If AI is enabled and either value is missing, startup fails with a clear configuration error. Gemini is an internal-development integration; DEC-01 production provider/model and budget decisions remain deferred.
+To evaluate the optional DeepSeek V4 Flash text provider locally, switch the shared user-secrets store (the API and Worker use the same `Nexora.LocalDevelopment` ID):
+
+```powershell
+dotnet user-secrets set "Ai:Provider" "deepseek" --project src/Nexora.Api
+dotnet user-secrets set "Ai:DeepSeek:ApiKey" "YOUR_DEEPSEEK_KEY" --project src/Nexora.Api
+dotnet user-secrets set "Ai:DeepSeek:Model" "deepseek-v4-flash" --project src/Nexora.Api
+```
+
+Restart API and Worker after changing secrets. If the selected provider or the Gemini OCR configuration is incomplete, startup fails with a clear configuration error. DeepSeek is a local/development evaluation adapter only; DEC-01 production provider/model and budget decisions remain deferred.
 
 Use the real browser/frontend journey for CV, JD and interview validation. A normal text PDF/DOCX stays local; only suspicious extraction automatically uses one Gemini document-understanding fallback that returns extracted text and the compact resume profile together. See [frontend integration](docs/frontend-integration.md) and the Desktop guides generated for the project owner.
 
@@ -140,4 +148,4 @@ Neon development usage does not choose the production database/hosting vendor. L
 
 ## Next milestone
 
-Continue internal feature work on a dedicated feature branch using the shared Neon `development` branch, Gemini AI, fake payment and local storage. Production integration, staging/go-live evidence and DEC-01..04 remain separate work.
+Continue internal feature work on a dedicated feature branch using the shared Neon `development` branch, Gemini by default (or the optional DeepSeek local adapter), fake payment and local storage. Production integration, staging/go-live evidence and DEC-01..04 remain separate work.

@@ -426,3 +426,53 @@ This log records completed implementation milestones and verification evidence. 
 - Made root `scoreScale` mandatory in the JSON schemas for interview answer evaluation, interview reports, scenario evaluation and standalone STAR evaluation.
 - Removed DTO defaults that could turn an omitted provider field into an implicit valid value. Semantic validators now accept only the exact ordinal value `0-100`, repair invalid/missing values once, and explicitly preserve `0-100` in normalized output.
 - Kept prompt/schema version identifiers unchanged because `scoreScale: "0-100"` was already the declared contract; this patch closes its enforcement gap without changing scoring semantics.
+
+## 2026-09-07 — Optional DeepSeek V4 Flash text provider (local evaluation branch)
+
+- Added `DeepSeekAiProvider` under `Nexora.Integrations` using the official HTTPS `api.deepseek.com/chat/completions` endpoint and the provider-neutral `IAiProvider` contract.
+- Added configuration-driven `Ai:Provider` selection (`gemini` default or `deepseek`, unknown values fail closed). `Nexora.Api` and `Nexora.Worker` use the same selector; `IDocumentOcrProvider` remains `GeminiDocumentOcrProvider` regardless of text-provider selection.
+- Added non-secret DeepSeek appsettings defaults with `MaxAttempts=1` and explicit per-purpose thinking/reasoning policy. The cost-aware baseline keeps high reasoning only for `interview.evaluate` and `star.evaluate`; no operation defaults to `max`.
+- DeepSeek requests keep trusted operation metadata/instructions/schema in the system message and untrusted candidate input only in the user message. JSON mode, exact `max_tokens`, safe error normalization, timeout/cancellation handling and metadata-only usage telemetry are covered without logging keys, prompts, candidate text, response content or `reasoning_content`.
+- Added offline fake-handler tests for endpoint/auth/request contract, all eight policies, configuration fail-closed behavior, response/error mapping, cancellation, usage parsing and provider selection. No live paid DeepSeek request was made.
+- Verification: `dotnet restore`, `dotnet build Nexora.slnx --nologo` (0 warnings, 0 errors), 178 unit tests passed, 82 integration tests passed, `dotnet ef migrations has-pending-model-changes` reported no pending changes, and `git diff --check` is clean.
+- This branch is for Development/local owner evaluation only. DEC-01 (production AI provider/model and budgets) remains deferred and is not a blocker for Phases 0–3 or local testing.
+
+## 2026-09-08 — Story-level STAR report summary aggregation
+
+- Corrected `report.starSummary` to treat question sequence 1 plus all follow-ups as one behavioral story under the current interview model.
+- Report components now merge the strongest valid grounded evidence across the chain, recompute the server-authoritative STAR score with 20/20/35/25 weights, and never average or trust per-answer overall scores.
+- Recomputed unresolved `recurringIssues` from merged component state instead of unioning historical `missingElements`; follow-ups can resolve earlier gaps without stale issues.
+- Coaching priorities now use feedback attached to the merged weak components in deterministic order (distinct, max three) rather than flattening historical coaching tips.
+- Report retrieval loads question sequence metadata with the session answers using a fixed split query; no `ParentQuestionId`, migration, or additional AI call was added. Realtime per-answer STAR evaluation remains unchanged.
+
+## 2026-09-08 — DeepSeek reasoning-budget fallback
+
+- Added a provider-neutral `AiProviderRetryHint.LowerReasoningEffort` and per-attempt `AiReasoningEffortOverride.Low` on the Business AI contracts. `StructuredAiExecutor` remains the global two-call owner and keeps `RepairUsed` reserved for semantic repair.
+- `DeepSeekAiProvider` now emits the hint only for a positively confirmed exhaustion response: `finish_reason=length`, unusable structured content, and complete/reasoning usage at or above the request token budget with reasoning no smaller than completion. A usable JSON body remains a success, and inconclusive metadata keeps generic `InvalidResponse` behavior.
+- The one fallback retry preserves operation/input/schema/instructions/`MaxOutputTokens`, temporarily sends `reasoning_effort=low` only for an enabled policy, and does not mutate options or add provider-internal retries. Normal `interview.evaluate`/`star.evaluate` high defaults remain unchanged.
+- Added offline regressions for normal high success, the exact 6,000-token exhaustion incident, low-fallback terminal failure, semantic repair separation, generic invalid response, usable JSON with `finish_reason=length`, and disabled-reasoning fail-closed behavior. No live Gemini/DeepSeek request was made.
+- Verification: `dotnet restore`; `dotnet build Nexora.slnx --nologo` (0 warnings, 0 errors); 189 unit tests passed, 86 integration tests passed, 0 failed/skipped; `dotnet ef migrations has-pending-model-changes` reported no pending model changes; `git diff --check` is clean.
+
+## 2026-09-08 — Restrict DeepSeek reasoning fallback to high-policy exhaustion
+
+- Restricted `LowerReasoningEffort` emission to confirmed exhaustion on an effective `high` DeepSeek policy. `resume.analysis`, `interview.report` and `scenario.evaluate` keep ordinary low-to-low `InvalidResponse` retry behavior without fallback telemetry.
+- Tightened `StructuredAiExecutor` so the reasoning override requires both `AiProviderRetryHint.LowerReasoningEffort` and `AiProviderFailureKind.InvalidResponse`; timeout/rate-limit/unavailable hints cannot schedule a LOW override.
+- Added offline regressions for low-policy hint suppression, low-to-low retry, and non-`InvalidResponse` hint rejection. Defaults, token budgets, provider `MaxAttempts=1`, semantic repair, STAR behavior and configuration remain unchanged.
+- Verification: 192 unit tests passed, 86 integration tests passed, build 0 warnings/0 errors, EF reports no pending model changes, and no live paid AI request was made.
+
+## 2026-09-08 — Hardened DeepSeek reasoning fallback regressions
+
+- Corrected the low-policy retry regression to use the `resume.analysis` operation budget (`1,500` tokens) and to distinguish provider usage/exhaustion telemetry from structured-executor retry telemetry.
+- Added request recording to prove the high-policy fallback changes only the per-attempt reasoning effort while preserving input, trusted instructions/schema, messages and `max_tokens`; low-to-low retries keep both `AiRequest.ReasoningEffortOverride` values null.
+- Expanded provider-neutral retry-hint coverage for timeout, rate-limit and unavailable failures, preserving exactly two executor attempts with `RepairUsed=false` and no reasoning override.
+- Verification: focused DeepSeek/executor unit tests passed (52 tests); a mutation removing the provider high-policy guard made the low-policy test fail on an unexpected `Low` override, then the guard was restored with no production diff. No live AI request was made.
+- Lead verification: `dotnet restore`; solution build (0 warnings/errors); full unit suite (194 passed, 0 failed/skipped); integration suite (86 passed, 0 failed/skipped); scoped `dotnet format --verify-no-changes`; EF pending-model check (none); `git diff --check`. Only the two AI test files and this log changed.
+
+## 2026-09-08 — Authenticated SignalR resource notifications
+
+- Added authenticated `/hubs/realtime` with JWT `sub` user routing and no client-controlled subscription methods. Query `access_token` is accepted only under the hub path; existing JWT/security-stamp/user validation is preserved. Connections close on token expiration and query-bearing framework request/transport logs are suppressed.
+- Added `realtime_notifications` and an additive EF migration. Resume ready/failed, resume-analysis completed/failed and interview active/failed/completed notifications are inserted with the existing state transaction. No intermediate events or business/REST response changes were introduced.
+- API-only broadcaster sends the five-field `resourceChanged` payload to the owner, marks processed after send and retries failures with a due timestamp. Event IDs remain stable on retries; delivery never mutates quota or practice data. Worker has no SignalR dependency. Supports one API instance.
+- Owner explicitly chose no report-job-failure event: interview remains `completing` with the existing free retry/credit semantics. Account deletion cleans up the new notification metadata.
+- Added frontend documentation for deduplication, one REST refetch per relevant event, initial/reconnect reconciliation, slow fallback polling, disabled realtime, backlog and migration rollout. No production deployment or live database migration was performed.
+- Verification: `dotnet restore`; solution build (0 warnings/errors); 194 unit and 104 integration tests passed (0 failed/skipped). New coverage includes real in-process WebSocket handshakes/events, owner isolation, token scoping/revocation, retries/duplicates, disabled realtime, worker ready/failure transitions and atomic rollback on notification write failure. Normal integration tests use SQLite and deterministic providers; no live paid AI calls. EF reports no pending model changes and the generated PostgreSQL migration SQL contains only the new table/index and migration history entry.

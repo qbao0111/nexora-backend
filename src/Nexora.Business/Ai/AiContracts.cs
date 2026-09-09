@@ -12,7 +12,8 @@ public sealed record AiRequest(
     JsonDocument OutputSchema,
     int MaxOutputTokens,
     string CorrelationId,
-    string? Instructions = null);
+    string? Instructions = null,
+    AiReasoningEffortOverride? ReasoningEffortOverride = null);
 
 public interface IAiProvider
 {
@@ -34,10 +35,26 @@ public enum AiProviderFailureKind
     InvalidResponse
 }
 
-public sealed class AiProviderException(AiProviderFailureKind kind, string message, Exception? innerException = null)
+public enum AiReasoningEffortOverride
+{
+    Low
+}
+
+public enum AiProviderRetryHint
+{
+    None,
+    LowerReasoningEffort
+}
+
+public sealed class AiProviderException(
+    AiProviderFailureKind kind,
+    string message,
+    Exception? innerException = null,
+    AiProviderRetryHint retryHint = AiProviderRetryHint.None)
     : Exception(message, innerException)
 {
     public AiProviderFailureKind Kind { get; } = kind;
+    public AiProviderRetryHint RetryHint { get; } = retryHint;
 }
 
 public sealed record GeneratedQuestion(string Content);

@@ -164,6 +164,33 @@ public sealed class StructuredAiExecutorTests
         Assert.Equal(2, fakeProvider.CallCount);
     }
 
+    [Theory]
+    [InlineData(AiProviderFailureKind.Timeout)]
+    [InlineData(AiProviderFailureKind.RateLimited)]
+    [InlineData(AiProviderFailureKind.Unavailable)]
+    public async Task ExecuteAsyncDoesNotApplyReasoningOverrideToNonInvalidResponseHint(AiProviderFailureKind failureKind)
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueException(new AiProviderException(
+            failureKind,
+            $"{failureKind} failure",
+            retryHint: AiProviderRetryHint.LowerReasoningEffort));
+        fakeProvider.EnqueueResult(new GeneratedQuestion("What is dependency injection?"));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewFirstQuestion,
+            "role: Backend Engineer",
+            new AiOperationContext("reasoning-hint-non-invalid"),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.Attempts);
+        Assert.False(result.RepairUsed);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Null(fakeProvider.Requests[0].ReasoningEffortOverride);
+        Assert.Null(fakeProvider.Requests[1].ReasoningEffortOverride);
+    }
+
     [Fact]
     public async Task ExecuteAsyncRepairsInvalidScoreScaleOnSecondAttempt()
     {
@@ -183,6 +210,8 @@ public sealed class StructuredAiExecutorTests
         Assert.Equal(2, result.Attempts);
         Assert.Equal(2, fakeProvider.CallCount);
         Assert.Contains("score.scale_invalid", fakeProvider.Requests[1].Instructions);
+        Assert.Null(fakeProvider.Requests[0].ReasoningEffortOverride);
+        Assert.Null(fakeProvider.Requests[1].ReasoningEffortOverride);
     }
 
     [Fact]

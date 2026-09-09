@@ -164,6 +164,84 @@ public sealed class PracticeApiTests
     }
 
     [Fact]
+    public async Task ReportStarSummaryMergesPrimaryAndFollowUpEvidenceAtStoryLevel()
+    {
+        var report = await RunScriptedStarInterviewAsync(
+            Star(90, 85, 70, 95),
+            Star(20, 10, 96, 30),
+            "star-story-strongest-evidence");
+        var summary = report.GetProperty("starSummary");
+        var averages = summary.GetProperty("componentAverages");
+
+        Assert.Equal(2, summary.GetProperty("applicableAnswers").GetInt32());
+        Assert.Equal(90, averages.GetProperty("situation").GetInt32());
+        Assert.Equal(85, averages.GetProperty("task").GetInt32());
+        Assert.Equal(96, averages.GetProperty("action").GetInt32());
+        Assert.Equal(95, averages.GetProperty("result").GetInt32());
+        Assert.Equal(92, summary.GetProperty("averageScore").GetInt32());
+        Assert.Equal("action", summary.GetProperty("strongestComponent").GetString());
+        Assert.Equal("task", summary.GetProperty("weakestComponent").GetString());
+        Assert.Empty(summary.GetProperty("recurringIssues").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task ReportStarSummaryAllowsFollowUpToResolveMissingComponent()
+    {
+        var report = await RunScriptedStarInterviewAsync(
+            Star(85, 80, 90, 0, resultDetected: false),
+            Star(20, 10, 30, 88),
+            "star-story-resolved-result");
+        var summary = report.GetProperty("starSummary");
+        var averages = summary.GetProperty("componentAverages");
+
+        Assert.Equal(88, averages.GetProperty("result").GetInt32());
+        Assert.Equal(86, summary.GetProperty("averageScore").GetInt32());
+        Assert.DoesNotContain("result", summary.GetProperty("recurringIssues").EnumerateArray()
+            .Select(item => item.GetString()));
+    }
+
+    [Fact]
+    public async Task ReportStarSummaryKeepsUnresolvedComponentMissing()
+    {
+        var report = await RunScriptedStarInterviewAsync(
+            Star(85, 80, 90, 0, resultDetected: false),
+            Star(20, 10, 30, 40),
+            "star-story-unresolved-result");
+        var summary = report.GetProperty("starSummary");
+
+        Assert.Equal(40, summary.GetProperty("componentAverages").GetProperty("result").GetInt32());
+        Assert.Contains("result", summary.GetProperty("recurringIssues").EnumerateArray()
+            .Select(item => item.GetString()));
+    }
+
+    [Fact]
+    public async Task TechnicalInterviewReportKeepsStarSummaryNull()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "star-story-technical", "technical");
+        await ProcessJobsAsync(factory);
+
+        var active = await GetInterviewAsync(client, interviewId);
+        var firstQuestion = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        var firstAnswer = await AnswerAsync(client, interviewId, firstQuestion, "Dependency injection passes dependencies from outside the class.", "star-story-technical-one");
+        var secondQuestion = firstAnswer.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        await AnswerAsync(client, interviewId, secondQuestion, "The composition root owns dependency wiring.", "star-story-technical-two");
+        await CompleteAsync(client, interviewId, "star-story-technical-complete");
+        await ProcessJobsAsync(factory);
+
+        using var reportResponse = await client.GetAsync($"/api/v1/interviews/{interviewId}/report");
+        Assert.Equal(HttpStatusCode.OK, reportResponse.StatusCode);
+        var report = await DataAsync(reportResponse);
+
+        Assert.Equal(JsonValueKind.Null, report.GetProperty("starSummary").ValueKind);
+    }
+
+    [Fact]
     public async Task TechnicalAnswerKeepsStarInapplicable()
     {
         using var factory = new NexoraApiFactory();
@@ -209,6 +287,9 @@ public sealed class PracticeApiTests
             Assert.Equal(PracticeValues.Completing, (await db.InterviewSessions.SingleAsync(item => item.Id == interviewId)).Status);
             Assert.Equal(1, (await db.Entitlements.SingleAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free")).Adjustment);
             Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.Action == BillingValues.Adjustment && item.SourceType == "report_failure"));
+            // Report failures deliberately keep completing and do not publish a misleading interview.failed event.
+            Assert.Equal(1, await db.RealtimeNotifications.CountAsync(item => item.ResourceId == interviewId));
+            Assert.Equal("active", (await db.RealtimeNotifications.SingleAsync(item => item.ResourceId == interviewId)).Status);
         }
 
         await CompleteAsync(client, interviewId, "report-complete-retry");
@@ -370,6 +451,66 @@ public sealed class PracticeApiTests
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         return document.RootElement.GetProperty("data").Clone();
     }
+
+    private static async Task<JsonElement> RunScriptedStarInterviewAsync(
+        StarEvaluation primary,
+        StarEvaluation followUp,
+        string key)
+    {
+        var aiProvider = new TestAiProvider();
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, AnswerEvaluationWithStar(primary));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, AnswerEvaluationWithStar(followUp));
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, key);
+        await ProcessJobsAsync(factory);
+
+        var active = await GetInterviewAsync(client, interviewId);
+        var firstQuestion = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        var firstAnswer = await AnswerAsync(client, interviewId, firstQuestion, "Tôi xử lý câu chuyện theo hướng có bằng chứng.", $"{key}-one");
+        var secondQuestion = firstAnswer.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        await AnswerAsync(client, interviewId, secondQuestion, "Tôi bổ sung chi tiết cho cùng câu chuyện.", $"{key}-two");
+        await CompleteAsync(client, interviewId, $"{key}-complete");
+        await ProcessJobsAsync(factory);
+
+        using var reportResponse = await client.GetAsync($"/api/v1/interviews/{interviewId}/report");
+        Assert.Equal(HttpStatusCode.OK, reportResponse.StatusCode);
+        return await DataAsync(reportResponse);
+    }
+
+    private static AnswerEvaluation AnswerEvaluationWithStar(StarEvaluation star) => new(
+        [
+            new RubricScore("correctness", 80, "Grounded correctness evidence."),
+            new RubricScore("structure", 80, "Grounded structure evidence."),
+            new RubricScore("completeness", 80, "Grounded completeness evidence."),
+            new RubricScore("clarity", 80, "Grounded clarity evidence.")
+        ],
+        "Grounded answer feedback.",
+        star,
+        AiOperations.ScoreScale);
+
+    private static StarEvaluation Star(
+        int situationScore,
+        int taskScore,
+        int actionScore,
+        int resultScore,
+        bool resultDetected = true) => new(
+        true,
+        null,
+        new StarComponentEvaluation(situationScore, true, "Situation evidence.", "Situation feedback."),
+        new StarComponentEvaluation(taskScore, true, "Task evidence.", "Task feedback."),
+        new StarComponentEvaluation(actionScore, true, "Action evidence.", "Action feedback."),
+        resultDetected
+            ? new StarComponentEvaluation(resultScore, true, "Result evidence.", "Result feedback.")
+            : new StarComponentEvaluation(0, false, string.Empty, "Result feedback."),
+        [],
+        [],
+        [],
+        AiOperations.ScoreScale);
 
     private sealed record Account(Guid UserId, string AccessToken);
 

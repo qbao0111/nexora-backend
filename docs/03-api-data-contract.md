@@ -12,6 +12,12 @@
 
 ## API MVP
 
+Optional realtime invalidation is available through the authenticated SignalR hub
+`/hubs/realtime` (outside the REST base path). Its single `resourceChanged` event contains
+only event/resource IDs, resource type, status and UTC time. REST response contracts
+remain unchanged; see [realtime notifications](realtime-notifications.md) for supported
+states, token transport, duplicate handling and reconnect/fallback behavior.
+
 | Method | Endpoint | Mục đích |
 | --- | --- | --- |
 | GET | `/me` | Profile và entitlement hiện hành. |

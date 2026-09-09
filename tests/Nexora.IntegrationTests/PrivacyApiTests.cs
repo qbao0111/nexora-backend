@@ -34,6 +34,15 @@ public sealed class PrivacyApiTests
         {
             var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
             await SeedPendingInterviewAsync(db, account.UserId);
+            db.RealtimeNotifications.Add(new Nexora.Data.Realtime.RealtimeNotification
+            {
+                UserId = account.UserId,
+                ResourceType = "resume",
+                ResourceId = Guid.NewGuid(),
+                Status = "ready",
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
         }
 
         using var export = await client.GetAsync("/api/v1/me/export");
@@ -61,6 +70,7 @@ public sealed class PrivacyApiTests
             Assert.Equal(0, await db.JobDescriptions.CountAsync(item => item.UserId == account.UserId));
             Assert.Equal(0, await db.UserProfiles.CountAsync(item => item.UserId == account.UserId));
             Assert.Equal(0, await db.RefreshTokens.CountAsync(item => item.UserId == account.UserId));
+            Assert.Equal(0, await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId));
             Assert.Equal(0, (await db.Entitlements.SingleAsync(item => item.UserId == account.UserId)).Reserved);
             Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Void));
             var user = await db.Users.SingleAsync(item => item.Id == account.UserId);
