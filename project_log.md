@@ -476,3 +476,8 @@ This log records completed implementation milestones and verification evidence. 
 - Owner explicitly chose no report-job-failure event: interview remains `completing` with the existing free retry/credit semantics. Account deletion cleans up the new notification metadata.
 - Added frontend documentation for deduplication, one REST refetch per relevant event, initial/reconnect reconciliation, slow fallback polling, disabled realtime, backlog and migration rollout. No production deployment or live database migration was performed.
 - Verification: `dotnet restore`; solution build (0 warnings/errors); 194 unit and 104 integration tests passed (0 failed/skipped). New coverage includes real in-process WebSocket handshakes/events, owner isolation, token scoping/revocation, retries/duplicates, disabled realtime, worker ready/failure transitions and atomic rollback on notification write failure. Normal integration tests use SQLite and deterministic providers; no live paid AI calls. EF reports no pending model changes and the generated PostgreSQL migration SQL contains only the new table/index and migration history entry.
+
+## 2026-09-09 — Parallel-work synchronization guidance
+
+- Added implementation-plan rules requiring each teammate to read `project_log.md` and verify dependency branch/commit/PR status before starting a dependent task.
+- Required completed tasks to record date, branch, commit/PR, scope, tests and remaining blockers in the log so parallel work has one shared readiness ledger.

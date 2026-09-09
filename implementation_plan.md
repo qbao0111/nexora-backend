@@ -242,6 +242,9 @@ feat/google-auth                  # optional
 - Mỗi PR chỉ có **một mục tiêu**.
 - Không merge 2 PR cùng sửa migration snapshot.
 - Merge xong một hot-file PR thì người còn lại sync `main` ngay.
+- Trước khi bắt đầu một task song song, đọc entry mới nhất trong `project_log.md` và kiểm tra branch/PR/commit liên quan. Nếu task phụ thuộc phần của teammate, chỉ bắt đầu sau khi log xác nhận phần đó đã hoàn tất và đã merge hoặc có commit rõ ràng để sync.
+- Sau khi hoàn tất task, cập nhật `project_log.md` trong cùng PR với ngày, branch, commit/PR, phạm vi file hoặc contract, test đã chạy và dependency hoặc blocker còn lại. Đây là sổ đồng bộ chính để teammate biết phần nào đã sẵn sàng.
+- Nếu `project_log.md` chưa xác nhận dependency đã xong, không tự đoán trạng thái và không sửa các file phụ thuộc; hỏi hoặc đồng bộ với owner trước.
 - Mỗi PR phải có:
   - changed contracts;
   - migration impact;
@@ -249,6 +252,13 @@ feat/google-auth                  # optional
   - new env/config keys;
   - tests run;
   - rollback note nếu có.
+
+### Quy trình đồng bộ khi làm song song
+
+1. Đọc `project_log.md`, kiểm tra `main` và các branch liên quan trước khi code.
+2. Xác nhận dependency của task đã có entry hoàn tất; nếu chưa có thì chờ owner cập nhật hoặc thống nhất thứ tự thực hiện.
+3. Làm trên branch riêng, tránh hot-file đang được owner khác giữ.
+4. Khi xong, ghi log và mở PR; teammate chỉ lấy phần phụ thuộc sau khi đã sync commit hoặc merge mới nhất.
 
 ---
 
