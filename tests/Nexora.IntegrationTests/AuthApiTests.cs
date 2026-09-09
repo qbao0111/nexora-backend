@@ -19,7 +19,7 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
     }
 
     [Fact]
-    public async Task RegisterLoginAndCurrentUserFlowWorks()
+    public async Task RegisterRequiresEmailVerificationBeforeLoginAndCurrentUserFlowWorks()
     {
         using var client = _factory.CreateHttpsClient();
         var email = $"candidate-{Guid.NewGuid():N}@example.test";
@@ -30,33 +30,42 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
             displayName = "Candidate"
         });
         Assert.Equal(HttpStatusCode.Created, register.StatusCode);
-        var cookie = Assert.Single(register.Headers.GetValues("Set-Cookie"));
-        Assert.Contains("HttpOnly", cookie, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Secure", cookie, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("SameSite=Strict", cookie, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(register.Headers, header => string.Equals(header.Key, "Set-Cookie", StringComparison.OrdinalIgnoreCase));
+        using (var registrationBody = JsonDocument.Parse(await register.Content.ReadAsStringAsync()))
+        {
+            var data = registrationBody.RootElement.GetProperty("data");
+            Assert.Equal(email, data.GetProperty("email").GetString());
+            Assert.True(data.GetProperty("verificationRequired").GetBoolean());
+        }
 
-        var accessToken = await ReadAccessTokenAsync(register);
+        using var beforeVerification = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.Unauthorized, beforeVerification.StatusCode);
+        using (var error = JsonDocument.Parse(await beforeVerification.Content.ReadAsStringAsync()))
+            Assert.Equal("EMAIL_NOT_VERIFIED", error.RootElement.GetProperty("error").GetProperty("code").GetString());
+        using var beforeVerificationAi = await client.PostAsJsonAsync("/api/v1/interviews", new { });
+        Assert.Equal(HttpStatusCode.Unauthorized, beforeVerificationAi.StatusCode);
+
+        await TestEmailInbox.VerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        Assert.Contains(login.Headers.GetValues("Set-Cookie"), value => value.StartsWith("nexora.refresh=", StringComparison.Ordinal));
+
+        var accessToken = await ReadAccessTokenAsync(login);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         using var me = await client.GetAsync("/api/v1/me");
         Assert.Equal(HttpStatusCode.OK, me.StatusCode);
         using var body = JsonDocument.Parse(await me.Content.ReadAsStringAsync());
         Assert.Equal(email, body.RootElement.GetProperty("data").GetProperty("email").GetString());
-
-        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
-        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
     }
 
     [Fact]
     public async Task RefreshRotatesTokenAndRejectsPreviousToken()
     {
         using var client = _factory.CreateHttpsClient();
-        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new
-        {
-            email = $"rotate-{Guid.NewGuid():N}@example.test",
-            password = "Strong!Pass123",
-            displayName = "Rotate"
-        });
-        var oldToken = ExtractRefreshToken(Assert.Single(register.Headers.GetValues("Set-Cookie")));
+        var email = $"rotate-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        var oldToken = ExtractRefreshToken(Assert.Single(login.Headers.GetValues("Set-Cookie")));
         using var refresh = await client.PostAsync("/api/v1/auth/refresh", null);
         Assert.Equal(HttpStatusCode.OK, refresh.StatusCode);
         var newToken = ExtractRefreshToken(Assert.Single(refresh.Headers.GetValues("Set-Cookie")));
@@ -78,13 +87,10 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
     public async Task LogoutAllInvalidatesAccessAndRefreshTokens()
     {
         using var client = _factory.CreateHttpsClient();
-        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new
-        {
-            email = $"logout-{Guid.NewGuid():N}@example.test",
-            password = "Strong!Pass123",
-            displayName = "Logout"
-        });
-        var accessToken = await ReadAccessTokenAsync(register);
+        var email = $"logout-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        var accessToken = await ReadAccessTokenAsync(login);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         using var logout = await client.PostAsync("/api/v1/auth/logout-all", null);
         Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
@@ -92,6 +98,72 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
         Assert.Equal(HttpStatusCode.Unauthorized, me.StatusCode);
         using var refresh = await client.PostAsync("/api/v1/auth/refresh", null);
         Assert.Equal(HttpStatusCode.Unauthorized, refresh.StatusCode);
+    }
+
+    [Fact]
+    public async Task VerificationRetryDoesNotDuplicateFreeEntitlement()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"entitlement-{Guid.NewGuid():N}@example.test";
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email,
+            password = "Strong!Pass123",
+            displayName = "Entitlement candidate"
+        });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+
+        Guid userId;
+        using (var beforeScope = _factory.Services.CreateScope())
+        {
+            var userManager = beforeScope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<Nexora.Data.Identity.ApplicationUser>>();
+            var user = await userManager.FindByEmailAsync(email);
+            Assert.NotNull(user);
+            userId = user.Id;
+            Assert.False(user.EmailConfirmed);
+            Assert.Empty(await beforeScope.ServiceProvider.GetRequiredService<NexoraDbContext>().Entitlements.Where(item => item.UserId == user.Id).ToListAsync());
+        }
+
+        await TestEmailInbox.VerifyAsync(client, email);
+        var verificationLink = TestEmailInbox.GetVerificationLink(email);
+        var query = verificationLink.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Split('=', 2))
+            .ToDictionary(part => Uri.UnescapeDataString(part[0]), part => Uri.UnescapeDataString(part.ElementAtOrDefault(1) ?? string.Empty), StringComparer.Ordinal);
+        using var retry = await client.PostAsJsonAsync("/api/v1/auth/verify-email", new
+        {
+            userId,
+            token = query["token"]
+        });
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+
+        using var afterScope = _factory.Services.CreateScope();
+        var db = afterScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Single(await db.Entitlements.Where(item => item.UserId == userId && item.PlanCodeSnapshot == "free").ToListAsync());
+        Assert.Single(await db.Subscriptions.Where(item => item.UserId == userId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task ResendVerificationReturnsGenericResponseAndIsRateLimited()
+    {
+        await using var factory = new NexoraApiFactory(new Dictionary<string, string?>
+        {
+            ["RateLimits:LoginEmail:PermitLimit"] = "1",
+            ["RateLimits:LoginEmail:WindowMinutes"] = "15"
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var email = $"resend-{Guid.NewGuid():N}@example.test";
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+
+        using var resend = await client.PostAsJsonAsync("/api/v1/auth/resend-verification", new { email });
+        Assert.Equal(HttpStatusCode.OK, resend.StatusCode);
+        using var unknown = await client.PostAsJsonAsync("/api/v1/auth/resend-verification", new { email = $"missing-{Guid.NewGuid():N}@example.test" });
+        Assert.Equal(HttpStatusCode.OK, unknown.StatusCode);
+        Assert.Equal(await resend.Content.ReadAsStringAsync(), await unknown.Content.ReadAsStringAsync());
+
+        using var limited = await client.PostAsJsonAsync("/api/v1/auth/resend-verification", new { email });
+        Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
     }
 
     [Fact]
@@ -141,6 +213,18 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var error = json.RootElement.GetProperty("error");
         Assert.Equal("CSRF_ORIGIN_INVALID", error.GetProperty("code").GetString());
+    }
+
+    private static async Task RegisterAndVerifyAsync(HttpClient client, string email)
+    {
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email,
+            password = "Strong!Pass123",
+            displayName = "Candidate"
+        });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+        await TestEmailInbox.VerifyAsync(client, email);
     }
 
     private static async Task<string> ReadAccessTokenAsync(HttpResponseMessage response)

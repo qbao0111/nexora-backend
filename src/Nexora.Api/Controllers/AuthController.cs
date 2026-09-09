@@ -20,12 +20,31 @@ public sealed class AuthController(
     private const string RefreshCookieName = "nexora.refresh";
 
     [AllowAnonymous, HttpPost("register"), EnableRateLimiting(RateLimitPolicies.Authentication)]
-    public async Task<ActionResult<ApiResponse<AuthSessionResponse>>> Register(RegisterRequest request, CancellationToken cancellationToken)
+    public async Task<ActionResult<ApiResponse<RegistrationResponse>>> Register(RegisterRequest request, CancellationToken cancellationToken)
     {
         EnsureTrustedCookieOrigin();
-        var session = await authService.RegisterAsync(new RegisterUserCommand(request.Email, request.Password, request.DisplayName), cancellationToken);
-        WriteRefreshCookie(session);
-        return StatusCode(201, new ApiResponse<AuthSessionResponse>(MapSession(session)));
+        var registration = await authService.RegisterAsync(new RegisterUserCommand(request.Email, request.Password, request.DisplayName), cancellationToken);
+        return StatusCode(201, new ApiResponse<RegistrationResponse>(new(registration.Email, registration.VerificationRequired)));
+    }
+
+    [AllowAnonymous, HttpPost("verify-email"), EnableRateLimiting(RateLimitPolicies.Authentication)]
+    public async Task<ActionResult<ApiResponse<EmailVerificationResponse>>> VerifyEmail(VerifyEmailRequest request, CancellationToken cancellationToken)
+    {
+        EnsureTrustedCookieOrigin();
+        var verification = await authService.VerifyEmailAsync(new VerifyEmailCommand(request.UserId, request.Token), cancellationToken);
+        return Ok(new ApiResponse<EmailVerificationResponse>(new(verification.Email, verification.AlreadyVerified)));
+    }
+
+    [AllowAnonymous, HttpPost("resend-verification"), EnableRateLimiting(RateLimitPolicies.Authentication)]
+    public async Task<ActionResult<ApiResponse<ResendVerificationResponse>>> ResendVerification(ResendVerificationRequest request, CancellationToken cancellationToken)
+    {
+        EnsureTrustedCookieOrigin();
+        using var lease = loginEmailRateLimiter.Acquire(request.Email);
+        if (!lease.IsAcquired) return RateLimited();
+
+        await authService.ResendVerificationAsync(new ResendVerificationCommand(request.Email), cancellationToken);
+        return Ok(new ApiResponse<ResendVerificationResponse>(new(
+            "Nếu tài khoản cần xác minh, chúng tôi đã gửi email hướng dẫn đến địa chỉ này.")));
     }
 
     [AllowAnonymous, HttpPost("login"), EnableRateLimiting(RateLimitPolicies.Authentication)]
@@ -34,12 +53,7 @@ public sealed class AuthController(
         EnsureTrustedCookieOrigin();
         using var lease = loginEmailRateLimiter.Acquire(request.Email);
         if (!lease.IsAcquired)
-        {
-            if (lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
-                Response.Headers.RetryAfter = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
-            return StatusCode(StatusCodes.Status429TooManyRequests,
-                new ApiErrorEnvelope(new ApiError("RATE_LIMITED", "Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.", HttpContext.TraceIdentifier)));
-        }
+            return RateLimited(lease);
         var session = await authService.LoginAsync(new LoginUserCommand(request.Email, request.Password), cancellationToken);
         WriteRefreshCookie(session);
         return Ok(new ApiResponse<AuthSessionResponse>(MapSession(session)));
@@ -78,6 +92,13 @@ public sealed class AuthController(
 
     private void WriteRefreshCookie(AuthSession session) => Response.Cookies.Append(RefreshCookieName, session.RefreshToken, CookieOptions(session.RefreshTokenExpiresAt));
     private void DeleteRefreshCookie() => Response.Cookies.Delete(RefreshCookieName, CookieOptions(DateTimeOffset.UnixEpoch));
+    private ObjectResult RateLimited(RateLimitLease? lease = null)
+    {
+        if (lease?.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter) == true)
+            Response.Headers.RetryAfter = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return StatusCode(StatusCodes.Status429TooManyRequests,
+            new ApiErrorEnvelope(new ApiError("RATE_LIMITED", "Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.", HttpContext.TraceIdentifier)));
+    }
     private CookieOptions CookieOptions(DateTimeOffset expiresAt)
     {
         var configuredSameSite = configuration["Authentication:RefreshCookie:SameSite"];

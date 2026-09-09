@@ -95,7 +95,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
             var stamp = context.Principal?.FindFirstValue(IdentityAuthService.SecurityStampClaim);
             var manager = context.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
             var user = string.IsNullOrWhiteSpace(subject) ? null : await manager.FindByIdAsync(subject);
-            if (user is null || !user.IsActive || user.DeletionRequestedAt is not null || user.DeletedAt is not null ||
+            if (user is null || !user.IsActive || !user.EmailConfirmed || user.DeletionRequestedAt is not null || user.DeletedAt is not null ||
                 string.IsNullOrWhiteSpace(stamp) || !string.Equals(user.SecurityStamp, stamp, StringComparison.Ordinal))
                 context.Fail("Token has been revoked.");
         },

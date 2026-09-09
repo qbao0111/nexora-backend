@@ -448,24 +448,24 @@ Hoặc generic `SendAsync(EmailMessage)` nếu muốn giảm coupling.
 
 Tasks:
 
-- [ ] `ResendEmailSender` trong `Nexora.Integrations/Email`.
-- [ ] Development/testing có fake/no-op/recording sender.
-- [ ] Config validation fail-closed production nếu Resend enabled nhưng thiếu key/domain.
-- [ ] Không log token verification/reset.
-- [ ] Template tiếng Việt responsive tối thiểu.
-- [ ] From domain được cấu hình, không hard-code.
+- [x] `ResendEmailSender` trong `Nexora.Integrations/Email`.
+- [x] Development/testing có fake/no-op/recording sender.
+- [x] Config validation fail-closed production nếu Resend enabled nhưng thiếu key/domain.
+- [x] Không log token verification/reset.
+- [x] Template tiếng Việt responsive tối thiểu.
+- [x] From domain được cấu hình, không hard-code.
 
 ### B2. Email verification [P0]
 
-- [ ] Register tạo account chưa verified.
-- [ ] Generate verification token bằng ASP.NET Identity token provider.
-- [ ] Link verification chỉ chứa one-time token + user identifier cần thiết.
-- [ ] TTL hợp lý.
-- [ ] `POST /auth/verify-email` hoặc GET callback contract rõ ràng.
-- [ ] `POST /auth/resend-verification` rate limit.
-- [ ] Login account chưa verify trả `EMAIL_NOT_VERIFIED`.
-- [ ] Free entitlement provisioning phải idempotent và chỉ usable sau verify.
-- [ ] Không cho spam tạo nhiều entitlement bằng retry verification.
+- [x] Register tạo account chưa verified.
+- [x] Generate verification token bằng ASP.NET Identity token provider.
+- [x] Link verification chỉ chứa one-time token + user identifier cần thiết.
+- [x] TTL hợp lý.
+- [x] `POST /auth/verify-email` hoặc GET callback contract rõ ràng.
+- [x] `POST /auth/resend-verification` rate limit.
+- [x] Login account chưa verify trả `EMAIL_NOT_VERIFIED`.
+- [x] Free entitlement provisioning phải idempotent và chỉ usable sau verify.
+- [x] Không cho spam tạo nhiều entitlement bằng retry verification.
 
 ### B3. Password recovery [P0]
 
@@ -714,9 +714,9 @@ Backend:
 
 ## B5. Auth regression/hardening [P0]
 
-- [ ] Register/verify/login/refresh/logout happy path.
-- [ ] Unverified account không gọi AI.
-- [ ] Verification resend rate-limit.
+- [x] Register/verify/login/refresh/logout happy path.
+- [x] Unverified account không gọi AI.
+- [x] Verification resend rate-limit.
 - [ ] Password reset revokes sessions.
 - [ ] Deleted/inactive user fail closed.
 - [ ] Security stamp vẫn tương thích SignalR JWT validation.

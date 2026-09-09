@@ -20,6 +20,11 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 
 | Method | Endpoint | Mục đích |
 | --- | --- | --- |
+| POST | `/auth/register` | Tạo account chưa xác minh và gửi email verification; không tạo session. |
+| POST | `/auth/verify-email` | Xác minh email bằng `userId` + Identity token; cấp Free entitlement idempotently. |
+| POST | `/auth/resend-verification` | Gửi lại email verification với response generic và rate limit theo email. |
+| POST | `/auth/login` | Tạo session sau khi credentials hợp lệ và email đã xác minh. |
+| POST | `/auth/refresh` | Xoay refresh token trong cookie. |
 | GET | `/me` | Profile và entitlement hiện hành. |
 | GET | `/me/export` | Export allowlisted core profile/billing/practice data của owner; không trả storage key, credential hoặc provider secret. |
 | POST | `/me/deletion-requests` | Yêu cầu xoá bất đồng bộ; bắt buộc `Idempotency-Key`, revoke session ngay và trả `202`. |
@@ -55,6 +60,12 @@ Tất cả route dưới đây yêu cầu policy `Admin`, reason code đối v�
 | GET | `/admin/operations/jobs` | Xem trạng thái job lỗi để retry có kiểm soát. |
 
 ## Request and response contracts quan trọng
+
+### Xác minh email
+
+`POST /api/v1/auth/register` trả `201` với `{ "data": { "email": "...", "verificationRequired": true } }` và không đặt refresh cookie. Email chứa link frontend dạng `/verify-email?userId={guid}&token={IdentityToken}`; frontend gửi hai giá trị đó tới `POST /api/v1/auth/verify-email`.
+
+Tài khoản chưa xác minh không thể login và không được cấp access/refresh session; login trả `401 EMAIL_NOT_VERIFIED`. Verify thành công đặt `EmailConfirmed=true` và provision Free entitlement trong cùng transaction theo cách idempotent. Gửi lại qua `POST /api/v1/auth/resend-verification` luôn trả thông điệp generic để không tiết lộ email có tồn tại hay không và bị rate limit theo email chuẩn hoá.
 
 ### Export và xoá dữ liệu cá nhân
 

@@ -1,14 +1,20 @@
 namespace Nexora.Business.Auth;
 
 public sealed record RegisterUserCommand(string Email, string Password, string? DisplayName);
+public sealed record RegistrationResult(string Email, bool VerificationRequired);
 public sealed record LoginUserCommand(string Email, string Password);
+public sealed record VerifyEmailCommand(Guid UserId, string Token);
+public sealed record ResendVerificationCommand(string Email);
+public sealed record EmailVerificationResult(string Email, bool AlreadyVerified);
 public sealed record ExternalIdentity(string Provider, string ProviderSubject, string Email, string? DisplayName);
 public sealed record AuthenticatedUser(Guid Id, string Email, string? DisplayName, IReadOnlyCollection<string> Roles);
 public sealed record AuthSession(AuthenticatedUser User, string AccessToken, DateTimeOffset AccessTokenExpiresAt, string RefreshToken, DateTimeOffset RefreshTokenExpiresAt);
 
 public interface IAuthService
 {
-    Task<AuthSession> RegisterAsync(RegisterUserCommand command, CancellationToken cancellationToken);
+    Task<RegistrationResult> RegisterAsync(RegisterUserCommand command, CancellationToken cancellationToken);
+    Task<EmailVerificationResult> VerifyEmailAsync(VerifyEmailCommand command, CancellationToken cancellationToken);
+    Task ResendVerificationAsync(ResendVerificationCommand command, CancellationToken cancellationToken);
     Task<AuthSession> LoginAsync(LoginUserCommand command, CancellationToken cancellationToken);
     Task<AuthSession> RefreshAsync(string refreshToken, CancellationToken cancellationToken);
     Task RevokeRefreshTokenAsync(string refreshToken, CancellationToken cancellationToken);

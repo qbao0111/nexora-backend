@@ -32,10 +32,15 @@ public sealed class IdentityAdminApiTests
         });
 
         Assert.Equal(HttpStatusCode.Created, registerResponse.StatusCode);
-        using var regDoc = JsonDocument.Parse(await registerResponse.Content.ReadAsStringAsync());
-        var data = regDoc.RootElement.GetProperty("data");
-        var userId = data.GetProperty("user").GetProperty("id").GetGuid();
-        var accessToken = data.GetProperty("accessToken").GetString()!;
+        await TestEmailInbox.VerifyAsync(client, email);
+        using var userScope = factory.Services.CreateScope();
+        var registeredUser = await userScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>().FindByEmailAsync(email);
+        Assert.NotNull(registeredUser);
+        var userId = registeredUser!.Id;
+        using var loginResponse = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
+        using var loginDoc = JsonDocument.Parse(await loginResponse.Content.ReadAsStringAsync());
+        var accessToken = loginDoc.RootElement.GetProperty("data").GetProperty("accessToken").GetString()!;
 
         // Token contains User role claim
         var handler = new JwtSecurityTokenHandler();
@@ -452,9 +457,12 @@ public sealed class IdentityAdminApiTests
             displayName
         });
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var cookieHeader = response.Headers.GetValues("Set-Cookie").FirstOrDefault(c => c.StartsWith("nexora.refresh=", StringComparison.Ordinal));
+        await TestEmailInbox.VerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var cookieHeader = login.Headers.GetValues("Set-Cookie").FirstOrDefault(c => c.StartsWith("nexora.refresh=", StringComparison.Ordinal));
         var refreshToken = cookieHeader is not null ? cookieHeader.Split(';', 2)[0].Split('=', 2)[1] : "";
-        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var json = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         var data = json.RootElement.GetProperty("data");
         return new Account(data.GetProperty("user").GetProperty("id").GetGuid(), data.GetProperty("accessToken").GetString()!, refreshToken);
     }

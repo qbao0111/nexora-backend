@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Nexora.Business.Auth;
 using Nexora.Business.Common;
+using Nexora.Business.Email;
 using Nexora.Data.Identity;
 using Nexora.Data.Persistence;
 
@@ -19,12 +20,15 @@ public sealed class IdentityAuthService(
     SignInManager<ApplicationUser> signInManager,
     NexoraDbContext dbContext,
     IOptions<JwtOptions> jwtOptions,
+    IOptions<EmailVerificationOptions> emailVerificationOptions,
+    IEmailSender emailSender,
     TimeProvider timeProvider) : IAuthService
 {
     public const string SecurityStampClaim = "nexora:security_stamp";
     private readonly JwtOptions _jwtOptions = jwtOptions.Value;
+    private readonly EmailVerificationOptions _emailVerificationOptions = emailVerificationOptions.Value;
 
-    public async Task<AuthSession> RegisterAsync(RegisterUserCommand command, CancellationToken cancellationToken)
+    public async Task<RegistrationResult> RegisterAsync(RegisterUserCommand command, CancellationToken cancellationToken)
     {
         var email = NormalizeEmail(command.Email);
         if (await userManager.FindByEmailAsync(email) is not null)
@@ -59,65 +63,39 @@ public sealed class IdentityAuthService(
             UpdatedAt = now
         });
 
-        // Provision default Free plan entitlement snapshot matching canonical Free PlanPrice
-        var freePlanPrice = await dbContext.PlanPrices
-            .Include(p => p.Plan)
-            .Include(p => p.Features)
-            .ThenInclude(pf => pf.FeatureDefinition)
-            .SingleOrDefaultAsync(p => p.Plan.Code == "free" && p.IsActive, cancellationToken);
-
-        if (freePlanPrice is not null)
-        {
-            var startsAt = now;
-            var endsAt = now.AddYears(100);
-            var subscription = new Nexora.Data.Billing.Subscription
-            {
-                Id = Guid.NewGuid(),
-                UserId = user.Id,
-                OrderId = null,
-                Status = Nexora.Business.Billing.BillingValues.Active,
-                StartsAt = startsAt,
-                EndsAt = endsAt,
-                CreatedAt = now,
-                UpdatedAt = now
-            };
-            var entitlement = new Nexora.Data.Billing.Entitlement
-            {
-                Id = Guid.NewGuid(),
-                UserId = user.Id,
-                SubscriptionId = subscription.Id,
-                PlanCodeSnapshot = freePlanPrice.Plan.Code,
-                Status = Nexora.Business.Billing.BillingValues.Active,
-                InterviewLimit = freePlanPrice.InterviewQuota,
-                StartsAt = startsAt,
-                EndsAt = endsAt,
-                CreatedAt = now,
-                UpdatedAt = now,
-                ConcurrencyToken = Guid.NewGuid()
-            };
-            dbContext.Subscriptions.Add(subscription);
-            dbContext.Entitlements.Add(entitlement);
-
-            foreach (var pf in freePlanPrice.Features.Where(pf => !string.Equals(pf.FeatureDefinition.Code, Nexora.Business.Billing.FeatureValues.Interview, StringComparison.OrdinalIgnoreCase)))
-            {
-                dbContext.EntitlementFeatures.Add(new Nexora.Data.Billing.EntitlementFeature
-                {
-                    Id = Guid.NewGuid(),
-                    EntitlementId = entitlement.Id,
-                    FeatureDefinitionId = pf.FeatureDefinitionId,
-                    FeatureCode = pf.FeatureDefinition.Code,
-                    IsEnabled = pf.IsEnabled,
-                    Limit = pf.Limit,
-                    CreatedAt = now,
-                    UpdatedAt = now,
-                    ConcurrencyToken = Guid.NewGuid()
-                });
-            }
-        }
-
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return await CreateSessionAsync(user, cancellationToken);
+        await SendVerificationEmailAsync(user, cancellationToken);
+        return new RegistrationResult(user.Email!, VerificationRequired: true);
+    }
+
+    public async Task<EmailVerificationResult> VerifyEmailAsync(VerifyEmailCommand command, CancellationToken cancellationToken)
+    {
+        var user = await userManager.FindByIdAsync(command.UserId.ToString());
+        if (user is null || !user.IsActive || user.DeletionRequestedAt is not null || user.DeletedAt is not null)
+            throw InvalidEmailVerification();
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var alreadyVerified = user.EmailConfirmed;
+        var result = await userManager.ConfirmEmailAsync(user, command.Token);
+        if (!result.Succeeded)
+            throw InvalidEmailVerification();
+
+        var now = timeProvider.GetUtcNow();
+        user.UpdatedAt = now;
+        await EnsureFreeEntitlementAsync(user.Id, now, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new EmailVerificationResult(user.Email!, alreadyVerified);
+    }
+
+    public async Task ResendVerificationAsync(ResendVerificationCommand command, CancellationToken cancellationToken)
+    {
+        var user = await userManager.FindByEmailAsync(NormalizeEmail(command.Email));
+        if (user is null || !user.IsActive || user.EmailConfirmed || user.DeletionRequestedAt is not null || user.DeletedAt is not null)
+            return;
+
+        await SendVerificationEmailAsync(user, cancellationToken, invalidatePreviousTokens: true);
     }
 
     public async Task<AuthSession> LoginAsync(LoginUserCommand command, CancellationToken cancellationToken)
@@ -128,6 +106,8 @@ public sealed class IdentityAuthService(
         {
             throw new BusinessException("INVALID_CREDENTIALS", "Email hoặc mật khẩu không đúng.", BusinessErrorKind.Unauthorized);
         }
+        if (!user.EmailConfirmed)
+            throw new BusinessException("EMAIL_NOT_VERIFIED", "Bạn cần xác minh email trước khi đăng nhập.", BusinessErrorKind.Unauthorized);
         return await CreateSessionAsync(user, cancellationToken);
     }
 
@@ -137,7 +117,7 @@ public sealed class IdentityAuthService(
         var hash = HashToken(refreshToken);
         var existing = await dbContext.RefreshTokens.Include(token => token.User)
             .SingleOrDefaultAsync(token => token.TokenHash == hash, cancellationToken);
-        if (existing is null || existing.ExpiresAt <= now || !existing.User.IsActive || existing.User.DeletionRequestedAt is not null || existing.User.DeletedAt is not null)
+        if (existing is null || existing.ExpiresAt <= now || !existing.User.IsActive || !existing.User.EmailConfirmed || existing.User.DeletionRequestedAt is not null || existing.User.DeletedAt is not null)
             throw InvalidRefreshToken();
 
         var replacement = CreateRefreshToken(existing.UserId, now);
@@ -222,6 +202,81 @@ public sealed class IdentityAuthService(
             throw new BusinessException("SESSION_REVOCATION_FAILED", "Không thể cập nhật bảo mật sau khi đổi mật khẩu.", BusinessErrorKind.ExternalFailure);
     }
 
+    private async Task SendVerificationEmailAsync(ApplicationUser user, CancellationToken cancellationToken, bool invalidatePreviousTokens = false)
+    {
+        if (invalidatePreviousTokens)
+        {
+            var stampResult = await userManager.UpdateSecurityStampAsync(user);
+            if (!stampResult.Succeeded)
+                throw new BusinessException("EMAIL_VERIFICATION_FAILED", "Không thể tạo lại liên kết xác minh email.", BusinessErrorKind.ExternalFailure);
+        }
+        var token = await userManager.GenerateEmailConfirmationTokenAsync(user);
+        var baseUrl = _emailVerificationOptions.PublicUrl.TrimEnd('/');
+        var link = new Uri($"{baseUrl}/verify-email?userId={user.Id:D}&token={Uri.EscapeDataString(token)}", UriKind.Absolute);
+        await emailSender.SendVerificationAsync(
+            new VerificationEmail(new EmailRecipient(user.Email!), link), cancellationToken);
+    }
+
+    private async Task EnsureFreeEntitlementAsync(Guid userId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var hasFreeEntitlement = await dbContext.Entitlements.AnyAsync(
+            item => item.UserId == userId && item.PlanCodeSnapshot == "free" && item.Status == Nexora.Business.Billing.BillingValues.Active,
+            cancellationToken);
+        if (hasFreeEntitlement) return;
+
+        var freePlanPrice = await dbContext.PlanPrices
+            .Include(item => item.Plan)
+            .Include(item => item.Features)
+            .ThenInclude(item => item.FeatureDefinition)
+            .SingleOrDefaultAsync(item => item.Plan.Code == "free" && item.IsActive, cancellationToken);
+        if (freePlanPrice is null) return;
+
+        var subscription = new Nexora.Data.Billing.Subscription
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            OrderId = null,
+            Status = Nexora.Business.Billing.BillingValues.Active,
+            StartsAt = now,
+            EndsAt = now.AddYears(100),
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        var entitlement = new Nexora.Data.Billing.Entitlement
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            SubscriptionId = subscription.Id,
+            PlanCodeSnapshot = freePlanPrice.Plan.Code,
+            Status = Nexora.Business.Billing.BillingValues.Active,
+            InterviewLimit = freePlanPrice.InterviewQuota,
+            StartsAt = subscription.StartsAt,
+            EndsAt = subscription.EndsAt,
+            CreatedAt = now,
+            UpdatedAt = now,
+            ConcurrencyToken = Guid.NewGuid()
+        };
+        dbContext.Subscriptions.Add(subscription);
+        dbContext.Entitlements.Add(entitlement);
+
+        foreach (var feature in freePlanPrice.Features.Where(item =>
+                     !string.Equals(item.FeatureDefinition.Code, Nexora.Business.Billing.FeatureValues.Interview, StringComparison.OrdinalIgnoreCase)))
+        {
+            dbContext.EntitlementFeatures.Add(new Nexora.Data.Billing.EntitlementFeature
+            {
+                Id = Guid.NewGuid(),
+                EntitlementId = entitlement.Id,
+                FeatureDefinitionId = feature.FeatureDefinitionId,
+                FeatureCode = feature.FeatureDefinition.Code,
+                IsEnabled = feature.IsEnabled,
+                Limit = feature.Limit,
+                CreatedAt = now,
+                UpdatedAt = now,
+                ConcurrencyToken = Guid.NewGuid()
+            });
+        }
+    }
+
     private async Task<AuthSession> CreateSessionAsync(ApplicationUser user, CancellationToken cancellationToken)
     {
         var token = CreateRefreshToken(user.Id, timeProvider.GetUtcNow());
@@ -276,6 +331,8 @@ public sealed class IdentityAuthService(
     private static string HashToken(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token ?? string.Empty)));
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
     private static string? NormalizeDisplayName(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    private static BusinessException InvalidEmailVerification() =>
+        new("EMAIL_VERIFICATION_INVALID", "Liên kết xác minh email không hợp lệ hoặc đã hết hạn.", BusinessErrorKind.Validation);
     private static BusinessException InvalidRefreshToken() => new("INVALID_REFRESH_TOKEN", "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.", BusinessErrorKind.Unauthorized);
     private static BusinessException UserNotFound() => new("USER_NOT_FOUND", "Không tìm thấy tài khoản.", BusinessErrorKind.NotFound);
     private static BusinessException IdentityValidation(IdentityResult result) =>

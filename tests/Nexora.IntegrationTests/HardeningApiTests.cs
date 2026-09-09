@@ -97,13 +97,18 @@ public sealed class HardeningApiTests
         using (var guest = await client.PostAsJsonAsync("/api/v1/interviews", new { }))
             Assert.Equal(HttpStatusCode.Unauthorized, guest.StatusCode);
 
+        var email = $"hardening-{Guid.NewGuid():N}@example.test";
         using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new
         {
-            email = $"hardening-{Guid.NewGuid():N}@example.test",
+            email,
             password = "Strong!Pass123",
             displayName = "Hardening candidate"
         });
-        using var document = JsonDocument.Parse(await register.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+        await TestEmailInbox.VerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        using var document = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",
             document.RootElement.GetProperty("data").GetProperty("accessToken").GetString());
 
