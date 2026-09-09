@@ -27,6 +27,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/auth/reset-password` | Đặt lại mật khẩu bằng `userId` + Identity token; revoke toàn bộ session sau khi thành công. |
 | POST | `/auth/login` | Tạo session sau khi credentials hợp lệ và email đã xác minh. |
 | POST | `/auth/refresh` | Xoay refresh token trong cookie. |
+| POST | `/me/password` | Đổi mật khẩu với current password; yêu cầu Bearer và revoke toàn bộ session sau khi thành công. |
 | GET | `/me` | Profile và entitlement hiện hành. |
 | GET | `/me/export` | Export allowlisted core profile/billing/practice data của owner; không trả storage key, credential hoặc provider secret. |
 | POST | `/me/deletion-requests` | Yêu cầu xoá bất đồng bộ; bắt buộc `Idempotency-Key`, revoke session ngay và trả `202`. |
@@ -74,6 +75,10 @@ Tài khoản chưa xác minh không thể login và không được cấp access
 `POST /api/v1/auth/forgot-password` nhận `{ "email": "..." }` và luôn trả `200` với cùng thông điệp an toàn dù tài khoản tồn tại hay không. Với tài khoản đang hoạt động, email reset chứa link frontend dạng `/reset-password?userId={guid}&token={IdentityToken}`. Endpoint bị giới hạn theo cả IP client và email đã chuẩn hoá.
 
 Frontend gửi `userId`, `token` và `newPassword` tới `POST /api/v1/auth/reset-password`. Token sai hoặc hết hạn trả `400 PASSWORD_RESET_INVALID` với thông điệp chung. Reset thành công đổi password, revoke toàn bộ refresh token và cập nhật security stamp, vì vậy access token và refresh token cũ đều không còn dùng được.
+
+### Đổi mật khẩu khi đã đăng nhập
+
+`POST /api/v1/me/password` yêu cầu Bearer access token và body `{ "currentPassword": "...", "newPassword": "..." }`. Thành công trả `204 No Content`, đổi mật khẩu và revoke toàn bộ refresh token đồng thời cập nhật security stamp; access token cũ cũng không còn hợp lệ. Sai current password trả `401 INCORRECT_CURRENT_PASSWORD`; password mới phải dài 10–128 ký tự và thỏa Identity password policy. `confirmPassword` là validation ở frontend, không gửi lên API.
 
 ### Export và xoá dữ liệu cá nhân
 

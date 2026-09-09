@@ -47,7 +47,7 @@ For password recovery, call `POST /auth/forgot-password` with `{ "email": "..." 
 
 2. `GET /me` (`200`) to hydrate the current user, assigned roles (`["User"]`), and server-owned billing/quota state.
 
-   `POST /me/password` (`200`, Bearer):
+   `POST /me/password` (`204`, Bearer):
    ```json
    { "currentPassword": "...", "newPassword": "..." }
    ```

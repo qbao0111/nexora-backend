@@ -284,6 +284,76 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
     }
 
     [Fact]
+    public async Task ChangePasswordRevokesSessionsAndRequiresTheNewPassword()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"change-password-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var accessToken = await ReadAccessTokenAsync(login);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+        using var change = await client.PostAsJsonAsync("/api/v1/me/password", new
+        {
+            currentPassword = "Strong!Pass123",
+            newPassword = "Changed!Pass456"
+        });
+        Assert.Equal(HttpStatusCode.NoContent, change.StatusCode);
+
+        using var oldAccess = await client.GetAsync("/api/v1/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, oldAccess.StatusCode);
+        using var oldRefresh = await client.PostAsync("/api/v1/auth/refresh", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, oldRefresh.StatusCode);
+        using var oldPassword = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.Unauthorized, oldPassword.StatusCode);
+        using var newPassword = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Changed!Pass456" });
+        Assert.Equal(HttpStatusCode.OK, newPassword.StatusCode);
+    }
+
+    [Fact]
+    public async Task ChangePasswordRejectsIncorrectCurrentPasswordWithoutRevokingSession()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"change-password-invalid-current-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        var accessToken = await ReadAccessTokenAsync(login);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+        using var change = await client.PostAsJsonAsync("/api/v1/me/password", new
+        {
+            currentPassword = "Wrong!Pass123",
+            newPassword = "Changed!Pass456"
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, change.StatusCode);
+        Assert.Equal("INCORRECT_CURRENT_PASSWORD", await ReadErrorCodeAsync(change));
+
+        using var me = await client.GetAsync("/api/v1/me");
+        Assert.Equal(HttpStatusCode.OK, me.StatusCode);
+        using var oldPassword = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, oldPassword.StatusCode);
+    }
+
+    [Fact]
+    public async Task ChangePasswordRejectsPasswordShorterThanMinimum()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"change-password-invalid-new-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await ReadAccessTokenAsync(login));
+
+        using var change = await client.PostAsJsonAsync("/api/v1/me/password", new
+        {
+            currentPassword = "Strong!Pass123",
+            newPassword = "short"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, change.StatusCode);
+        Assert.Equal("VALIDATION_ERROR", await ReadErrorCodeAsync(change));
+    }
+
+    [Fact]
     public async Task SameOriginAuthMutationIsPermittedForInternalClients()
     {
         using var client = _factory.CreateHttpsClient();

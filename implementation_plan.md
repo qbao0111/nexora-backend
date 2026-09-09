@@ -481,8 +481,8 @@ Tasks:
 
 Backend đã có logic đổi mật khẩu.
 
-- [ ] Verify contract + regression tests.
-- [ ] FE gọi `POST /api/v1/me/password`.
+- [x] Verify contract + regression tests.
+- [x] Backend contract documented for FE: `POST /api/v1/me/password`.
 - [ ] UX yêu cầu current password + new password + confirm.
 - [ ] Sau success FE logout/re-bootstrap vì BE revoke sessions.
 
