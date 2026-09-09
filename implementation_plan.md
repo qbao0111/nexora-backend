@@ -717,10 +717,10 @@ Backend:
 - [x] Register/verify/login/refresh/logout happy path.
 - [x] Unverified account không gọi AI.
 - [x] Verification resend rate-limit.
-- [ ] Password reset revokes sessions.
-- [ ] Deleted/inactive user fail closed.
-- [ ] Security stamp vẫn tương thích SignalR JWT validation.
-- [ ] Refresh cookie cross-site production config test.
+- [x] Password reset revokes sessions.
+- [x] Deleted/inactive user fail closed.
+- [x] Security stamp vẫn tương thích SignalR JWT validation.
+- [x] Refresh cookie cross-site production config test.
 
 ## B6. Scenario async SignalR parity [P1]
 

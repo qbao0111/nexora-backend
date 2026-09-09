@@ -84,6 +84,44 @@ public sealed class HardeningApiTests
     }
 
     [Fact]
+    public async Task StagingCrossSiteLoginEmitsSecureSameSiteNoneRefreshCookie()
+    {
+        using var factory = new NexoraApiFactory("Staging", new Dictionary<string, string?>
+        {
+            ["Authentication:RefreshCookie:SameSite"] = "None",
+            ["Authentication:RefreshCookie:Secure"] = "true",
+            ["Frontend:AllowedOrigins:0"] = "https://frontend.example"
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        client.DefaultRequestHeaders.Add("Origin", "https://frontend.example");
+        var email = $"staging-cookie-{Guid.NewGuid():N}@example.test";
+
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email,
+            password = "Strong!Pass123",
+            displayName = "Staging cookie candidate"
+        });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+        await TestEmailInbox.VerifyAsync(client, email);
+
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new
+        {
+            email,
+            password = "Strong!Pass123"
+        });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        Assert.True(login.Headers.TryGetValues("Set-Cookie", out var setCookies));
+
+        var refreshCookie = Assert.Single(setCookies, value => value.StartsWith("nexora.refresh=", StringComparison.Ordinal));
+        Assert.Contains("HttpOnly", refreshCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Secure", refreshCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SameSite=None", refreshCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Path=/api/v1/auth", refreshCookie, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task IndependentFeatureGatesPreserveAuthenticationBoundary()
     {
         using var factory = new NexoraApiFactory(new Dictionary<string, string?>
