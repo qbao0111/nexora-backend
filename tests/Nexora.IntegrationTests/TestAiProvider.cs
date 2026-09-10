@@ -138,6 +138,13 @@ internal sealed class TestAiProvider : IAiProvider
             };
         if (questionTopic is not null)
             generatedQuestion = $"[{questionTopic}] {generatedQuestion}";
+        var candidateAnswer = GetLabeledValue(request.UntrustedInput, "answer:");
+        var groundedStrength = string.IsNullOrWhiteSpace(candidateAnswer)
+            ? "Clear response."
+            : $"Grounded point: {candidateAnswer[..Math.Min(candidateAnswer.Length, 120)]}";
+        var improvedAnswer = string.IsNullOrWhiteSpace(candidateAnswer)
+            ? "Keep the same answer and add concrete evidence if available."
+            : candidateAnswer;
         object result = typeof(T) switch
         {
             var type when type == typeof(GeneratedQuestion) => new GeneratedQuestion(generatedQuestion),
@@ -159,7 +166,10 @@ internal sealed class TestAiProvider : IAiProvider
                     ["result"],
                     ["Có hành động xử lý rõ"],
                     ["Kết thúc câu trả lời bằng kết quả và tác động cụ thể."]) : new StarEvaluation(false, null, null, null, null, null, [], [], []),
-                AiOperations.ScoreScale),
+                AiOperations.ScoreScale,
+                Strengths: [groundedStrength],
+                Improvements: ["Bổ sung một kết quả cụ thể nếu có."],
+                ImprovedAnswer: improvedAnswer),
             var type when type == typeof(StarEvaluation) => new StarEvaluation(
                 true,
                 56,
@@ -212,4 +222,10 @@ internal sealed class TestAiProvider : IAiProvider
         .Select(line => line["question-topic:".Length..].Trim())
         .Select(topic => string.IsNullOrWhiteSpace(topic) ? null : topic)
         .FirstOrDefault();
+
+    private static string? GetLabeledValue(string input, string label) => input
+        .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Where(line => line.StartsWith(label, StringComparison.OrdinalIgnoreCase))
+        .Select(line => line[label.Length..].Trim())
+        .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 }

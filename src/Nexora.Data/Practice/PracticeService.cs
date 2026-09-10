@@ -514,7 +514,12 @@ public sealed partial class PracticeService(
             var evalResult = await structuredAiExecutor.ExecuteAsync(
                 AiOperations.InterviewEvaluate,
                 answerContext,
-                new AiOperationContext(interviewId.ToString("N"), userId, ExpectedStar: isBehavioral, Metadata: metadata),
+                new AiOperationContext(
+                    interviewId.ToString("N"),
+                    userId,
+                    ExpectedStar: isBehavioral,
+                    Metadata: metadata,
+                    CandidateAnswer: content.Trim()),
                 cancellationToken);
             evaluation = evalResult.Value;
 

@@ -593,9 +593,9 @@ public sealed class PracticeApiTests
     public async Task PrimaryQuestionLineageAndStarSummaryDoNotUseSequenceAsFollowUp()
     {
         var aiProvider = new TestAiProvider();
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, AnswerEvaluationWithoutStar());
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, AnswerEvaluationWithStar(Star(60, 60, 60, 60)));
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, AnswerEvaluationWithoutStar());
+        EnqueueGroundedEvaluation(aiProvider, AnswerEvaluationWithoutStar());
+        EnqueueGroundedEvaluation(aiProvider, AnswerEvaluationWithStar(Star(60, 60, 60, 60)));
+        EnqueueGroundedEvaluation(aiProvider, AnswerEvaluationWithoutStar());
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
@@ -1139,10 +1139,10 @@ public sealed class PracticeApiTests
         string key)
     {
         var aiProvider = new TestAiProvider();
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, AnswerEvaluationWithoutStar());
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, AnswerEvaluationWithStar(primary));
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, AnswerEvaluationWithoutStar());
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, AnswerEvaluationWithStar(followUp));
+        EnqueueGroundedEvaluation(aiProvider, AnswerEvaluationWithoutStar());
+        EnqueueGroundedEvaluation(aiProvider, AnswerEvaluationWithStar(primary));
+        EnqueueGroundedEvaluation(aiProvider, AnswerEvaluationWithoutStar());
+        EnqueueGroundedEvaluation(aiProvider, AnswerEvaluationWithStar(followUp));
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
@@ -1199,10 +1199,10 @@ public sealed class PracticeApiTests
         string key)
     {
         var aiProvider = new TestAiProvider();
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, AnswerEvaluationWithoutStar());
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, AnswerEvaluationWithStar(primary));
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, AnswerEvaluationWithoutStar());
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, AnswerEvaluationWithStar(followUp));
+        EnqueueGroundedEvaluation(aiProvider, AnswerEvaluationWithoutStar());
+        EnqueueGroundedEvaluation(aiProvider, AnswerEvaluationWithStar(primary));
+        EnqueueGroundedEvaluation(aiProvider, AnswerEvaluationWithoutStar());
+        EnqueueGroundedEvaluation(aiProvider, AnswerEvaluationWithStar(followUp));
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
@@ -1234,7 +1234,10 @@ public sealed class PracticeApiTests
         ],
         "Grounded answer feedback.",
         star,
-        AiOperations.ScoreScale);
+        AiOperations.ScoreScale,
+        ["The answer has a clear structure."],
+        ["Add one concrete example if available."],
+        "Keep the same answer and add concrete evidence if available.");
 
     private static AnswerEvaluation AnswerEvaluationWithoutStar() => new(
         [
@@ -1245,7 +1248,31 @@ public sealed class PracticeApiTests
         ],
         "Grounded answer feedback.",
         new StarEvaluation(false, null, null, null, null, null, [], [], [], AiOperations.ScoreScale),
-        AiOperations.ScoreScale);
+        AiOperations.ScoreScale,
+        ["The answer has a clear structure."],
+        ["Add one concrete example if available."],
+        "Keep the same answer and add concrete evidence if available.");
+
+    private static void EnqueueGroundedEvaluation(TestAiProvider aiProvider, AnswerEvaluation evaluation)
+    {
+        aiProvider.EnqueueHandler(AiPurposes.InterviewEvaluate, request =>
+        {
+            var candidateAnswer = request.UntrustedInput
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(line => line.StartsWith("answer:", StringComparison.OrdinalIgnoreCase))
+                .Select(line => line["answer:".Length..].Trim())
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+            if (string.IsNullOrWhiteSpace(candidateAnswer))
+                return evaluation;
+
+            return evaluation with
+            {
+                Strengths = [$"Grounded answer: {candidateAnswer[..Math.Min(candidateAnswer.Length, 120)]}"],
+                ImprovedAnswer = candidateAnswer
+            };
+        });
+    }
 
     private static StarEvaluation Star(
         int situationScore,

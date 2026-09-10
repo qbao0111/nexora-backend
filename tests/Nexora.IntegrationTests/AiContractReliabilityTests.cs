@@ -38,7 +38,10 @@ public sealed class AiContractReliabilityTests
                 MissingElements: [],
                 Strengths: ["Strong technical depth"],
                 CoachingTips: []),
-            AiOperations.ScoreScale));
+            AiOperations.ScoreScale,
+            Strengths: ["Dependency injection is explained clearly."],
+            Improvements: ["Add one concrete example if available."],
+            ImprovedAnswer: "Dependency injection is a design pattern in which an object receives other objects that it depends on."));
 
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
@@ -94,7 +97,10 @@ public sealed class AiContractReliabilityTests
             ],
             "Good job.",
             new StarEvaluation(false, null, null, null, null, null, [], [], []),
-            AiOperations.ScoreScale));
+            AiOperations.ScoreScale,
+            Strengths: ["The answer explains maintainable software architecture."],
+            Improvements: ["Add one concrete example if available."],
+            ImprovedAnswer: "Solid principles help build maintainable software architecture."));
 
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
@@ -209,7 +215,10 @@ public sealed class AiContractReliabilityTests
             ],
             "Good job.",
             new StarEvaluation(false, null, null, null, null, null, [], [], []),
-            AiOperations.ScoreScale));
+            AiOperations.ScoreScale,
+            Strengths: ["Polymorphism is clear."],
+            Improvements: ["Add one concrete example if available."],
+            ImprovedAnswer: "Polymorphism enables treating objects of different types through a common interface."));
 
         // Attempt 2: valid rubric (all 4 criteria)
         aiProvider.EnqueueResponse("interview.evaluate", new AnswerEvaluation(
@@ -221,7 +230,10 @@ public sealed class AiContractReliabilityTests
             ],
             "Good job.",
             new StarEvaluation(false, null, null, null, null, null, [], [], []),
-            AiOperations.ScoreScale));
+            AiOperations.ScoreScale,
+            Strengths: ["Polymorphism is clear."],
+            Improvements: ["Add one concrete example if available."],
+            ImprovedAnswer: "Polymorphism enables treating objects of different types through a common interface."));
 
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
@@ -306,6 +318,97 @@ public sealed class AiContractReliabilityTests
         Assert.Equal(0, answerCount);
     }
 
+    [Fact]
+    public async Task AnswerCoachingPersistsAndIdempotentReplayDoesNotReevaluate()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 5);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var interviewId = await StartInterviewAsync(client, "technical", "coaching-replay");
+        await ProcessJobsAsync(factory);
+        var questionId = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+        const string answer = "I debugged the API.";
+
+        var first = await SubmitAnswerAsync(client, interviewId, questionId, answer, "coaching-replay-answer");
+        var firstEvaluation = first.GetProperty("answer").GetProperty("evaluation");
+        Assert.Equal(JsonValueKind.Array, firstEvaluation.GetProperty("strengths").ValueKind);
+        Assert.NotEmpty(firstEvaluation.GetProperty("strengths").EnumerateArray());
+        Assert.NotEmpty(firstEvaluation.GetProperty("improvements").EnumerateArray());
+        Assert.Equal(answer, firstEvaluation.GetProperty("improvedAnswer").GetString());
+        var evaluationCalls = aiProvider.GetCallCount(AiPurposes.InterviewEvaluate);
+
+        var replay = await SubmitAnswerAsync(client, interviewId, questionId, answer, "coaching-replay-answer");
+        var replayEvaluation = replay.GetProperty("answer").GetProperty("evaluation");
+        Assert.Equal(evaluationCalls, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+        Assert.Equal(firstEvaluation.GetProperty("strengths").GetRawText(), replayEvaluation.GetProperty("strengths").GetRawText());
+        Assert.Equal(firstEvaluation.GetProperty("improvements").GetRawText(), replayEvaluation.GetProperty("improvements").GetRawText());
+        Assert.Equal(firstEvaluation.GetProperty("improvedAnswer").GetString(), replayEvaluation.GetProperty("improvedAnswer").GetString());
+    }
+
+    [Fact]
+    public async Task FabricatedCoachingRepairsOnceAndPersistsOnlyCorrectedOutput()
+    {
+        var aiProvider = new TestAiProvider();
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, ApiCoachingEvaluation(
+            "I debugged the API and mentored the team through a RabbitMQ migration."));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, ApiCoachingEvaluation("I debugged the API."));
+
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 5);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var interviewId = await StartInterviewAsync(client, "technical", "coaching-repair");
+        await ProcessJobsAsync(factory);
+        var questionId = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+
+        var data = await SubmitAnswerAsync(client, interviewId, questionId, "I debugged the API.", "coaching-repair-answer");
+        var evaluation = data.GetProperty("answer").GetProperty("evaluation");
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+        Assert.Equal("I debugged the API.", evaluation.GetProperty("improvedAnswer").GetString());
+        Assert.DoesNotContain("RabbitMQ", evaluation.GetProperty("improvedAnswer").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PersistentFabricatedCoachingFailsClosedWithoutPersistingAnswer()
+    {
+        var aiProvider = new TestAiProvider();
+        var fabricated = ApiCoachingEvaluation("I debugged the API and mentored the team through a RabbitMQ migration.");
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, fabricated);
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, fabricated);
+
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 5);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var interviewId = await StartInterviewAsync(client, "technical", "coaching-terminal");
+        await ProcessJobsAsync(factory);
+        var questionId = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/answers")
+        {
+            Content = JsonContent.Create(new { questionId, content = "I debugged the API.", durationSeconds = 45 })
+        };
+        request.Headers.Add("Idempotency-Key", "coaching-terminal-answer");
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(0, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
+    }
+
     private static async Task<Guid> StartInterviewAsync(HttpClient client, string interviewType, string key)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/interviews")
@@ -360,10 +463,10 @@ public sealed class AiContractReliabilityTests
     private static async Task CanonicalPrimariesAndExplicitFollowupPreserveAllDetectedStarComponentsAsync()
     {
         var aiProvider = new TestAiProvider();
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, EvaluationWithoutStar());
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, EvaluationWithStar(Star(85, 0, 85, 90, resultDetected: true)));
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, EvaluationWithoutStar());
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, EvaluationWithStar(Star(90, 90, 95, 90, resultDetected: true)));
+        EnqueueGroundedEvaluation(aiProvider, EvaluationWithoutStar());
+        EnqueueGroundedEvaluation(aiProvider, EvaluationWithStar(Star(85, 0, 85, 90, resultDetected: true)));
+        EnqueueGroundedEvaluation(aiProvider, EvaluationWithoutStar());
+        EnqueueGroundedEvaluation(aiProvider, EvaluationWithStar(Star(90, 90, 95, 90, resultDetected: true)));
 
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
@@ -429,7 +532,10 @@ public sealed class AiContractReliabilityTests
         ],
         "Grounded feedback.",
         new StarEvaluation(false, null, null, null, null, null, [], [], []),
-        AiOperations.ScoreScale);
+        AiOperations.ScoreScale,
+        ["Grounded answer"],
+        ["Add one concrete example if available."],
+        "Keep the same answer and add concrete evidence if available.");
 
     private static AnswerEvaluation EvaluationWithStar(StarEvaluation star) => new(
         [
@@ -438,7 +544,10 @@ public sealed class AiContractReliabilityTests
             new RubricScore("completeness", 80, "Grounded completeness evidence."),
             new RubricScore("clarity", 85, "Grounded clarity evidence.")
         ],
-        "Grounded feedback.", star, AiOperations.ScoreScale);
+        "Grounded feedback.", star, AiOperations.ScoreScale,
+        ["Grounded answer"],
+        ["Add one concrete example if available."],
+        "Keep the same answer and add concrete evidence if available.");
 
     private static StarEvaluation Star(int situation, int task, int action, int result, bool resultDetected) => new(
         true,
@@ -476,7 +585,10 @@ public sealed class AiContractReliabilityTests
                 MissingElements: ["task"],
                 Strengths: ["Xử lý kỹ thuật tốt"],
                 CoachingTips: ["Bổ sung vai trò cá nhân"]),
-            AiOperations.ScoreScale));
+            AiOperations.ScoreScale,
+            Strengths: ["Xử lý kỹ thuật tốt"],
+            Improvements: ["Bổ sung vai trò cá nhân nếu có."],
+            ImprovedAnswer: "Tôi đã kiểm tra slow query log, phát hiện query tìm kiếm SKU thiếu index và thêm index B-tree."));
 
         // Followup question generation
         aiProvider.EnqueueResponse("interview.followup", new GeneratedQuestion(
@@ -501,7 +613,10 @@ public sealed class AiContractReliabilityTests
                 MissingElements: [],
                 Strengths: ["Kỹ năng phân tích nguyên nhân gốc rễ xuất sắc"],
                 CoachingTips: []),
-            AiOperations.ScoreScale));
+            AiOperations.ScoreScale,
+            Strengths: ["Kỹ năng phân tích nguyên nhân gốc rễ xuất sắc"],
+            Improvements: ["Bổ sung một kết quả cụ thể nếu có."],
+            ImprovedAnswer: "Tôi trực tiếp phân tích pg_stat_statements và chạy EXPLAIN ANALYZE để tìm nguyên nhân."));
 
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
@@ -652,6 +767,41 @@ public sealed class AiContractReliabilityTests
         using var document = JsonDocument.Parse(body);
         return document.RootElement.GetProperty("data").Clone();
     }
+
+    private static void EnqueueGroundedEvaluation(TestAiProvider aiProvider, AnswerEvaluation evaluation)
+    {
+        aiProvider.EnqueueHandler(AiPurposes.InterviewEvaluate, request =>
+        {
+            var candidateAnswer = request.UntrustedInput
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(line => line.StartsWith("answer:", StringComparison.OrdinalIgnoreCase))
+                .Select(line => line["answer:".Length..].Trim())
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+            if (string.IsNullOrWhiteSpace(candidateAnswer))
+                return evaluation;
+
+            return evaluation with
+            {
+                Strengths = [$"Grounded answer: {candidateAnswer[..Math.Min(candidateAnswer.Length, 120)]}"],
+                ImprovedAnswer = candidateAnswer
+            };
+        });
+    }
+
+    private static AnswerEvaluation ApiCoachingEvaluation(string improvedAnswer) => new(
+        [
+            new RubricScore("correctness", 80, "The API debugging approach is described."),
+            new RubricScore("structure", 80, "The answer is ordered."),
+            new RubricScore("completeness", 80, "The API issue is covered."),
+            new RubricScore("clarity", 80, "The answer is clear.")
+        ],
+        "Good answer.",
+        new StarEvaluation(false, null, null, null, null, null, [], [], []),
+        AiOperations.ScoreScale,
+        ["The API debugging is clear."],
+        ["Add one concrete result if available."],
+        improvedAnswer);
 
     private sealed record Account(Guid UserId, string AccessToken);
 }

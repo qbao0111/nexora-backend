@@ -270,7 +270,14 @@ public sealed class AiValidationIntegrityTests
         if (purpose == AiPurposes.InterviewEvaluate)
         {
             var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
-                new AnswerEvaluation(Rubric(), "Grounded feedback", null, scoreScale),
+                new AnswerEvaluation(
+                    Rubric(),
+                    "Grounded feedback",
+                    null,
+                    scoreScale,
+                    ["Grounded answer"],
+                    ["Add one concrete example if available"],
+                    "Grounded answer with concrete evidence."),
                 new AiOperationContext("scale-test", ExpectedStar: false));
             return (result.IsValid, result.FailureReason, result.Repairable, result.NormalizedValue?.ScoreScale);
         }
