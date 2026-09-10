@@ -2,6 +2,20 @@
 
 This log records completed implementation milestones and verification evidence. It must never contain credentials or other secrets.
 
+## 2026-09-10 — C2C workflow optimization (in progress)
+
+- Status: In progress
+- Owner: Codex / local engineering workflow
+- Branch: `chore/c2c-flow-optimization`
+- Base: `519793d78aada05294177ae573dd545242fa1086` (`main`)
+- Commit/PR: pending at entry creation; exact values belong in the C2C execution record after delivery
+- Scope: Separate implementation iterations, semantic review and evidence refresh; keep deterministic/mechanical failures with Codex; require the applicable hosted-CI-equivalent gates before review; set the repository C2C profile to six genuine iterations. No application code or product semantics.
+- Contracts/traceability: `.c2c.json`, `docs/c2c-review-policy.md`, global machine-local C2C policy
+- Files/modules: `.c2c.json`, `docs/c2c-review-policy.md`, `project_log.md`; global policy remains outside the repository
+- Verification: branch created from the fetched `origin/main`; C2C doctor green; `.c2c.json` valid with `maxIterations=6`; restore/build green; 296 unit and 149 integration tests passed; EF reports no pending model changes; vulnerability audit clean; no changed C# files require the formatter; `git diff --check` clean
+- Dependencies: merge this tooling policy before beginning A5; A5 and A6 remain separate branches/PRs
+- Remaining blockers: none identified; hosted CI and independent ChatGPT review are required before conditional merge
+
 ## 2026-08-25 — Baseline and repository inspection completed
 
 - Confirmed the active backend workspace is `E:\NexoraBackend`.
