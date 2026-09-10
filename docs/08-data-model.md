@@ -64,9 +64,14 @@ question in the same session. A follow-up keeps the parent's `topic`; malformed
 kind, topic or parent relationships are rejected before mapping or evaluation.
 
 The reserved free primary topics are ordered as `self_introduction`,
-`behavioral_star`, then `motivation_role_fit`. Generating the complete Q1–Q3
-free flow and paid continuation is A7; A6 only establishes the durable
-contract and lineage needed by that work.
+`behavioral_star`, then `motivation_role_fit`. A7 generates exactly these
+primaries for the free portion; after Q3 the session remains `active` and its
+continuation policy exposes finish-now versus upgrade-and-continue without
+adding a `paywalled` session state. A paid continuation stays in the same
+session and creates a server-selected paid `primary` topic; a `followup` is
+created only when a paid behavioral evaluation has genuine missing STAR
+evidence, with an explicit parent. The question-limit feature is a policy
+snapshot and is separate from the interview session quota/reservation ledger.
 
 ### Usage event shape
 

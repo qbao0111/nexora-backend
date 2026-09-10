@@ -231,8 +231,10 @@ public sealed class RealtimeApiTests
         var active = await DataAsync(activeResponse);
         var answer = await PostAsync(client, $"/api/v1/interviews/{id}/answers",
             new { questionId = active.GetProperty("questions")[0].GetProperty("id").GetGuid(), content = "Dependency injection supplies dependencies through constructors." });
-        await PostAsync(client, $"/api/v1/interviews/{id}/answers",
+        var secondAnswer = await PostAsync(client, $"/api/v1/interviews/{id}/answers",
             new { questionId = answer.GetProperty("nextQuestion").GetProperty("id").GetGuid(), content = "I use a scoped lifetime for the database context." });
+        await PostAsync(client, $"/api/v1/interviews/{id}/answers",
+            new { questionId = secondAnswer.GetProperty("nextQuestion").GetProperty("id").GetGuid(), content = "The role aligns with my experience." });
         var completing = await PostAsync(client, $"/api/v1/interviews/{id}/complete", null);
         Assert.Equal("completing", completing.GetProperty("status").GetString());
         await ProcessJobsAsync(factory);
@@ -244,7 +246,7 @@ public sealed class RealtimeApiTests
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Equal(2, await db.RealtimeNotifications.CountAsync());
-        Assert.Equal(2, await db.InterviewQuestions.CountAsync());
+        Assert.Equal(3, await db.InterviewQuestions.CountAsync());
         Assert.Equal(1, await db.InterviewReports.CountAsync());
     }
 

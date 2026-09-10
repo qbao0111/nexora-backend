@@ -28,6 +28,11 @@ public sealed class InterviewsController(IPracticeService practiceService) : Con
         Ok(new ApiResponse<AnswerResult>(await practiceService.SubmitAnswerAsync(User.GetRequiredUserId(), id, request.QuestionId,
             request.Content, request.DurationSeconds, Request.Headers["Idempotency-Key"].ToString(), cancellationToken)));
 
+    [HttpPost("{id:guid}/continue"), EnableRateLimiting(RateLimitPolicies.AiJob)]
+    public async Task<ActionResult<ApiResponse<InterviewView>>> Continue(Guid id, CancellationToken cancellationToken) =>
+        Ok(new ApiResponse<InterviewView>(await practiceService.ContinueInterviewAsync(
+            User.GetRequiredUserId(), id, Request.Headers["Idempotency-Key"].ToString(), cancellationToken)));
+
     [HttpPost("{id:guid}/complete"), EnableRateLimiting(RateLimitPolicies.AiJob)]
     public async Task<ActionResult<ApiResponse<InterviewView>>> Complete(Guid id, CancellationToken cancellationToken) =>
         Accepted(new ApiResponse<InterviewView>(await practiceService.CompleteInterviewAsync(

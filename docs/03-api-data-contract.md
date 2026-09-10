@@ -44,7 +44,8 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | GET | `/resume-analyses/:id` | Trạng thái/kết quả phân tích. |
 | POST | `/interviews` | Tạo và bắt đầu phiên phỏng vấn. |
 | GET | `/interviews/:id` | Đọc session state/question hiện tại của owner. |
-| POST | `/interviews/:id/answers` | Lưu câu trả lời, tạo câu hỏi/feedback tiếp theo. |
+| POST | `/interviews/:id/answers` | Lưu câu trả lời, đánh giá và mở câu hỏi tiếp theo theo policy server. |
+| POST | `/interviews/:id/continue` | Sau khi đạt giới hạn Free, kiểm tra entitlement hiện tại và idempotently tạo câu hỏi trả phí tiếp theo trong cùng session. |
 | POST | `/interviews/:id/complete` | Kết thúc, tạo report. |
 | GET | `/interviews/:id/report` | Đọc report immutable của owner khi completed. |
 | GET | `/dashboard` | Tiến độ, lịch sử và quota. |
@@ -210,13 +211,18 @@ Mỗi phần tử trong `interview.questions` là server-owned và có thêm met
 `kind` chỉ nhận `primary` hoặc `followup`; `topic` là semantic focus và
 `parentQuestionId` bắt buộc đối với follow-up, trỏ tới một câu hỏi trước trong
 cùng session. `sequence` chỉ dùng để sắp xếp, không được dùng để suy ra
-follow-up. Contract v1 dành các topic primary miễn phí theo thứ tự
-`self_introduction`, `behavioral_star`, `motivation_role_fit`; việc mở rộng
-flow Q1–Q3/paywall thuộc A7. Trong flow bounded hiện tại, service đánh giá
-primary đầu tiên rồi thử tạo một follow-up; nếu provider generation thất bại,
-fallback deterministic hiện có vẫn được dùng. Điều kiện paywall hoặc quyết
-định tạo follow-up theo evaluation sẽ thuộc A7. Follow-up kế thừa topic của
-parent.
+follow-up. A7 dành các topic primary miễn phí theo thứ tự
+`self_introduction`, `behavioral_star`, `motivation_role_fit`; sau Q3, response
+trả `nextQuestion: null` và continuation server-owned. `continuation.state` có
+thể là `in_progress`, `upgrade_required` hoặc `max_questions_reached`; chỉ
+`upgrade_required` cho phép gọi endpoint `/interviews/{id}/continue` sau khi
+entitlement đã được cập nhật. Endpoint này yêu cầu `Idempotency-Key`, không
+nhận `paid`, `plan` hay quota từ client, không tạo session mới và không gọi AI
+trước khi server re-check entitlement. Câu hỏi trả phí đầu tiên là một
+`primary` với topic được chọn từ session context; một `followup` chỉ được tạo
+khi evaluation STAR của câu hỏi behavioral trả phí cho thấy thiếu thành phần
+và luôn kế thừa topic/parent rõ ràng. Retry cùng key trả cùng session/question;
+key khác payload trả `409 IDEMPOTENCY_CONFLICT`.
 
 `answer.evaluation` giữ các field generic hiện có và có thêm `star` để frontend render STAR coaching khi phù hợp:
 

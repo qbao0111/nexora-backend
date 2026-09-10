@@ -96,10 +96,10 @@ flowchart LR
 **Preconditions:** candidate owns session; session is `active`; question belongs to that session.  
 **Main sequence:**
 
-1. Candidate submits one answer with idempotency key.
-2. Service locks session version, persists official answer and queues evaluation.
-3. Worker validates rubric output, persists evaluation and either next question or completion job.
-4. On last question, service transitions session to `completing`; the idempotent report job creates one immutable report, then transitions once to `completed`.
+1. Candidate submits one answer with idempotency key; only the `active` state accepts it.
+2. Service evaluates and persists the official answer. For free Q1/Q2 it generates the next canonical primary (`behavioral_star`, then `motivation_role_fit`) in the same bounded operation; it never infers follow-up semantics from sequence.
+3. After answered Q3, no Q4 is generated before entitlement allows it. The response exposes `continuation` with finish-now or upgrade-required state. An authorized `POST /interviews/{id}/continue` re-checks entitlement and creates a paid primary in the same session, or an evidence-driven follow-up with explicit parent/topic.
+4. On finish, service transitions session to `completing`; the idempotent report job creates one immutable report, then transitions once to `completed`.
 
 **Alternative sequences:** stale session/version → 409 with current state; duplicate answer → return original result; report job failure → retry free as BR-08.  
 **Postconditions:** question order, answer and evidence are reproducible; report is never generated twice.

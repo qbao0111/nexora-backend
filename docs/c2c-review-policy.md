@@ -34,6 +34,27 @@ Keep these concepts separate:
 
 Codex owns deterministic and mechanical failures before asking ChatGPT for semantic review: compilation, tests, formatting, EF verification, vulnerability scans, CI syntax and repository hygiene. Escalate only when the failure exposes a genuine contract or architectural decision.
 
+## Bounded handoff and recovery
+
+- `STATE: EXECUTED` is a durable checkpoint for the current task and implementation iteration. Once sent, do not re-execute the implementation because ChatGPT is pending, the browser is generating, or a review wait timed out.
+- A semantic review has a finite budget and must end with `accepted`, `changes_required`, or `REVIEW_DEFERRED` plus an explicit reason. `CHATGPT_RESPONSE: TIMEOUT`/`REVIEW_DEFERRED` is a control-plane result, not an implementation failure or a new iteration.
+- Codex relies on protocol state and the persisted C2C checkpoint, never on a UI spinner such as “Reviewing Workspace Changes”, to decide whether a turn has ended. Keep the checkpoint intact after a bounded timeout and return control so the same task can resume.
+- A late ChatGPT verdict remains attached to the same task/checkpoint when applicable. Do not create a duplicate task or `STATE: EXECUTED`, and do not increment the implementation iteration unless repository content changes in response to a concrete finding.
+- On timeout recovery, re-read `workspace_info`, `git_status`, execution summary/test evidence and exact `HEAD`/diff identity. If they are unchanged, continue at review/commit/remote validation; do not rerun implementation or unaffected gates.
+- Reuse exact checkpoint evidence while the source diff and gate inputs are unchanged. Rerun only checks invalidated by a subsequent change or required by repository policy.
+
+## Connector health and failover
+
+- `workspace_info` is the first connector health check. Confirm it names `NexoraBackend` before reading files or asking ChatGPT to review.
+- Prefer the healthy workspace connector `Codex with ChatGPT · NexoraBackend`. If a connector returns an account/authentication/connectivity 4xx (for example, `NexoraBackend-Laptop` cannot connect the account), retry that connector at most once when a transient cause is plausible, then fail over to another configured connector only after confirming it resolves to the same workspace.
+- Never loop on a failing connector, silently switch to another workspace, expose credentials, or create a duplicate C2C task. Record the result and preserve the existing checkpoint.
+
+## Execution progress watchdog
+
+- Every implementation or corrective phase must have observable bounded progress: a workspace mutation, a completed tool/action, command or test output, or an explicit persisted checkpoint/state transition. A UI label such as "Implementing..." is not evidence of progress.
+- If a phase produces no observable progress for a bounded inactivity window, classify it as `EXECUTION_STALLED`. This is a control-plane state, not an implementation failure or a new iteration. Preserve the dirty workspace and current task/checkpoint, return control, and recover by reconciling `workspace_info`, `git_status`, the `HEAD` diff and execution evidence.
+- Individual long-running commands also require bounded timeout handling with the command identity and status recorded. Never wait on hidden reasoning or UI activity as proof that work continues, and never replay already-applied edits after a stall.
+
 The repository profile allows at most six genuine implementation/corrective iterations per task (`.c2c.json`). Fail closed for semantic corrections that exhaust the budget; never bypass review by relabelling an evidence refresh.
 
 Before local or remote semantic review, run the same applicable deterministic gates used by Backend CI, including the changed-file formatter. After hosted CI is green, gather one compact exact-head evidence record and request the final remote review. Do not repeat a semantic review for unchanged code merely because evidence was refreshed.

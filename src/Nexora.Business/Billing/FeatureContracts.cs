@@ -8,13 +8,14 @@ public static class FeatureValues
     public const string StarBuilder = "star_builder";
     public const string AdvancedReport = "advanced_report";
     public const string ProgressAnalytics = "progress_analytics";
+    public const string InterviewQuestionLimit = "interview_question_limit";
 
     public const string Reserve = "reserve";
     public const string Consume = "consume";
     public const string Void = "void";
     public const string Adjustment = "adjustment";
 
-    public static readonly string[] All = [CvAnalysis, Interview, Scenario, StarBuilder, AdvancedReport, ProgressAnalytics];
+    public static readonly string[] All = [CvAnalysis, Interview, InterviewQuestionLimit, Scenario, StarBuilder, AdvancedReport, ProgressAnalytics];
 }
 
 public sealed record FeatureDefinitionView(

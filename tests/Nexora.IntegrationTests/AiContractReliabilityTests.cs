@@ -81,7 +81,7 @@ public sealed class AiContractReliabilityTests
     }
 
     [Fact]
-    public async Task FollowupFailureDoesNotDiscardValidAnswerFallbackGenerated()
+    public async Task FreePrimaryAnswerDoesNotGenerateAdaptiveFollowup()
     {
         var aiProvider = new TestAiProvider();
         // Valid answer evaluation
@@ -95,10 +95,6 @@ public sealed class AiContractReliabilityTests
             "Good job.",
             new StarEvaluation(false, null, null, null, null, null, [], [], []),
             AiOperations.ScoreScale));
-
-        // Followup generation throws AI provider unavailable
-        aiProvider.EnqueueResponse("interview.followup",
-            new AiProviderException(AiProviderFailureKind.Unavailable, "Gemini follow-up timeout simulated"));
 
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
@@ -131,11 +127,14 @@ public sealed class AiContractReliabilityTests
 
         // Answer is present
         Assert.True(data.TryGetProperty("answer", out _));
-        // Next question is generated via fallback
+        // The next free question is the next canonical primary, not an adaptive follow-up.
         Assert.True(data.TryGetProperty("nextQuestion", out var nextQuestionElement));
         var nextQuestionContent = nextQuestionElement.GetProperty("content").GetString();
         Assert.False(string.IsNullOrWhiteSpace(nextQuestionContent));
         Assert.True(nextQuestionContent!.Length <= 2_000);
+        Assert.Equal(InterviewQuestionValues.Primary, nextQuestionElement.GetProperty("kind").GetString());
+        Assert.Equal(InterviewQuestionValues.BehavioralStar, nextQuestionElement.GetProperty("topic").GetString());
+        Assert.Equal(0, aiProvider.GetCallCount(AiPurposes.InterviewFollowup));
 
         // Verify in DB that answer was persisted
         using var scope = factory.Services.CreateScope();
@@ -145,55 +144,56 @@ public sealed class AiContractReliabilityTests
     }
 
     [Fact]
-    public async Task OverlongFollowupRepairsOnceThenUsesFallbackWithoutDiscardingAnswer()
+    public async Task OverlongPaidContinuationQuestionRepairsOnceThenFailsWithoutPersistingQuestion() =>
+        await PaidContinuationOverlongQuestionFailsAfterTwoAttemptsAsync();
+
+    private static async Task PaidContinuationOverlongQuestionFailsAfterTwoAttemptsAsync()
     {
         var aiProvider = new TestAiProvider();
-        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, new AnswerEvaluation(
-            [
-                new RubricScore("correctness", 80, "Grounded evidence."),
-                new RubricScore("structure", 80, "Grounded evidence."),
-                new RubricScore("completeness", 80, "Grounded evidence."),
-                new RubricScore("clarity", 80, "Grounded evidence.")
-            ],
-            "Grounded feedback.",
-            new StarEvaluation(false, null, null, null, null, null, [], [], []),
-            AiOperations.ScoreScale));
         var overlong = new GeneratedQuestion(new string('x', 2_001));
-        aiProvider.EnqueueResponse(AiPurposes.InterviewFollowup, overlong);
-        aiProvider.EnqueueResponse(AiPurposes.InterviewFollowup, overlong);
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
         var account = await RegisterAsync(client);
-        await SeedEntitlementAsync(factory, account.UserId, 5);
+        await SeedEntitlementAsync(factory, account.UserId, 5, questionLimit: 6);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
         var interviewId = await StartInterviewAsync(client, "technical", "overlong-followup");
         await ProcessJobsAsync(factory);
+
         var interview = await GetInterviewAsync(client, interviewId);
-        var questionId = interview.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        var q1 = interview.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        var q2 = (await SubmitAnswerAsync(client, interviewId, q1, "First answer.", "overlong-answer-one"))
+            .GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        var q3 = (await SubmitAnswerAsync(client, interviewId, q2, "Second answer.", "overlong-answer-two"))
+            .GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        var q3Result = await SubmitAnswerAsync(client, interviewId, q3, "Third answer.", "overlong-answer-three");
+        Assert.Equal(JsonValueKind.Null, q3Result.GetProperty("nextQuestion").ValueKind);
 
-        using var answerRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/answers")
-        {
-            Content = JsonContent.Create(new
-            {
-                questionId,
-                content = "Dependency injection supplies dependencies from outside the class.",
-                durationSeconds = 45
-            })
-        };
-        answerRequest.Headers.Add("Idempotency-Key", "overlong-followup-answer");
-        using var answerResponse = await client.SendAsync(answerRequest);
-
-        Assert.Equal(HttpStatusCode.OK, answerResponse.StatusCode);
-        var data = await DataAsync(answerResponse);
-        var fallback = data.GetProperty("nextQuestion").GetProperty("content").GetString();
-        Assert.False(string.IsNullOrWhiteSpace(fallback));
-        Assert.True(fallback!.Length <= 2_000);
-        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewFollowup));
+        var firstQuestionCallsBeforeContinuation = aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion);
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion, overlong);
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion, overlong);
+        using var continueRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/continue");
+        continueRequest.Headers.Add("Idempotency-Key", "overlong-continuation");
+        using var continueResponse = await client.SendAsync(continueRequest);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, continueResponse.StatusCode);
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion) - firstQuestionCallsBeforeContinuation);
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
-        Assert.Equal(2, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(3, await db.InterviewAnswers.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(3, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+    }
+
+    private static async Task<JsonElement> SubmitAnswerAsync(
+        HttpClient client, Guid interviewId, Guid questionId, string content, string key)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/answers")
+        {
+            Content = JsonContent.Create(new { questionId, content, durationSeconds = 45 })
+        };
+        request.Headers.Add("Idempotency-Key", key);
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return await DataAsync(response);
     }
 
     [Fact]
@@ -354,7 +354,106 @@ public sealed class AiContractReliabilityTests
     }
 
     [Fact]
-    public async Task RegressionFixturesFollowUpAwareEvaluationPreservesAllDetectedStarComponents()
+    public async Task RegressionFixturesFollowUpAwareEvaluationPreservesAllDetectedStarComponents() =>
+        await CanonicalPrimariesAndExplicitFollowupPreserveAllDetectedStarComponentsAsync();
+
+    private static async Task CanonicalPrimariesAndExplicitFollowupPreserveAllDetectedStarComponentsAsync()
+    {
+        var aiProvider = new TestAiProvider();
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, EvaluationWithoutStar());
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, EvaluationWithStar(Star(85, 0, 85, 90, resultDetected: true)));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, EvaluationWithoutStar());
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, EvaluationWithStar(Star(90, 90, 95, 90, resultDetected: true)));
+
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 5);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "behavioral", "regression-test-star");
+        await ProcessJobsAsync(factory);
+
+        var active = await GetInterviewAsync(client, interviewId);
+        var q1 = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        var a1 = await SubmitAnswerAsync(client, interviewId, q1, "First primary answer.", "ans-1-regression");
+        Assert.False(a1.GetProperty("answer").GetProperty("evaluation").GetProperty("star").GetProperty("applicable").GetBoolean());
+
+        var q2 = a1.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        var a2 = await SubmitAnswerAsync(client, interviewId, q2, "STAR story with action and result.", "ans-2-regression");
+        var a2Star = a2.GetProperty("answer").GetProperty("evaluation").GetProperty("star");
+        Assert.True(a2Star.GetProperty("action").GetProperty("detected").GetBoolean());
+        Assert.True(a2Star.GetProperty("result").GetProperty("detected").GetBoolean());
+        Assert.False(a2Star.GetProperty("task").GetProperty("detected").GetBoolean());
+
+        var q3 = a2.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        await SubmitAnswerAsync(client, interviewId, q3, "Third primary answer.", "ans-3-regression");
+
+        Guid q4;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var followup = new InterviewQuestion
+            {
+                Id = Guid.NewGuid(),
+                InterviewSessionId = interviewId,
+                Sequence = 4,
+                Kind = InterviewQuestionValues.Followup,
+                Topic = InterviewQuestionValues.BehavioralStar,
+                ParentQuestionId = q2,
+                Content = "Explicit STAR follow-up.",
+                PromptVersion = "test-prompt",
+                ModelVersion = "test-model",
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+            q4 = followup.Id;
+            db.InterviewQuestions.Add(followup);
+            await db.SaveChangesAsync();
+        }
+
+        var a4 = await SubmitAnswerAsync(client, interviewId, q4, "Follow-up adds the missing task and action details.", "ans-4-regression");
+        var a4Star = a4.GetProperty("answer").GetProperty("evaluation").GetProperty("star");
+        Assert.True(a4Star.GetProperty("situation").GetProperty("detected").GetBoolean());
+        Assert.True(a4Star.GetProperty("task").GetProperty("detected").GetBoolean());
+        Assert.True(a4Star.GetProperty("action").GetProperty("detected").GetBoolean());
+        Assert.True(a4Star.GetProperty("result").GetProperty("detected").GetBoolean());
+        Assert.Empty(a4Star.GetProperty("missingElements").EnumerateArray());
+    }
+
+    private static AnswerEvaluation EvaluationWithoutStar() => new(
+        [
+            new RubricScore("correctness", 80, "Grounded correctness evidence."),
+            new RubricScore("structure", 80, "Grounded structure evidence."),
+            new RubricScore("completeness", 80, "Grounded completeness evidence."),
+            new RubricScore("clarity", 80, "Grounded clarity evidence.")
+        ],
+        "Grounded feedback.",
+        new StarEvaluation(false, null, null, null, null, null, [], [], []),
+        AiOperations.ScoreScale);
+
+    private static AnswerEvaluation EvaluationWithStar(StarEvaluation star) => new(
+        [
+            new RubricScore("correctness", 90, "Grounded correctness evidence."),
+            new RubricScore("structure", 85, "Grounded structure evidence."),
+            new RubricScore("completeness", 80, "Grounded completeness evidence."),
+            new RubricScore("clarity", 85, "Grounded clarity evidence.")
+        ],
+        "Grounded feedback.", star, AiOperations.ScoreScale);
+
+    private static StarEvaluation Star(int situation, int task, int action, int result, bool resultDetected) => new(
+        true,
+        null,
+        new StarComponentEvaluation(situation, true, "Situation evidence.", "Situation feedback."),
+        task > 0
+            ? new StarComponentEvaluation(task, true, "Task evidence.", "Task feedback.")
+            : new StarComponentEvaluation(0, false, string.Empty, "Task feedback."),
+        new StarComponentEvaluation(action, true, "Action evidence.", "Action feedback."),
+        resultDetected
+            ? new StarComponentEvaluation(result, true, "Result evidence.", "Result feedback.")
+            : new StarComponentEvaluation(0, false, string.Empty, "Result feedback."),
+        task > 0 ? [] : ["task"], [], [], AiOperations.ScoreScale);
+
+    private static async Task LegacyRegressionFixturesFollowUpAwareEvaluationAsync()
     {
         var aiProvider = new TestAiProvider();
 
@@ -471,7 +570,7 @@ public sealed class AiContractReliabilityTests
         await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(CancellationToken.None);
     }
 
-    private static async Task SeedEntitlementAsync(NexoraApiFactory factory, Guid userId, int quota)
+    private static async Task SeedEntitlementAsync(NexoraApiFactory factory, Guid userId, int quota, int? questionLimit = null)
     {
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
@@ -511,6 +610,22 @@ public sealed class AiContractReliabilityTests
             ConcurrencyToken = Guid.NewGuid()
         };
         db.AddRange(plan, price, order, subscription, entitlement);
+        if (questionLimit is not null)
+        {
+            var definition = await db.FeatureDefinitions.SingleAsync(item => item.Code == FeatureValues.InterviewQuestionLimit);
+            db.EntitlementFeatures.Add(new EntitlementFeature
+            {
+                Id = Guid.NewGuid(),
+                EntitlementId = entitlement.Id,
+                FeatureDefinitionId = definition.Id,
+                FeatureCode = definition.Code,
+                IsEnabled = true,
+                Limit = questionLimit,
+                CreatedAt = now,
+                UpdatedAt = now,
+                ConcurrencyToken = Guid.NewGuid()
+            });
+        }
         await db.SaveChangesAsync();
     }
 

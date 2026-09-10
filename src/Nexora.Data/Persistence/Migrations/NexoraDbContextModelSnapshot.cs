@@ -435,6 +435,17 @@ namespace Nexora.Data.Persistence.Migrations
                             Name = "Phân tích tiến độ",
                             SortOrder = 5,
                             UpdatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("20000000-0000-0000-0000-000000000007"),
+                            Code = "interview_question_limit",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Số câu hỏi tối đa trong mỗi phiên phỏng vấn",
+                            IsActive = true,
+                            Name = "Giới hạn câu hỏi phỏng vấn",
+                            SortOrder = 6,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         });
                 });
 
@@ -1048,6 +1059,46 @@ namespace Nexora.Data.Persistence.Migrations
                             CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             FeatureDefinitionId = new Guid("20000000-0000-0000-0000-000000000006"),
                             IsEnabled = true,
+                            PlanPriceId = new Guid("10000000-0000-0000-0000-000000000004"),
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("30000000-0000-0000-0000-000000000018"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            FeatureDefinitionId = new Guid("20000000-0000-0000-0000-000000000007"),
+                            IsEnabled = true,
+                            Limit = 3,
+                            PlanPriceId = new Guid("10000000-0000-0000-0000-000000000001"),
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("30000000-0000-0000-0000-000000000019"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            FeatureDefinitionId = new Guid("20000000-0000-0000-0000-000000000007"),
+                            IsEnabled = true,
+                            Limit = 6,
+                            PlanPriceId = new Guid("10000000-0000-0000-0000-000000000002"),
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("30000000-0000-0000-0000-000000000020"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            FeatureDefinitionId = new Guid("20000000-0000-0000-0000-000000000007"),
+                            IsEnabled = true,
+                            Limit = 8,
+                            PlanPriceId = new Guid("10000000-0000-0000-0000-000000000003"),
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("30000000-0000-0000-0000-000000000021"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            FeatureDefinitionId = new Guid("20000000-0000-0000-0000-000000000007"),
+                            IsEnabled = true,
+                            Limit = 10,
                             PlanPriceId = new Guid("10000000-0000-0000-0000-000000000004"),
                             UpdatedAt = new DateTimeOffset(new DateTime(2026, 8, 25, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         });

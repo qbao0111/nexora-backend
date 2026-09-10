@@ -115,7 +115,8 @@ All administrative operations require administrative privileges. Mutation endpoi
       { "featureCode": "scenario", "enabled": true, "limit": 10 },
       { "featureCode": "star_builder", "enabled": true, "limit": null },
       { "featureCode": "advanced_report", "enabled": true, "limit": null },
-      { "featureCode": "progress_analytics", "enabled": true, "limit": null }
+      { "featureCode": "progress_analytics", "enabled": true, "limit": null },
+      { "featureCode": "interview_question_limit", "enabled": true, "limit": 6 }
     ]
   }
   ```
@@ -125,6 +126,13 @@ All administrative operations require administrative privileges. Mutation endpoi
   - `enabled: true, limit: null`: Feature unlimited.
   - Generic updates targeting `interview` are rejected (`INTERVIEW_FEATURE_IMMUTABLE`); interview quota is set on the plan price.
 - **Snapshot invariant:** Modifying plan price features updates future checkouts and grants; existing active user entitlements retain their purchase snapshot.
+
+`interview_question_limit` controls the maximum number of persisted questions
+within one interview session (Free defaults to 3; paid limits are policy data,
+not controller literals). It is separate from the `interview` session quota:
+continuing an already-reserved session does not reserve or consume another
+session. Updating the feature matrix affects future entitlement snapshots; an
+existing entitlement keeps the limit captured when it was granted.
 
 ### 1.7 List Feature Definitions
 `GET /api/v1/admin/feature-definitions`
