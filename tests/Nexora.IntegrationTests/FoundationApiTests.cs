@@ -127,5 +127,6 @@ public sealed class FoundationApiTests : IClassFixture<NexoraApiFactory>
         Assert.Contains(migrations, migration => migration.EndsWith("_InterviewQuestionContractV1", StringComparison.Ordinal));
         Assert.Contains("20260910162014_B9CareerGoal", migrations);
         Assert.DoesNotContain("20260910072100_B9CareerGoal", migrations);
+        Assert.Contains("20260910192103_B11LearningPath", migrations);
     }
 }

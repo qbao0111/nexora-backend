@@ -931,10 +931,10 @@ resume improvement
 external learning item (optional text/link)
 ```
 
-- [ ] Generate từ gaps hiện tại.
-- [ ] Recalculate/adapt sau practice mới.
-- [ ] Không regenerate toàn path sau mỗi event nếu không cần.
-- [ ] Preserve completed activities.
+- [x] Generate từ gaps hiện tại.
+- [x] Recalculate/adapt sau practice mới.
+- [x] Không regenerate toàn path sau mỗi event nếu không cần.
+- [x] Preserve completed activities.
 
 ## B12. Next Practice Recommendation [P1]
 
