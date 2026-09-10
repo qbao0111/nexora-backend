@@ -276,7 +276,8 @@ public sealed partial class PrivacyService(
     private static InterviewView MapInterview(Nexora.Data.Practice.InterviewSession item) => new(
         item.Id, item.Status, item.Role, item.Seniority, item.InterviewType, item.Difficulty, item.Version,
         item.Questions.OrderBy(question => question.Sequence).Select(question => new QuestionView(
-            question.Id, question.Sequence, question.Content, question.CreatedAt)).ToArray(),
+            question.Id, question.Sequence, question.Kind, question.Topic, question.ParentQuestionId,
+            question.Content, question.CreatedAt)).ToArray(),
         item.Answers.OrderBy(answer => answer.CreatedAt).Select(answer => new AnswerView(
             answer.Id, answer.QuestionId, answer.Content, answer.DurationSeconds, Parse(answer.Evaluation), answer.CreatedAt)).ToArray(),
         item.CreatedAt, item.UpdatedAt);

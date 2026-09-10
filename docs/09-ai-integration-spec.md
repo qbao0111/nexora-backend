@@ -144,15 +144,15 @@ StartInterview retries must not duplicate session, question, usage event or job 
     - If absent: `detected = false`, `evidence = ""`, `score = 0`.
     - Invariant: `detected = false` with `score > 0` or `detected = true` with empty evidence is strictly rejected by `StarComponentValidator`.
   - **Server-Authoritative Calculation**: Server recomputes `overallScore` using canonical weights (Situation 20%, Task 20%, Action 35%, Result 25%) and determines `missingElements` (`!detected || score < 60`).
-- **Follow-up Aware Evaluation Context**:
-  - `ResumeContextBuilder` supplies `question-sequence`, `is-follow-up`, and `followup-target-elements` derived from previous missing elements.
-  - When `is-follow-up: true`, the evaluator evaluates all present components while giving special attention to how targeted missing elements from prior answers are addressed.
+  - **Follow-up Aware Evaluation Context**:
+  - `ResumeContextBuilder` supplies `question-sequence`, `is-follow-up`, `question-topic`, and `followup-target-elements` derived from persisted question lineage and previous missing elements.
+  - `is-follow-up` is server-derived from `InterviewQuestion.kind`; `sequence > 1` never establishes follow-up semantics. When `is-follow-up: true`, the evaluator evaluates all present components while giving special attention to how targeted missing elements from the parent answer are addressed.
 - **Follow-up Failure Isolation**:
   - Follow-up question generation failure must **never** fail or discard an already-evaluated candidate answer.
   - When follow-up question generation fails (AI rate-limit, invalid JSON, provider timeout), `PracticeService` falls back to a deterministic, Nexora-owned follow-up question (<= 2,000 chars) and persists the evaluation successfully.
-- **Report STAR story summary**:
+  - **Report STAR story summary**:
   - Realtime answer evaluation remains independent per answer for immediate coaching. `report.starSummary` is a deterministic story-level view built from the persisted evaluations; it does not trigger another AI operation.
-  - Under the current interview flow, question sequence 1 and every follow-up (sequence > 1) form one behavioral story chain. The report loads question sequence metadata with the session answers and does not require a `ParentQuestionId` or schema migration.
+  - Questions are grouped by the explicit `ParentQuestionId` chain. Independent primary questions form independent story roots; sequence ordering never merges them. The report resolves each answer to its root and selects the deterministic story with the most applicable evaluations (ties use the lowest root sequence), preserving the existing public summary shape.
   - For each Situation/Task/Action/Result component, only valid `detected = true` evaluations with nonblank evidence contribute. The merged component keeps the highest grounded score across the chain; if none is available it is `score = 0`, `detected = false`. A follow-up can strengthen a component but cannot lower unrelated primary-story evidence.
   - `componentAverages` keeps its existing API name but contains the four merged story component scores. `applicableAnswers` remains the count of valid applicable answer evaluations contributing to the summary (not the number of independent stories). The story `averageScore` is recomputed server-side with the canonical 20/20/35/25 STAR weights; persisted per-answer `overallScore` values are not averaged.
   - `recurringIssues` is recomputed from the merged components (`detected = false` or `score < 60`); raw per-answer `missingElements` are never unioned, so a follow-up can resolve an earlier missing component. Coaching priorities use feedback attached to the selected merged/weak component evidence, in deterministic weakness order, distinct and capped at three; historical `coachingTips` are not concatenated.

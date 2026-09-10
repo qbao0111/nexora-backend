@@ -193,6 +193,31 @@ Idempotency-Key: 4e8b...
 
 Response có answer đã lưu và question tiếp theo hoặc `isComplete: true`. Một question chỉ nhận một answer chính thức trừ khi endpoint revision được định nghĩa riêng.
 
+Mỗi phần tử trong `interview.questions` là server-owned và có thêm metadata lineage:
+
+```json
+{
+  "id": "01J...",
+  "sequence": 1,
+  "kind": "primary",
+  "topic": "self_introduction",
+  "parentQuestionId": null,
+  "content": "...",
+  "createdAt": "2026-09-10T00:00:00Z"
+}
+```
+
+`kind` chỉ nhận `primary` hoặc `followup`; `topic` là semantic focus và
+`parentQuestionId` bắt buộc đối với follow-up, trỏ tới một câu hỏi trước trong
+cùng session. `sequence` chỉ dùng để sắp xếp, không được dùng để suy ra
+follow-up. Contract v1 dành các topic primary miễn phí theo thứ tự
+`self_introduction`, `behavioral_star`, `motivation_role_fit`; việc mở rộng
+flow Q1–Q3/paywall thuộc A7. Trong flow bounded hiện tại, service đánh giá
+primary đầu tiên rồi thử tạo một follow-up; nếu provider generation thất bại,
+fallback deterministic hiện có vẫn được dùng. Điều kiện paywall hoặc quyết
+định tạo follow-up theo evaluation sẽ thuộc A7. Follow-up kế thừa topic của
+parent.
+
 `answer.evaluation` giữ các field generic hiện có và có thêm `star` để frontend render STAR coaching khi phù hợp:
 
 ```json

@@ -8,6 +8,7 @@
 ```text
 ApplicationUser 1--N Resume 1--N ResumeAnalysis
 ApplicationUser 1--N InterviewSession 1--N InterviewQuestion 1--1 InterviewAnswer
+InterviewQuestion 1--N InterviewQuestion (ParentQuestion -> FollowUps)
 InterviewSession 1--1 InterviewReport
 ApplicationUser 1--N StarDraft / ScenarioAttempt
 ApplicationUser 1--N Order 1--N PaymentEvent
@@ -28,7 +29,7 @@ ApplicationUser 1--N Subscription 1--N Entitlement 1--N UsageEvent
 | `resumes`, `stored_files` | CV file + extracted text | `storage_key` private; checksum, MIME, scan/extract state. |
 | `upload_intents` | Durable browser-upload capability state | owner-scoped token hash, private storage key, expected/actual size, expiry, checksum and finalized timestamp; unique token/storage-key constraints. |
 | `job_descriptions`, `resume_analyses` | JD và output analysis | input snapshot/model/prompt version. |
-| `interview_sessions`, `interview_questions`, `interview_answers`, `interview_reports` | Practice loop | answer unique per official question, session state machine. |
+| `interview_sessions`, `interview_questions`, `interview_answers`, `interview_reports` | Practice loop | answer unique per official question, session state machine. `kind` is `primary` or `followup`; `topic` is explicit and `parent_question_id` links a follow-up to its parent. |
 | `star_drafts`, `scenario_attempts` | Practice support | owner ID, version/status. |
 | `idempotency_keys`, `outbox_events`, `audit_logs` | Reliability/operations | expiry/retention job. |
 | `data_privacy_requests` | Audit/retry state cho export/delete workflow | unique `(user_id, idempotency_key)`; không FK cascade để audit còn lại sau anonymization. |
@@ -53,6 +54,19 @@ active -> abandoned
 ```
 
 Only `active` permits an official answer. Completion occurs exactly once and report generation is idempotent. `completed`, `failed`, `abandoned` are immutable terminal states except explicit audited administrative/recovery processes. State transition has optimistic concurrency/version to prevent duplicate answer, completion or report.
+
+### Interview question contract v1
+
+`interview_questions.sequence` is ordering metadata only. `kind` is the
+server-owned semantic discriminator: `primary` questions have no parent,
+while `followup` questions require `parent_question_id` pointing to an earlier
+question in the same session. A follow-up keeps the parent's `topic`; malformed
+kind, topic or parent relationships are rejected before mapping or evaluation.
+
+The reserved free primary topics are ordered as `self_introduction`,
+`behavioral_star`, then `motivation_role_fit`. Generating the complete Q1–Q3
+free flow and paid continuation is A7; A6 only establishes the durable
+contract and lineage needed by that work.
 
 ### Usage event shape
 

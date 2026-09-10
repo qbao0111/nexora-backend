@@ -124,11 +124,16 @@ public sealed class InterviewQuestion
     public Guid Id { get; set; }
     public Guid InterviewSessionId { get; set; }
     public int Sequence { get; set; }
+    public string Kind { get; set; } = string.Empty;
+    public string Topic { get; set; } = string.Empty;
+    public Guid? ParentQuestionId { get; set; }
     public string Content { get; set; } = string.Empty;
     public string PromptVersion { get; set; } = string.Empty;
     public string ModelVersion { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
     public InterviewSession InterviewSession { get; set; } = null!;
+    public InterviewQuestion? ParentQuestion { get; set; }
+    public ICollection<InterviewQuestion> FollowUps { get; } = [];
     public InterviewAnswer? Answer { get; set; }
 }
 

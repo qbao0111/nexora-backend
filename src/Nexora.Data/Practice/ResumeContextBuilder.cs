@@ -58,7 +58,8 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
         ResumeProfile? profile,
         int questionSequence = 1,
         bool isFollowUp = false,
-        IReadOnlyCollection<string>? followupTargetElements = null)
+        IReadOnlyCollection<string>? followupTargetElements = null,
+        string? questionTopic = null)
     {
         // Section priority:
         // 1. Metadata
@@ -72,6 +73,7 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
         Append(builder, "interview-type", interviewType, 80);
         Append(builder, "question-sequence", questionSequence.ToString(System.Globalization.CultureInfo.InvariantCulture), 40);
         Append(builder, "is-follow-up", isFollowUp ? "true" : "false", 40);
+        Append(builder, "question-topic", questionTopic, 80);
         if (isFollowUp && followupTargetElements is not null && followupTargetElements.Count > 0)
         {
             Append(builder, "followup-target-elements", string.Join("; ", followupTargetElements), 400);
