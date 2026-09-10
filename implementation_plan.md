@@ -904,9 +904,9 @@ Behavioral
 - Result
 ```
 
-- [ ] Score có source/evidence count.
-- [ ] Không update competency nếu chưa đủ signal.
-- [ ] Có timestamp/latest evidence.
+- [x] Score có source/evidence count.
+- [x] Không update competency nếu chưa đủ signal.
+- [x] Có timestamp/latest evidence.
 
 ## B11. Learning Path [P1]
 

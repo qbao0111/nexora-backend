@@ -93,6 +93,12 @@ Career Goals are user-owned target context shared by future skill, learning and 
 
 `PATCH /api/v1/career-goals/{id}` supports `targetRole`, `seniority`, `industry`, `targetCompany`, `targetJobDescriptionId`, `targetDate` and `active`. Omit a property to leave it unchanged; send `null` for nullable `industry`, `targetCompany`, `targetJobDescriptionId` or `targetDate` to clear it. A referenced Job Description must belong to the same user. The API returns only owner-scoped goals and uses the standard `{ "data": ... }`/`{ "error": ... }` envelopes.
 
+## Skill Profile
+
+Call `GET /api/v1/skill-profile` with the user's Bearer token after practice evidence is available. The response is a computed read model with `data.competencies` and optional `data.weaknessSignals`; it is empty with `200` when there is no valid scored evidence. Each competency contains `code`, `name`, `category`, integer `score`, `evidenceCount`, `latestEvidenceAt` and deterministic `sources` summaries. Competencies are sorted by category then code.
+
+The profile uses validated CV breakdowns, final interview-report rubric (or answer fallback), detected STAR components and valid completed scenario evaluations. CV gaps/missing keywords are qualitative signals only. The API is owner-scoped and never returns raw CV text, interview/STAR/scenario answers or full AI payloads. B10 does not add persistence; refresh the endpoint when the underlying evidence changes.
+
 7. `POST /resume-analyses` (`201`, Bearer + idempotency key):
 
    ```json

@@ -46,6 +46,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | GET | `/career-goals` | Liệt kê Career Goal của owner, active goal đứng trước. |
 | GET | `/career-goals/:id` | Đọc một Career Goal của owner. |
 | PATCH | `/career-goals/:id` | Cập nhật Career Goal của owner; hỗ trợ đổi active goal. |
+| GET | `/skill-profile` | Skill Profile read model của owner, tổng hợp từ evidence hợp lệ. |
 | POST | `/interviews` | Tạo và bắt đầu phiên phỏng vấn. |
 | GET | `/interviews/:id` | Đọc session state/question hiện tại của owner. |
 | POST | `/interviews/:id/answers` | Lưu câu trả lời, đánh giá và mở câu hỏi tiếp theo theo policy server. |
@@ -111,6 +112,45 @@ Career Goal là resource riêng của user và không có delete/archive endpoin
 Goal mới luôn `active: true` và transaction sẽ chuyển goal active trước đó của cùng user thành inactive. Database cũng có partial unique index để chỉ cho phép một active goal trên mỗi user. Nếu `targetJobDescriptionId` được gửi, JD phải tồn tại và thuộc authenticated user; nếu không, API trả `404 JOB_DESCRIPTION_NOT_FOUND`.
 
 `GET /api/v1/career-goals` trả toàn bộ goal của owner, sắp xếp active trước rồi tới mới nhất. `PATCH /api/v1/career-goals/{id}` nhận các field editable: `targetRole`, `seniority`, `industry`, `targetCompany`, `targetJobDescriptionId`, `targetDate`, `active`. Field bị bỏ qua giữ nguyên; nullable field gửi `null` để clear; `active: true` áp dụng cùng invariant một-goal-active. Response thành công dùng envelope `{ "data": { ... } }` và gồm `id`, target fields, `active`, `createdAt`, `updatedAt`.
+
+### Skill Profile
+
+`GET /api/v1/skill-profile` là computed read model, không tạo bảng/entity hay migration mới. Endpoint yêu cầu Bearer authentication và chỉ đọc evidence thuộc authenticated user. Response thành công dùng envelope chuẩn:
+
+```json
+{
+  "data": {
+    "competencies": [
+      {
+        "code": "interview.clarity",
+        "name": "Clarity",
+        "category": "interview",
+        "score": 82,
+        "evidenceCount": 3,
+        "latestEvidenceAt": "2026-09-11T09:00:00+00:00",
+        "sources": [
+          {
+            "sourceType": "interview",
+            "evidenceCount": 3,
+            "latestEvidenceAt": "2026-09-11T09:00:00+00:00"
+          }
+        ]
+      }
+    ],
+    "weaknessSignals": [
+      {
+        "sourceType": "cv_analysis",
+        "label": "SQL",
+        "latestEvidenceAt": "2026-09-11T08:00:00+00:00"
+      }
+    ]
+  }
+}
+```
+
+Numeric competencies use only validated structured scores from completed owner-scoped `ResumeAnalysis` breakdowns, canonical final `InterviewReport` rubrics (with answer-rubric fallback when no valid report exists), applicable/detected STAR components, and completed valid `ScenarioAttempt` evaluations. Codes are deterministic: `resume.<dimension>`, `interview.<criterion>`, `behavioral.<component>` and `scenario.<normalized-competency>`; `resume.clarity` and `interview.clarity` remain separate. Scores are the equal-weight arithmetic mean per code with one final `Math.Round(..., MidpointRounding.AwayFromZero)` operation. `evidenceCount`, `latestEvidenceAt` and `sources` provide traceability.
+
+CV `Gaps` and `MissingKeywordsOrSkills` may appear as qualitative `weaknessSignals`, but never manufacture a numeric competency score. Invalid/malformed individual evidence is skipped; no valid scored evidence returns `200` with an empty `competencies` array. The response never exposes raw CV text, interview answers, STAR quotes, scenario answers or full AI output.
 
 ### Tạo interview
 
