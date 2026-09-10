@@ -47,6 +47,10 @@ The two result shapes are strict and provider-neutral. Job-targeted output conta
 
 `career_goals` stores `target_role` (max 160), `seniority` (max 40), nullable `industry` (max 120), nullable `target_company` (max 160), nullable `target_job_description_id`, nullable `target_date` as a SQL `date`, and required `active`. The foreign key to `job_descriptions` is restrictive; the service verifies that the referenced JD has the same owner. A PostgreSQL partial unique index on `user_id` where `active = true` backs the service-level row-lock transition and enforces one active goal per user.
 
+### Skill Profile read model
+
+`SkillProfile` is a computed, owner-scoped read model and is not a persisted entity/table. `GET /api/v1/skill-profile` projects and validates existing completed evidence from `resume_analyses`, `interview_reports`/`interview_answers`, `star_attempts` and `scenario_attempts`; B10 adds no `DbSet`, model snapshot change or migration. Numeric output is grouped by deterministic competency code and includes the equal-weight score, unique evidence count, latest evidence timestamp and source summaries. CV gaps/missing keywords remain qualitative weakness signals only. Raw CV, answer, STAR and scenario content is not returned.
+
 ### Interview session state machine
 
 ```text
