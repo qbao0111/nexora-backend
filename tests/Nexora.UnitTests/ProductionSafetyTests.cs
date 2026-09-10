@@ -20,6 +20,41 @@ public sealed class ProductionSafetyTests
     }
 
     [Fact]
+    public void ProductionRejectsR2WhenUploadIsEnabled()
+    {
+        Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
+            true, aiEnabled: false, paymentEnabled: false, uploadEnabled: true, storageProvider: "r2"));
+    }
+
+    [Fact]
+    public void ProductionAllowsR2WhenUploadIsDisabled()
+    {
+        ProductionSafety.ValidateDevelopmentAdapters(
+            true, aiEnabled: false, paymentEnabled: false, uploadEnabled: false, storageProvider: "r2");
+    }
+
+    [Fact]
+    public void ProductionRejectsLocalWhenUploadIsEnabled()
+    {
+        Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
+            true, aiEnabled: false, paymentEnabled: false, uploadEnabled: true, storageProvider: "local"));
+    }
+
+    [Fact]
+    public void DevelopmentAllowsLocalWhenUploadIsEnabled()
+    {
+        ProductionSafety.ValidateDevelopmentAdapters(
+            false, aiEnabled: false, paymentEnabled: false, uploadEnabled: true, storageProvider: "local");
+    }
+
+    [Fact]
+    public void UnknownStorageProviderFailsClosed()
+    {
+        Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
+            false, aiEnabled: false, paymentEnabled: false, uploadEnabled: false, storageProvider: "wat"));
+    }
+
+    [Fact]
     public void ValidateEmailConfigurationInDevelopmentOrTestingAllowsNoopAndHttp()
     {
         var config = CreateEmailConfig(provider: "noop", publicUrl: "http://localhost:3000");

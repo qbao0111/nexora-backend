@@ -35,7 +35,7 @@ Nexora.Worker         bounded background jobs only
 
 ## ADR-004 — Storage and document processing
 
-**Decision:** PostgreSQL chỉ lưu metadata và structured data. CV/avatar/audio production dùng private object storage qua signed URL ngắn hạn. `IStorageProvider` cho phép `LocalStorageProvider`/development adapter trước khi DEC-04 chọn production vendor; local filesystem không phù hợp production.
+**Decision:** PostgreSQL chỉ lưu metadata và structured data. CV/avatar/audio production dùng private object storage qua signed URL ngắn hạn. `IStorageProvider` chọn `LocalStorageProvider` cho development/testing hoặc `R2StorageProvider` cho private Cloudflare R2 objects; local filesystem không phù hợp production. A1 chỉ bổ sung provider/server-side operations; presigned upload intents thuộc A2, còn account/hosting enablement vẫn chịu DEC-04.
 
 **Consequences:** DB chỉ giữ `storage_key`, checksum, MIME, size, state; không lưu public `file_url`. File upload qua scan/validate pipeline rồi worker extract PDF/DOCX.
 
@@ -70,4 +70,4 @@ Các DEC này **không block backend/local development, Phases 0–3 hoặc inte
 | DEC-03 | Deferred — required before production enablement | Final CV/JD/transcript/recording/log retention periods; approved Terms/Privacy/AI/recording text | Affected production data processing/go-live |
 | DEC-04 | Deferred — required before production enablement | Production API/worker/database/object-storage hosting, domains, mail provider and infrastructure accounts | Affected production deployment |
 
-Temporary implementations are approved for engineering: configuration-driven `GeminiAiProvider` (default) and optional official `DeepSeekAiProvider` for local text-AI evaluation, `FakePaymentProvider`, and `LocalStorageProvider`/development storage. `GeminiDocumentOcrProvider` remains the document fallback for either text provider. A deterministic AI test double may exist only inside the test project. These implementations do not create a production vendor decision.
+Temporary implementations are approved for engineering: configuration-driven `GeminiAiProvider` (default) and optional official `DeepSeekAiProvider` for local text-AI evaluation, `FakePaymentProvider`, and `LocalStorageProvider` for development/testing. `R2StorageProvider` is the available private production-storage adapter, but the final R2 account/hosting enablement remains under DEC-04. `GeminiDocumentOcrProvider` remains the document fallback for either text provider. A deterministic AI test double may exist only inside the test project. These implementations do not create the remaining production vendor/account decisions.

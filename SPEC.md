@@ -171,7 +171,7 @@ adjustment (audited correction/credit; never history editing)
 
 ## 13. File/storage model
 
-Business/API code uses `IStorageProvider`. Before production selection, use `LocalStorageProvider` or another development adapter. Local filesystem storage is not production-suitable.
+Business/API code uses `IStorageProvider`. Development/testing uses `LocalStorageProvider`; production-like configuration uses `R2StorageProvider` with a private S3-compatible bucket. Local filesystem storage is not production-suitable, and A2 still owns presigned upload intents.
 
 Production requires private objects, authorization before upload/download access, short-lived signed URLs where supported, stored keys rather than public URLs, and size/extension/detected MIME/signature checks. Malware scanning is an optional defence when available, never a claimed guarantee. See [storage ADR](docs/07-architecture-decisions.md) and [security](docs/06-security-privacy.md).
 
