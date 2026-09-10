@@ -513,19 +513,19 @@ This log records completed implementation milestones and verification evidence. 
 - Verification: `dotnet restore`; `dotnet build --no-restore Nexora.slnx --nologo` (0 errors, 0 warnings); 265 unit tests and 133 integration tests passed; EF reports no pending model changes; vulnerable-package scan reports none; scoped `dotnet format --verify-no-changes` and `git diff --check` pass. Full solution format still reports 18 pre-existing issues outside this A1 scope.
 - Dependencies: A2 — production upload intents/presigned PUT/finalize flow; DEC-04 final production account/hosting enablement. No migration impact.
 
-## 2026-09-10 — A2 production R2 upload intent (local candidate)
+## 2026-09-10 — A2 production R2 upload intent (PR candidate)
 
-- Status: PR open; hosted CI and remote review pending
+- Status: PR open; hosted CI green; remote review pending
 - Owner: Backend workstream A
 - Branch: `feat/a2-production-upload`
 - Base: `3d21cff7e4665914f9cc169309b53a682f64e345` (`main`)
 - Ancestry evidence: after `git fetch origin`, `HEAD`, `origin/main` and `git merge-base HEAD origin/main` all resolve to `3d21cff7e4665914f9cc169309b53a682f64e345`.
-- Commit/PR: `f85a4695b948d13b43a4519ff2431f105bd92642` / `#45` (open)
+- Commit/PR: implementation `f85a4695b948d13b43a4519ff2431f105bd92642`; formatting corrective `634d08a91e6402c5e773d3216b94eea9610676cb` / `#45` (open)
 - Scope: Replaced the production in-memory upload-intent path with durable PostgreSQL intent state, short-lived private R2 signed PUT URLs and idempotent finalize validation. Local server-side upload remains the Development/Testing path; no Scenario/STAR, Interview or CV-analysis semantic changes were made.
 - Contracts/traceability: `IUploadIntentStore` owns durable token-hash state; R2 `POST /api/v1/uploads/presign` issues an independent random capability without a presign idempotency header, and `POST /api/v1/resumes` remains the replay-safe finalize boundary. `implementation_plan.md` A2/A3, ADR-004, `SPEC.md` and `docs/03-api-data-contract.md` are aligned.
 - Security decisions: token hashes only in the database; owner and expiry checks; private signed PUT without public ACL; actual R2 object metadata/bytes are revalidated for size, PDF/DOCX signature/container and checksum; provider errors/logs exclude credentials, signed URLs and file contents; worker rechecks stored-file size/checksum.
 - Files/modules: upload intent Business/Data contracts and migration, R2 upload provider/object client, shared document validator, DI/provider selection, production upload safety gate, resume concurrency/integrity and privacy deletion, focused unit/integration tests and related documentation.
-- Verification: Release solution build passes with 0 errors and 0 warnings; full suites pass with 280 unit tests and 143 integration tests. Focused R2 storage/presigner (19), R2 upload provider (8), durable-intent (3), R2 API flow (5), integrity and privacy-race regressions pass. `dotnet ef migrations has-pending-model-changes` reports no pending model changes; the vulnerable-package audit is clean; changed-file `dotnet format --verify-no-changes` and `git diff --check` pass. No live R2, AI, payment or production secrets are used.
+- Verification: Release solution build passes with 0 errors and 0 warnings; full suites pass with 280 unit tests and 143 integration tests. Focused R2 storage/presigner (19), R2 upload provider (8), durable-intent (3), R2 API flow (5), integrity and privacy-race regressions pass. `dotnet ef migrations has-pending-model-changes` reports no pending model changes; the vulnerable-package audit is clean; changed-file `dotnet format --verify-no-changes` and `git diff --check` pass. Hosted Backend CI run `34438975258` is green for exact head `634d08a91e6402c5e773d3216b94eea9610676cb`, including tracked-repository cleanliness. No live R2, AI, payment or production secrets are used.
 - Migration impact: added `20260910035047_ProductionUploadIntents`; no other schema changes.
 - Dependencies: A2 review/merge; A4 CV Analysis 2 modes follows after A2. DEC-04 final production account/hosting enablement remains deferred. No live R2, paid AI or production deployment was used.
 
