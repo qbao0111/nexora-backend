@@ -562,11 +562,11 @@ Tasks:
 
 ## A5. Free CV analysis quota [P0]
 
-- [ ] Free entitlement: 1 analysis/account.
-- [ ] User dùng lượt cho mode nào cũng được.
-- [ ] Failure trước usable result phải void/refund reservation theo semantics tương ứng.
-- [ ] Retry idempotent không trừ thêm lượt.
-- [ ] Paid limits configurable theo plan, không hard-code controller.
+- [x] Free entitlement: 1 shared analysis/account across both analysis modes.
+- [x] User dùng lượt cho mode nào cũng được; `job_targeted` và `field_benchmark` dùng cùng `cv_analysis` feature.
+- [x] Failure trước usable result phải void/refund reservation theo semantics tương ứng.
+- [x] Retry idempotent không trừ thêm lượt; concurrent requests không vượt quota.
+- [x] Paid limits configurable theo plan, không hard-code controller.
 
 ## A6. Interview Contract v1 production [P0]
 

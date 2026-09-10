@@ -155,6 +155,8 @@ The `201` response contains the queued job's `mode`, context snapshot, resume/JD
 
 The idempotency fingerprint includes the resume, mode and every context field. Equivalent replays return the same analysis/outbox/reservation; reusing a key with another mode or context returns `409 IDEMPOTENCY_CONFLICT`. Worker retries reuse the cached profile and never create a second analysis or quota charge.
 
+Email verification provisions exactly one account-level Free `cv_analysis` allowance with limit `1`. The allowance is shared by `job_targeted` and `field_benchmark`, so using one mode exhausts the other; a second genuine analysis is rejected with `403 FEATURE_QUOTA_EXCEEDED` before an analysis, reservation or outbox job is persisted. The normal ledger remains immutable: reserve before enqueue, consume only after a usable result is persisted, and void a reservation when processing fails before a usable result. Equivalent idempotent replays return the original analysis and do not reserve or consume again; paid limits continue to come from the server-owned plan/entitlement snapshot.
+
 Canonical StartInterview transactions:
 
 ```text

@@ -596,3 +596,17 @@ This log records completed implementation milestones and verification evidence. 
 - C2C evidence: `c2c_a4f1` iteration 3 execution summary/output was recorded for connector review; ChatGPT returned `STATE: LOCAL_ACCEPTED` after independently checking the workspace and current diff.
 - Remote gate: hosted Backend CI run `34456351413` passed for the verified exact head above; the PR was open, non-draft and mergeable at capture time. This log update is metadata-only; refresh exact-head evidence after it is pushed.
 - Dependencies: A4 comparison remains future work; A5 free quota remains unchecked. C2C remote review remains required before merge.
+
+## 2026-09-10 - A5 shared free CV analysis quota (implementation)
+
+- Status: Implementation complete; local semantic review accepted; commit/remote review pending
+- Owner: Backend workstream A
+- Branch: `feat/a5-free-cv-analysis-quota`
+- Base: `8bf2214add0f12bdb31c853376d287cf44b72e86` (`main` after C2C workflow optimization merge)
+- Commit/PR: pending at entry creation; exact remote values belong in the C2C execution record
+- Scope: Verified and hardened the existing account-level Free `cv_analysis` entitlement so `job_targeted` and `field_benchmark` share exactly one allowance. Reservations remain transactional and immutable; only a usable completed result consumes, pre-result worker failure voids, and idempotent or competing requests cannot add a second reservation/job.
+- Contracts/traceability: A5 in `implementation_plan.md`; shared allowance and `FEATURE_QUOTA_EXCEEDED` behavior in `docs/03-api-data-contract.md`; `IFeatureEntitlementService` remains the quota boundary.
+- Files/modules: `src/Nexora.Data/Billing/FeatureEntitlementService.cs`, `tests/Nexora.IntegrationTests/AuthApiTests.cs`, `tests/Nexora.IntegrationTests/ProductPlatformApiTests.cs`, `implementation_plan.md`, `docs/03-api-data-contract.md`, `project_log.md`.
+- Verification: Focused Free quota integration coverage passed (7 tests), including both mode orderings, pre-result failure void/refund, same-key replay, cross-mode distinct-key concurrency and paid-limit configuration. Full Release build passed with 0 warnings/errors; 296 unit and 156 integration tests passed; EF reports no pending model changes; the vulnerable-package audit is clean; changed-file `dotnet format --verify-no-changes` passed; `git -c core.whitespace=cr-at-eol diff --check` passed. C2C execution records for iterations 1 and 2 contain the exact gate summaries; iteration 2 is the local-review correction only.
+- Migration impact: none; existing entitlement, usage-event and idempotency schema reused.
+- Dependencies: A5 review/merge; A6 Interview Contract v1 follows from latest `main`. No frontend changes.

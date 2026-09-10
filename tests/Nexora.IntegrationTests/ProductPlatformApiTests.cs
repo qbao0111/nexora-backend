@@ -689,6 +689,292 @@ public sealed class ProductPlatformApiTests
         Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.ResumeAnalysis));
     }
 
+    [Theory]
+    [InlineData("job_targeted")]
+    [InlineData("field_benchmark")]
+    public async Task FreeCvAnalysisQuotaIsSharedAcrossModes(string firstMode)
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var fixture = await SeedReadyResumeAsync(factory, account.UserId);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        using (var firstRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(CreateAnalysisPayload(fixture, firstMode))
+        })
+        {
+            firstRequest.Headers.Add("Idempotency-Key", $"free-cv-first-{firstMode}");
+            using var response = await client.SendAsync(firstRequest);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        }
+
+        await ProcessJobsAsync(factory);
+
+        var secondMode = firstMode == ResumeAnalysisModes.JobTargeted
+            ? ResumeAnalysisModes.FieldBenchmark
+            : ResumeAnalysisModes.JobTargeted;
+        using (var secondRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(CreateAnalysisPayload(fixture, secondMode))
+        })
+        {
+            secondRequest.Headers.Add("Idempotency-Key", $"free-cv-second-{firstMode}");
+            using var response = await client.SendAsync(secondRequest);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("FEATURE_QUOTA_EXCEEDED", body.RootElement.GetProperty("error").GetProperty("code").GetString());
+        }
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var feature = await db.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(
+            item => item.Entitlement.UserId == account.UserId
+                && item.Entitlement.PlanCodeSnapshot == "free"
+                && item.FeatureCode == FeatureValues.CvAnalysis);
+        Assert.Equal(0, feature.Reserved);
+        Assert.Equal(1, feature.Consumed);
+        Assert.Equal(1, await db.ResumeAnalyses.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(1, await db.OutboxEvents.CountAsync(item => item.Type == "ResumeAnalysisRequested"));
+        Assert.Equal(1, await db.FeatureUsageEvents.CountAsync(item => item.UserId == account.UserId && item.FeatureCode == FeatureValues.CvAnalysis && item.Action == FeatureValues.Reserve));
+        Assert.Equal(1, await db.FeatureUsageEvents.CountAsync(item => item.UserId == account.UserId && item.FeatureCode == FeatureValues.CvAnalysis && item.Action == FeatureValues.Consume));
+    }
+
+    [Fact]
+    public async Task FreeCvAnalysisFailureVoidsAllowanceBeforeAnotherModeSucceeds()
+    {
+        var aiProvider = new TestAiProvider();
+        aiProvider.EnqueueResponse(AiPurposes.ResumeAnalysis, new TimeoutException("Deterministic first failure."));
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var fixture = await SeedReadyResumeAsync(factory, account.UserId);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        using (var firstRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(CreateAnalysisPayload(fixture, ResumeAnalysisModes.JobTargeted))
+        })
+        {
+            firstRequest.Headers.Add("Idempotency-Key", "free-cv-failure");
+            using var response = await client.SendAsync(firstRequest);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        }
+
+        await ProcessJobsAsync(factory);
+
+        await using (var failedScope = factory.Services.CreateAsyncScope())
+        {
+            var failedDb = failedScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var failedFeature = await failedDb.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(
+                item => item.Entitlement.UserId == account.UserId
+                    && item.Entitlement.PlanCodeSnapshot == "free"
+                    && item.FeatureCode == FeatureValues.CvAnalysis);
+            Assert.Equal(0, failedFeature.Reserved);
+            Assert.Equal(0, failedFeature.Consumed);
+            Assert.Equal(1, await failedDb.FeatureUsageEvents.CountAsync(item => item.UserId == account.UserId && item.FeatureCode == FeatureValues.CvAnalysis && item.Action == FeatureValues.Reserve));
+            Assert.Equal(1, await failedDb.FeatureUsageEvents.CountAsync(item => item.UserId == account.UserId && item.FeatureCode == FeatureValues.CvAnalysis && item.Action == FeatureValues.Void));
+            Assert.Equal(PracticeValues.Failed, (await failedDb.ResumeAnalyses.SingleAsync(item => item.UserId == account.UserId)).Status);
+        }
+
+        using (var retryRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(CreateAnalysisPayload(fixture, ResumeAnalysisModes.FieldBenchmark))
+        })
+        {
+            retryRequest.Headers.Add("Idempotency-Key", "free-cv-after-failure");
+            using var response = await client.SendAsync(retryRequest);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        }
+
+        await ProcessJobsAsync(factory);
+
+        await using var finalScope = factory.Services.CreateAsyncScope();
+        var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var finalFeature = await finalDb.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(
+            item => item.Entitlement.UserId == account.UserId
+                && item.Entitlement.PlanCodeSnapshot == "free"
+                && item.FeatureCode == FeatureValues.CvAnalysis);
+        Assert.Equal(0, finalFeature.Reserved);
+        Assert.Equal(1, finalFeature.Consumed);
+        Assert.Equal(2, await finalDb.ResumeAnalyses.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(1, await finalDb.FeatureUsageEvents.CountAsync(item => item.UserId == account.UserId && item.FeatureCode == FeatureValues.CvAnalysis && item.Action == FeatureValues.Consume));
+    }
+
+    [Fact]
+    public async Task FreeCvAnalysisSameKeyReplayDoesNotReserveTwice()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var fixture = await SeedReadyResumeAsync(factory, account.UserId);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var key = "free-cv-replay";
+        var payload = CreateAnalysisPayload(fixture, ResumeAnalysisModes.JobTargeted);
+
+        Guid firstId;
+        using (var firstRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(payload)
+        })
+        {
+            firstRequest.Headers.Add("Idempotency-Key", key);
+            using var response = await client.SendAsync(firstRequest);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            firstId = body.RootElement.GetProperty("data").GetProperty("id").GetGuid();
+        }
+
+        using (var replayRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(payload)
+        })
+        {
+            replayRequest.Headers.Add("Idempotency-Key", key);
+            using var response = await client.SendAsync(replayRequest);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal(firstId, body.RootElement.GetProperty("data").GetProperty("id").GetGuid());
+        }
+
+        await ProcessJobsAsync(factory);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(1, await db.ResumeAnalyses.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(1, await db.OutboxEvents.CountAsync(item => item.Type == "ResumeAnalysisRequested"));
+        Assert.Equal(1, await db.FeatureUsageEvents.CountAsync(item => item.UserId == account.UserId && item.FeatureCode == FeatureValues.CvAnalysis && item.Action == FeatureValues.Reserve));
+        Assert.Equal(1, await db.FeatureUsageEvents.CountAsync(item => item.UserId == account.UserId && item.FeatureCode == FeatureValues.CvAnalysis && item.Action == FeatureValues.Consume));
+    }
+
+    [Fact]
+    public async Task PaidCvAnalysisLimitUsesConfiguredPlanFeature()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+
+        Guid planPriceId;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var now = DateTimeOffset.UtcNow;
+            var plan = new Plan
+            {
+                Id = Guid.NewGuid(),
+                Code = $"paid-cv-{Guid.NewGuid():N}",
+                Name = "Paid CV test",
+                IsActive = true,
+                CreatedAt = now
+            };
+            var price = new PlanPrice
+            {
+                Id = Guid.NewGuid(),
+                PlanId = plan.Id,
+                AmountMinor = 150_000,
+                Currency = "VND",
+                DurationDays = 30,
+                InterviewQuota = 3,
+                IsActive = true,
+                CreatedAt = now
+            };
+            var cvAnalysis = await db.FeatureDefinitions.SingleAsync(item => item.Code == FeatureValues.CvAnalysis);
+            db.AddRange(plan, price);
+            db.PlanPriceFeatures.Add(new PlanPriceFeature
+            {
+                Id = Guid.NewGuid(),
+                PlanPriceId = price.Id,
+                FeatureDefinitionId = cvAnalysis.Id,
+                IsEnabled = true,
+                Limit = 2,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            await db.SaveChangesAsync();
+            planPriceId = price.Id;
+        }
+
+        var grant = await GrantPlanAsync(factory, account.UserId, planPriceId);
+        var fixture = await SeedReadyResumeAsync(factory, account.UserId);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        for (var index = 0; index < 2; index++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+            {
+                Content = JsonContent.Create(CreateAnalysisPayload(fixture, ResumeAnalysisModes.JobTargeted))
+            };
+            request.Headers.Add("Idempotency-Key", $"paid-cv-configured-{index}");
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            await ProcessJobsAsync(factory);
+        }
+
+        using (var rejected = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(CreateAnalysisPayload(fixture, ResumeAnalysisModes.FieldBenchmark))
+        })
+        {
+            rejected.Headers.Add("Idempotency-Key", "paid-cv-configured-rejected");
+            using var response = await client.SendAsync(rejected);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("FEATURE_QUOTA_EXCEEDED", body.RootElement.GetProperty("error").GetProperty("code").GetString());
+        }
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var feature = await verifyDb.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(
+            item => item.EntitlementId == grant.EntitlementId && item.FeatureCode == FeatureValues.CvAnalysis);
+        Assert.StartsWith("paid-cv-", feature.Entitlement.PlanCodeSnapshot);
+        Assert.Equal(2, feature.Limit);
+        Assert.Equal(0, feature.Reserved);
+        Assert.Equal(2, feature.Consumed);
+        Assert.Equal(2, await verifyDb.ResumeAnalyses.CountAsync(item => item.UserId == account.UserId));
+    }
+
+    [Fact]
+    public async Task FreeCvAnalysisConcurrentDistinctKeysCannotExceedAllowance()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var fixture = await SeedReadyResumeAsync(factory, account.UserId);
+        using var client1 = factory.CreateHttpsClient();
+        client1.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        using var client2 = factory.CreateHttpsClient();
+        client2.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var task1 = Task.Run(() => SendResumeAnalysisAsync(client1, fixture, ResumeAnalysisModes.JobTargeted, "free-cv-concurrent-1"));
+        var task2 = Task.Run(() => SendResumeAnalysisAsync(client2, fixture, ResumeAnalysisModes.FieldBenchmark, "free-cv-concurrent-2"));
+        using var response1 = await task1;
+        using var response2 = await task2;
+
+        var responses = new[] { response1, response2 };
+        Assert.Equal(1, responses.Count(item => item.StatusCode == HttpStatusCode.Created));
+        Assert.Equal(1, responses.Count(item => item.StatusCode == HttpStatusCode.Forbidden));
+        var rejected = responses.Single(item => item.StatusCode == HttpStatusCode.Forbidden);
+        using (var body = JsonDocument.Parse(await rejected.Content.ReadAsStringAsync()))
+            Assert.Equal("FEATURE_QUOTA_EXCEEDED", body.RootElement.GetProperty("error").GetProperty("code").GetString());
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(1, await db.ResumeAnalyses.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(1, await db.OutboxEvents.CountAsync(item => item.Type == "ResumeAnalysisRequested"));
+        Assert.Equal(1, await db.FeatureUsageEvents.CountAsync(item => item.UserId == account.UserId && item.FeatureCode == FeatureValues.CvAnalysis && item.Action == FeatureValues.Reserve));
+        var feature = await db.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(
+            item => item.Entitlement.UserId == account.UserId
+                && item.Entitlement.PlanCodeSnapshot == "free"
+                && item.FeatureCode == FeatureValues.CvAnalysis);
+        Assert.Equal(1, feature.Reserved);
+    }
+
     [Fact]
     public async Task CvAnalysisRejectsInvalidModeContextBeforeCreatingAJob()
     {
@@ -1508,6 +1794,68 @@ public sealed class ProductPlatformApiTests
         }
     }
 
+    private static async Task<ResumeFixture> SeedReadyResumeAsync(NexoraApiFactory factory, Guid userId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var storedFile = new Nexora.Data.Practice.StoredFile
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            StorageKey = $"files/free-cv-{Guid.NewGuid():N}.pdf",
+            FileName = "cv.pdf",
+            ContentType = "application/pdf",
+            Size = 1024,
+            Checksum = "free-cv-fixture",
+            CreatedAt = now
+        };
+        var resume = new Nexora.Data.Practice.ResumeRecord
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            StoredFileId = storedFile.Id,
+            StoredFile = storedFile,
+            Status = PracticeValues.Ready,
+            ExtractedText = "Experienced C# engineer with ASP.NET Core and PostgreSQL skills.",
+            StructuredProfile = "{\"summary\":\"Experienced C# engineer\",\"skills\":[\"C#\",\"PostgreSQL\"],\"experiences\":[],\"education\":[],\"projects\":[],\"certifications\":[],\"languages\":[]}",
+            ProfileModelVersion = "test-gemini-model",
+            ProfilePromptVersion = "resume-profile-v2",
+            ProfileSchemaVersion = "resume-profile-v2",
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        var jobDescription = new Nexora.Data.Practice.JobDescription
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            Title = "Backend Engineer",
+            Content = "Requirements: C# and PostgreSQL",
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        db.AddRange(storedFile, resume, jobDescription);
+        await db.SaveChangesAsync();
+        return new ResumeFixture(resume.Id, jobDescription.Id);
+    }
+
+    private static object CreateAnalysisPayload(ResumeFixture fixture, string mode) =>
+        mode == ResumeAnalysisModes.JobTargeted
+            ? new { resumeId = fixture.ResumeId, mode, jobDescriptionId = fixture.JobDescriptionId }
+            : new { resumeId = fixture.ResumeId, mode, industry = "Fintech", targetRole = "Backend Engineer", seniority = "senior" };
+
+    private static async Task<HttpResponseMessage> SendResumeAnalysisAsync(HttpClient client, ResumeFixture fixture, string mode, string key)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(CreateAnalysisPayload(fixture, mode))
+        };
+        request.Headers.Add("Idempotency-Key", key);
+        return await client.SendAsync(request);
+    }
+
     private static async Task<Nexora.Data.Practice.Scenario> SeedPublishedScenarioAsync(NexoraApiFactory factory)
     {
         using var scope = factory.Services.CreateScope();
@@ -1621,6 +1969,7 @@ public sealed class ProductPlatformApiTests
     private sealed record Account(Guid UserId, string AccessToken);
     private sealed record AdminAccount(string AccessToken);
     private sealed record Grant(Guid EntitlementId);
+    private sealed record ResumeFixture(Guid ResumeId, Guid JobDescriptionId);
 
     private sealed class FailingAiProvider : Nexora.Business.Ai.IAiProvider
     {
