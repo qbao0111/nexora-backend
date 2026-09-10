@@ -512,3 +512,16 @@ This log records completed implementation milestones and verification evidence. 
 - Files/modules: `src/Nexora.Integrations/Storage/*`, `src/Nexora.Business/Storage/StorageKeyValidator.cs`, integration DI/production safety, API/Worker storage config, package manifest and focused storage tests.
 - Verification: `dotnet restore`; `dotnet build --no-restore Nexora.slnx --nologo` (0 errors, 0 warnings); 265 unit tests and 133 integration tests passed; EF reports no pending model changes; vulnerable-package scan reports none; scoped `dotnet format --verify-no-changes` and `git diff --check` pass. Full solution format still reports 18 pre-existing issues outside this A1 scope.
 - Dependencies: A2 — production upload intents/presigned PUT/finalize flow; DEC-04 final production account/hosting enablement. No migration impact.
+
+## 2026-09-10 — Backend GitHub Actions CI
+
+- Status: Completed
+- Owner: Backend engineering
+- Branch: `chore/backend-ci`
+- Commit/PR: `ba90e974d126b90f70f6e7c7c19e654ad8a19f7a` / `#43`
+- Scope: Added one least-privilege GitHub Actions workflow for PRs to `main`, pushes to `main` and manual dispatch. No application behavior, provider semantics, migration or deployment path changed.
+- Contracts/traceability: `NFR-QUAL-01` and the canonical quality gates in `docs/05-test-strategy.md`; repository `.editorconfig`, `global.json` and local `dotnet-ef` tool manifest remain authoritative.
+- Files/modules: `.github/workflows/backend-ci.yml`; this log entry only.
+- Verification: YAML parsed successfully and all nine shell steps passed Bash syntax validation; `dotnet tool restore`; `dotnet restore Nexora.slnx`; Release build passed with 0 warnings/errors; 235 unit and 133 integration tests passed; EF reported no pending model changes; .NET 10 JSON vulnerability audit reported no vulnerable direct/transitive packages; changed-file format selection and scoped format passed; `git diff --check` passed. GitHub Actions run `34420764114` for PR `#43` completed successfully in 2m09s with every workflow gate green. The intentionally non-blocking full-repository format probe still reports 18 pre-existing findings outside this CI diff.
+- Dependencies: None. Integration tests remain isolated through in-memory SQLite/WebApplicationFactory and deterministic providers; no PostgreSQL/Neon, R2, Resend or production secret is required.
+- Remaining blockers/follow-up: None for the workflow. Configure the stable `Backend CI / Build, test, and validate` check as required in the GitHub `main` Ruleset.
