@@ -98,4 +98,13 @@ Implementation is not complete while relevant tests fail.
 7. Add or update tests.
 8. Update documentation only when a contract or decision actually changes.
 
+## Manual review workflow
+
+- Codex implements the requested task.
+- Codex may use adaptive internal subagents when appropriate.
+- Codex runs risk-appropriate deterministic validation.
+- Codex stops after implementation and validation and returns a compact handoff.
+- A human relays the result to ChatGPT for independent review and relays any correction back to Codex.
+- Merge requires explicit human instruction.
+
 DEC-01 through DEC-04 are deferred production choices, not engineering blockers. Use the documented fake/development adapters and never invent a final provider, budget, retention/legal policy, host, domain or infrastructure account.

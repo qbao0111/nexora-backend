@@ -2,6 +2,17 @@
 
 This log records completed implementation milestones and verification evidence. It must never contain credentials or other secrets.
 
+## 2026-09-11 — Retire automated review tooling (completed)
+
+- Status: Completed
+- Owner: Codex / manual engineering workflow
+- Branch: `chore/retire-c2c`
+- Scope: Removed repository-side automated review configuration and returned future work to manual review. No application or product behavior changed.
+- Files/modules: `.c2c.json` removed; `docs/c2c-review-policy.md` removed; `AGENTS.md` now states the concise manual review workflow.
+- Verification: Repository cleanup audited with active-reference search and `git diff --check`.
+- Dependencies: Human review handoff; no automated review loop or automatic merge.
+- Remaining blockers: none.
+
 ## 2026-09-10 — C2C workflow optimization (in progress)
 
 - Status: In progress
