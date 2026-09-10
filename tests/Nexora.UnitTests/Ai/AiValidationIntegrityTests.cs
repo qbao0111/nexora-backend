@@ -108,6 +108,26 @@ public sealed class AiValidationIntegrityTests
         Assert.True(result.Repairable);
     }
 
+    [Fact]
+    public void InterviewReportRejectsMoreThanThreeGroundedItems()
+    {
+        var result = AiOperations.InterviewReport.NormalizeAndValidate(new InterviewReportOutput(
+            Rubric(),
+            ["one", "two", "three", "four"],
+            ["Grounded gap"],
+            ["Grounded action"],
+            AiOperations.ScoreScale), Context);
+
+        Assert.False(result.IsValid);
+        Assert.True(result.Repairable);
+    }
+
+    [Fact]
+    public void InterviewReportUsesOneProviderAttempt()
+    {
+        Assert.Equal(1, AiOperations.InterviewReport.MaxAttempts);
+    }
+
     [Theory]
     [InlineData(-1)]
     [InlineData(101)]

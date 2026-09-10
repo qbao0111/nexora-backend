@@ -28,6 +28,13 @@ public abstract class AiOperationDefinition<T>
     public abstract string Instructions { get; }
 
     /// <summary>
+    /// Maximum provider calls for this operation. The global executor ceiling is
+    /// two calls; operations may opt out of semantic repair when a retry would
+    /// produce a non-durable report candidate rather than a new user intent.
+    /// </summary>
+    public virtual int MaxAttempts => 2;
+
+    /// <summary>
     /// Returns the bounded output budget for this attempt. Operations may opt into a
     /// purpose-specific second-attempt budget, but the executor remains the owner of
     /// the global two-call limit.
@@ -1164,15 +1171,20 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
     public override string SchemaVersion => "interview-report-v2";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 6_000;
+    public override int MaxAttempts => 1;
 
     public override JsonDocument OutputSchema { get; } = JsonDocument.Parse("""
         {
+          "additionalProperties": false,
           "type": "object",
           "properties": {
             "scoreScale": { "type": "string", "enum": ["0-100"] },
             "scores": {
               "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
               "items": {
+                "additionalProperties": false,
                 "type": "object",
                 "properties": {
                   "criterion": { "type": "string", "enum": ["correctness", "structure", "completeness", "clarity"] },
@@ -1182,9 +1194,9 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
                 "required": ["criterion", "score", "evidence"]
               }
             },
-            "strengths": { "type": "array", "items": { "type": "string" } },
-            "gaps": { "type": "array", "items": { "type": "string" } },
-            "actionPlan": { "type": "array", "items": { "type": "string" } }
+            "strengths": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+            "gaps": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+            "actionPlan": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } }
           },
           "required": ["scoreScale", "scores", "strengths", "gaps", "actionPlan"]
         }
@@ -1204,19 +1216,27 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
         if (!rubricResult.IsValid)
             return AiValidationResult<InterviewReportOutput>.Failure(rubricResult.FailureReason!, rubricResult.ValidationStage!, rubricResult.Repairable);
 
-        var strengths = raw.Strengths?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [];
-        var gaps = raw.Gaps?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [];
-        var actionPlan = raw.ActionPlan?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [];
-
-        if (strengths.Length == 0)
-            return AiValidationResult<InterviewReportOutput>.Failure("report.strengths_blank", "semantic", repairable: true);
-        if (gaps.Length == 0)
-            return AiValidationResult<InterviewReportOutput>.Failure("report.gaps_blank", "semantic", repairable: true);
-        if (actionPlan.Length == 0)
-            return AiValidationResult<InterviewReportOutput>.Failure("report.action_plan_blank", "semantic", repairable: true);
+        var strengths = NormalizeReportCollection(raw.Strengths);
+        if (strengths is null)
+            return AiValidationResult<InterviewReportOutput>.Failure("report.strengths_invalid", "semantic", repairable: true);
+        var gaps = NormalizeReportCollection(raw.Gaps);
+        if (gaps is null)
+            return AiValidationResult<InterviewReportOutput>.Failure("report.gaps_invalid", "semantic", repairable: true);
+        var actionPlan = NormalizeReportCollection(raw.ActionPlan);
+        if (actionPlan is null)
+            return AiValidationResult<InterviewReportOutput>.Failure("report.action_plan_invalid", "semantic", repairable: true);
 
         return AiValidationResult<InterviewReportOutput>.Success(
             new InterviewReportOutput(rubricResult.NormalizedValue!, strengths, gaps, actionPlan, AiOperations.ScoreScale));
+    }
+
+    private static string[]? NormalizeReportCollection(IReadOnlyCollection<string>? values)
+    {
+        if (values is null or { Count: < 1 or > 3 }) return null;
+        var normalized = values.Select(value => value?.Trim() ?? string.Empty).ToArray();
+        return normalized.Any(value => value.Length is 0 or > 500 || string.IsNullOrWhiteSpace(value))
+            ? null
+            : normalized;
     }
 }
 

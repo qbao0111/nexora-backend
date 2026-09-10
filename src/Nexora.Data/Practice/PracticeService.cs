@@ -37,6 +37,7 @@ public sealed partial class PracticeService(
     private static string ProfileSchemaVersion => AiOperations.ResumeProfile.SchemaVersion;
     private const string RubricVersion = "interview-rubric-star-v2";
     private const string Disclaimer = "Điểm số chỉ là ước lượng phục vụ coaching, không phải đánh giá tuyển dụng.";
+    private const int MinimumReportAnswers = 2;
     private const string ResumeExtractionFailureMessage = "Không thể đọc nội dung CV. Vui lòng thử lại với file PDF hoặc DOCX rõ hơn.";
     private static readonly JsonDocument EmptySchema = JsonDocument.Parse("{}");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -763,19 +764,36 @@ public sealed partial class PracticeService(
         var prior = await FindIdempotentAsync(userId, "interview.complete", key, fingerprint, cancellationToken);
         if (prior is not null) return await GetInterviewAsync(userId, prior.ResourceId, cancellationToken);
         await using var transaction = await BeginTransactionAsync(cancellationToken);
-        var session = await dbContext.InterviewSessions.Include(item => item.Questions).Include(item => item.Answers)
-            .SingleOrDefaultAsync(item => item.Id == interviewId && item.UserId == userId, cancellationToken) ?? throw NotFound();
-        ValidateQuestionContracts(session.Questions);
-        if (session.Status == PracticeValues.Completing)
+        var session = await FindInterviewForUpdateAsync(userId, interviewId, cancellationToken) ?? throw NotFound();
+        var lockedPrior = await FindIdempotentAsync(userId, "interview.complete", key, fingerprint, cancellationToken);
+        if (lockedPrior is not null)
         {
-            var retryAt = timeProvider.GetUtcNow();
-            dbContext.AddRange(Idempotency(userId, "interview.complete", key, fingerprint, session.Id, retryAt),
-                Outbox("InterviewReportRequested", "interview", session.Id, retryAt));
+            await CommitAsync(transaction, cancellationToken);
+            return await GetInterviewAsync(userId, lockedPrior.ResourceId, cancellationToken);
+        }
+        await dbContext.Entry(session).Collection(item => item.Questions).LoadAsync(cancellationToken);
+        await dbContext.Entry(session).Collection(item => item.Answers).LoadAsync(cancellationToken);
+        ValidateQuestionContracts(session.Questions);
+        if (session.Status == PracticeValues.Completed)
+        {
+            dbContext.Add(Idempotency(userId, "interview.complete", key, fingerprint, session.Id, timeProvider.GetUtcNow()));
             await dbContext.SaveChangesAsync(cancellationToken);
             await CommitAsync(transaction, cancellationToken);
             return MapInterview(session, session.Questions, session.Answers);
         }
-        if (session.Status != PracticeValues.Active || session.Questions.Count == 0 || session.Answers.Count != session.Questions.Count)
+        if (session.Status == PracticeValues.Completing)
+        {
+            var retryAt = timeProvider.GetUtcNow();
+            dbContext.Add(Idempotency(userId, "interview.complete", key, fingerprint, session.Id, retryAt));
+            if (!await HasPendingReportJobAsync(session.Id, cancellationToken))
+                dbContext.Add(Outbox("InterviewReportRequested", "interview", session.Id, retryAt));
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(transaction, cancellationToken);
+            return MapInterview(session, session.Questions, session.Answers);
+        }
+        var answeredCount = session.Answers.Count(answer => !string.IsNullOrWhiteSpace(answer.Content));
+        if (session.Status != PracticeValues.Active || session.Questions.Count == 0 ||
+            answeredCount < MinimumReportAnswers || answeredCount != session.Answers.Count)
             throw InvalidState();
         var now = timeProvider.GetUtcNow();
         session.Status = PracticeValues.Completing;
@@ -788,14 +806,63 @@ public sealed partial class PracticeService(
         return MapInterview(session, session.Questions, session.Answers);
     }
 
+    public async Task<InterviewView> RetryReportAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken)
+    {
+        var key = RequireKey(idempotencyKey);
+        var fingerprint = Fingerprint(interviewId);
+        var prior = await FindIdempotentAsync(userId, "interview.report.retry", key, fingerprint, cancellationToken);
+        if (prior is not null) return await GetInterviewAsync(userId, prior.ResourceId, cancellationToken);
+
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        var session = await FindInterviewForUpdateAsync(userId, interviewId, cancellationToken) ?? throw NotFound();
+        var lockedPrior = await FindIdempotentAsync(userId, "interview.report.retry", key, fingerprint, cancellationToken);
+        if (lockedPrior is not null)
+        {
+            await CommitAsync(transaction, cancellationToken);
+            return await GetInterviewAsync(userId, lockedPrior.ResourceId, cancellationToken);
+        }
+        await dbContext.Entry(session).Collection(item => item.Questions).LoadAsync(cancellationToken);
+        await dbContext.Entry(session).Collection(item => item.Answers).LoadAsync(cancellationToken);
+        ValidateQuestionContracts(session.Questions);
+        if (session.Status is not PracticeValues.Completing and not PracticeValues.Completed)
+            throw InvalidState();
+
+        var now = timeProvider.GetUtcNow();
+        dbContext.Add(Idempotency(userId, "interview.report.retry", key, fingerprint, session.Id, now));
+        if (session.Status == PracticeValues.Completing && !await HasPendingReportJobAsync(session.Id, cancellationToken))
+            dbContext.Add(Outbox("InterviewReportRequested", "interview", session.Id, now));
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
+        return MapInterview(session, session.Questions, session.Answers);
+    }
+
     public async Task<ReportView> GetReportAsync(Guid userId, Guid interviewId, CancellationToken cancellationToken)
     {
         var report = await dbContext.InterviewReports.AsNoTracking()
             .Include(item => item.InterviewSession).ThenInclude(item => item.Answers)
             .Include(item => item.InterviewSession).ThenInclude(item => item.Questions)
             .AsSplitQuery()
-            .SingleOrDefaultAsync(item => item.InterviewSessionId == interviewId && item.UserId == userId, cancellationToken) ?? throw NotFound();
-        return MapReport(report, report.InterviewSession.Questions, report.InterviewSession.Answers);
+            .SingleOrDefaultAsync(item => item.InterviewSessionId == interviewId && item.UserId == userId, cancellationToken);
+        if (report is not null)
+            return MapReport(report, report.InterviewSession.Questions, report.InterviewSession.Answers);
+
+        var session = await dbContext.InterviewSessions.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == interviewId && item.UserId == userId, cancellationToken)
+            ?? throw NotFound();
+        if (session.Status == PracticeValues.Completing)
+        {
+            var latestJob = (await dbContext.OutboxEvents.AsNoTracking()
+                    .Where(item => item.AggregateId == interviewId && item.Type == "InterviewReportRequested")
+                    .ToArrayAsync(cancellationToken))
+                .OrderByDescending(item => item.CreatedAt)
+                .FirstOrDefault();
+            if (latestJob?.Status == BillingValues.Failed)
+                throw Conflict("INTERVIEW_REPORT_FAILED", "Báo cáo phỏng vấn chưa tạo được. Bạn có thể thử lại.");
+
+            throw Conflict("INTERVIEW_REPORT_PROCESSING", "Báo cáo phỏng vấn đang được xử lý.");
+        }
+
+        throw Conflict("INTERVIEW_REPORT_UNAVAILABLE", "Báo cáo phỏng vấn chưa sẵn sàng.");
     }
 
     public async Task<DashboardView> GetDashboardAsync(Guid userId, CancellationToken cancellationToken)
@@ -1164,11 +1231,27 @@ public sealed partial class PracticeService(
         var snapshot = await dbContext.InterviewSessions.AsNoTracking().Include(item => item.Questions).ThenInclude(question => question.Answer)
             .Include(item => item.Resume).Include(item => item.JobDescription)
             .SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
-        if (snapshot.Status == PracticeValues.Completed) { MarkProcessed(job); await dbContext.SaveChangesAsync(cancellationToken); return; }
-        var transcript = string.Join("\n", snapshot.Questions.OrderBy(item => item.Sequence)
-            .Select(item => $"Q: {item.Content}\nA: {item.Answer?.Content}"));
-        var reportContext = resumeContextBuilder.BuildReportContext(
-            transcript, TryReadResumeProfile(snapshot.Resume?.StructuredProfile));
+        if (await dbContext.InterviewReports.AsNoTracking().AnyAsync(item => item.InterviewSessionId == snapshot.Id, cancellationToken))
+        {
+            MarkProcessed(job);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return;
+        }
+        if (snapshot.Status == PracticeValues.Completed)
+            throw InvalidState();
+
+        var answeredQuestions = snapshot.Questions
+            .Where(item => item.Answer is not null && !string.IsNullOrWhiteSpace(item.Answer.Content))
+            .OrderBy(item => item.Sequence)
+            .ToArray();
+        if (answeredQuestions.Length < MinimumReportAnswers)
+            throw InvalidState();
+        var transcript = string.Join("\n", answeredQuestions
+            .Select(item => $"Q: {item.Content}\nA: {item.Answer!.Content}"));
+        // Reports must be grounded in the observed interview answers. Resume
+        // profile claims are not interview evidence and are intentionally not
+        // included in the synthesis input.
+        var reportContext = resumeContextBuilder.BuildReportContext(transcript, profile: null);
         var execResult = await structuredAiExecutor.ExecuteAsync(
             AiOperations.InterviewReport,
             reportContext,
@@ -1180,8 +1263,15 @@ public sealed partial class PracticeService(
         var overall = WeightedScore(output.Scores);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
-        var session = await dbContext.InterviewSessions.SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
-        if (session.Status == PracticeValues.Completed) { MarkProcessed(job); await dbContext.SaveChangesAsync(cancellationToken); await CommitAsync(transaction, cancellationToken); return; }
+        var session = await FindInterviewForUpdateAsync(snapshot.UserId, job.AggregateId, cancellationToken) ?? throw NotFound();
+        var existing = await dbContext.InterviewReports.SingleOrDefaultAsync(item => item.InterviewSessionId == session.Id, cancellationToken);
+        if (existing is not null)
+        {
+            MarkProcessed(job);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(transaction, cancellationToken);
+            return;
+        }
         if (session.Status != PracticeValues.Completing) throw InvalidState();
         var now = timeProvider.GetUtcNow();
         dbContext.InterviewReports.Add(new InterviewReport
@@ -1194,11 +1284,11 @@ public sealed partial class PracticeService(
             Strengths = JsonSerializer.Serialize(output.Strengths, JsonOptions),
             Gaps = JsonSerializer.Serialize(output.Gaps, JsonOptions),
             ActionPlan = JsonSerializer.Serialize(output.ActionPlan, JsonOptions),
-            Disclaimer = Disclaimer,
-            ModelVersion = CurrentModelVersion,
-            PromptVersion = PromptVersion,
-            RubricVersion = RubricVersion,
-            SchemaVersion = SchemaVersion,
+            Disclaimer = BuildReportDisclaimer(answeredQuestions.Length, snapshot.Questions.Count),
+            ModelVersion = execResult.ModelVersion,
+            PromptVersion = execResult.PromptVersion,
+            RubricVersion = execResult.RubricVersion,
+            SchemaVersion = execResult.SchemaVersion,
             CreatedAt = now
         });
         session.Status = PracticeValues.Completed;
@@ -1342,6 +1432,11 @@ public sealed partial class PracticeService(
             throw new BusinessException("IDEMPOTENCY_CONFLICT", "Idempotency-Key đã được dùng với dữ liệu khác.", BusinessErrorKind.Conflict);
         return record;
     }
+
+    private Task<bool> HasPendingReportJobAsync(Guid interviewId, CancellationToken cancellationToken) =>
+        dbContext.OutboxEvents.AnyAsync(item => item.AggregateId == interviewId &&
+            item.Type == "InterviewReportRequested" &&
+            (item.Status == BillingValues.Pending || item.Status == BillingValues.Processing), cancellationToken);
 
     private async Task<InterviewSession?> FindInterviewForUpdateAsync(
         Guid userId,
@@ -1762,9 +1857,73 @@ public sealed partial class PracticeService(
         question.Content,
         question.CreatedAt);
     private static AnswerView MapAnswer(InterviewAnswer answer) => new(answer.Id, answer.QuestionId, answer.Content, answer.DurationSeconds, ParseJson(answer.Evaluation), answer.CreatedAt);
-    private static ReportView MapReport(InterviewReport report, IEnumerable<InterviewQuestion> questions, IEnumerable<InterviewAnswer> answers) => new(report.Id, report.InterviewSessionId, report.OverallScore,
-        ParseJson(report.Rubric) ?? default(JsonElement), ParseJson(report.Strengths) ?? default(JsonElement), ParseJson(report.Gaps) ?? default(JsonElement),
-        ParseJson(report.ActionPlan) ?? default(JsonElement), report.Disclaimer, report.CreatedAt, BuildStarSummary(questions, answers));
+    private static ReportView MapReport(InterviewReport report, IEnumerable<InterviewQuestion> questions, IEnumerable<InterviewAnswer> answers)
+    {
+        var orderedQuestions = questions.OrderBy(item => item.Sequence).ToArray();
+        var questionReviews = BuildQuestionReviews(orderedQuestions, answers);
+        var suggestions = questionReviews
+            .Where(item => !string.IsNullOrWhiteSpace(item.SuggestedImprovedAnswer))
+            .Select(item => new SuggestedImprovedAnswerView(item.QuestionId, item.Sequence, item.SuggestedImprovedAnswer!))
+            .ToArray();
+        var sample = new ReportSampleView(
+            questionReviews.Length,
+            orderedQuestions.Length,
+            IsPartialReport(questionReviews.Length, orderedQuestions.Length));
+        return new ReportView(
+            report.Id,
+            report.InterviewSessionId,
+            report.OverallScore,
+            ParseJson(report.Rubric) ?? default(JsonElement),
+            ParseJson(report.Strengths) ?? default(JsonElement),
+            ParseJson(report.Gaps) ?? default(JsonElement),
+            ParseJson(report.ActionPlan) ?? default(JsonElement),
+            report.Disclaimer,
+            report.CreatedAt,
+            BuildStarSummary(orderedQuestions, answers),
+            questionReviews,
+            suggestions,
+            sample);
+    }
+
+    private static InterviewQuestionReviewView[] BuildQuestionReviews(
+        IReadOnlyCollection<InterviewQuestion> questions,
+        IEnumerable<InterviewAnswer> answers)
+    {
+        var answersByQuestion = answers
+            .Where(item => !string.IsNullOrWhiteSpace(item.Content))
+            .GroupBy(item => item.QuestionId)
+            .ToDictionary(group => group.Key, group => group.OrderBy(item => item.CreatedAt).First());
+        return questions
+            .Where(item => answersByQuestion.ContainsKey(item.Id))
+            .Select(question =>
+            {
+                var answer = answersByQuestion[question.Id];
+                var evaluation = TryDeserializeAnswerEvaluation(answer.Evaluation);
+                return new InterviewQuestionReviewView(
+                    question.Id,
+                    question.Sequence,
+                    question.Kind,
+                    question.Topic,
+                    question.ParentQuestionId,
+                    question.Content,
+                    answer.Content,
+                    evaluation?.Scores ?? [],
+                    evaluation?.Feedback ?? string.Empty,
+                    evaluation?.Star,
+                    evaluation?.Strengths ?? [],
+                    evaluation?.Improvements ?? [],
+                    evaluation?.ImprovedAnswer);
+            })
+            .ToArray();
+    }
+
+    private static bool IsPartialReport(int answeredQuestions, int issuedQuestions) =>
+        answeredQuestions < issuedQuestions || answeredQuestions <= InterviewQuestionValues.FreeQuestionLimit;
+
+    private static string BuildReportDisclaimer(int answeredQuestions, int issuedQuestions) =>
+        IsPartialReport(answeredQuestions, issuedQuestions)
+            ? $"{Disclaimer} This is a partial sample based on {answeredQuestions} of {issuedQuestions} answered questions; it is not a full competency assessment."
+            : $"{Disclaimer} This coaching report is based on {answeredQuestions} answered questions.";
     private static JsonElement? ParseJson(string? value) => value is null ? null : JsonSerializer.Deserialize<JsonElement>(value);
     private static AnswerEvaluation? TryDeserializeAnswerEvaluation(string? value)
     {

@@ -6,7 +6,7 @@ namespace Nexora.Business.Ai;
 
 public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger<StructuredAiExecutor> logger) : IStructuredAiExecutor
 {
-    private const int MaxAttemptsPerPurpose = 2;
+    private const int GlobalMaxAttemptsPerPurpose = 2;
 
     public async Task<AiExecutionResult<T>> ExecuteAsync<T>(
         AiOperationDefinition<T> operation,
@@ -21,13 +21,14 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
         var modelVersion = aiProvider.ModelVersion;
         var correlationId = context.CorrelationId;
         var instructions = operation.Instructions;
+        var maxAttempts = Math.Clamp(operation.MaxAttempts, 1, GlobalMaxAttemptsPerPurpose);
 
         AiValidationResult<T>? lastValidation = null;
         AiProviderException? lastProviderException = null;
         AiReasoningEffortOverride? reasoningOverride = null;
         var outputTruncationRetry = false;
 
-        for (var attempt = 1; attempt <= MaxAttemptsPerPurpose; attempt++)
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             var isRepairAttempt = attempt > 1 && lastValidation is not null && !lastValidation.IsValid;
             var currentInstructions = isRepairAttempt
@@ -95,7 +96,7 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
                 LogValidationFailed(logger, operation.Purpose, validation.FailureReason ?? "unknown", validation.ValidationStage ?? "validation", attempt, validation.Repairable, correlationId);
 
-                if (!validation.Repairable || attempt >= MaxAttemptsPerPurpose)
+                if (!validation.Repairable || attempt >= maxAttempts)
                 {
                     LogExecutionTerminalFailure(logger, operation.Purpose, validation.FailureReason ?? "unknown", validation.ValidationStage ?? "validation", attempt, correlationId);
 
@@ -125,7 +126,7 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                 if (ex.Kind == AiProviderFailureKind.InvalidResponse &&
                     ex.RetryHint == AiProviderRetryHint.LowerReasoningEffort &&
                     lastValidation is null &&
-                    attempt < MaxAttemptsPerPurpose)
+                    attempt < maxAttempts)
                 {
                     reasoningOverride = AiReasoningEffortOverride.Low;
                 }
@@ -133,7 +134,7 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                     ex.RetryHint == AiProviderRetryHint.OutputTruncated &&
                     operation.SupportsOutputTruncationRetry &&
                     lastValidation is null &&
-                    attempt < MaxAttemptsPerPurpose)
+                    attempt < maxAttempts)
                 {
                     LogOutputTruncationRetry(
                         logger,
@@ -146,7 +147,7 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
                 if (ex.Kind is AiProviderFailureKind.Configuration or AiProviderFailureKind.Authentication ||
                     cancellationToken.IsCancellationRequested ||
-                    attempt >= MaxAttemptsPerPurpose ||
+                    attempt >= maxAttempts ||
                     !IsRetryable(ex.Kind))
                 {
                     LogProviderTerminalFailure(logger, operation.Purpose, ex.Kind.ToString(), attempt, correlationId);

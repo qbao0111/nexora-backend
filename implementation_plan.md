@@ -678,16 +678,16 @@ Rules:
 
 Report cần hỗ trợ cả session ngắn và dài:
 
-- [ ] Overall score.
-- [ ] Rubric breakdown.
-- [ ] STAR summary nếu applicable.
-- [ ] Strengths.
-- [ ] Gaps.
-- [ ] Action plan.
-- [ ] Per-question review.
-- [ ] Suggested improved answers.
-- [ ] Report 2–3 câu vẫn hợp lệ, không giả vờ đã đánh giá full competency.
-- [ ] Có disclaimer về sample size nếu report từ free/partial session.
+- [x] Overall score.
+- [x] Rubric breakdown.
+- [x] STAR summary nếu applicable.
+- [x] Strengths.
+- [x] Gaps.
+- [x] Action plan.
+- [x] Per-question review.
+- [x] Suggested improved answers.
+- [x] Report 2–3 câu vẫn hợp lệ, không giả vờ đã đánh giá full competency.
+- [x] Có disclaimer về sample size nếu report từ free/partial session.
 
 ## A10. Voice input contract [P1]
 

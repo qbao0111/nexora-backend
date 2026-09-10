@@ -52,6 +52,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/interviews/:id/answers` | Lưu câu trả lời, đánh giá và mở câu hỏi tiếp theo theo policy server. |
 | POST | `/interviews/:id/continue` | Sau khi đạt giới hạn Free, kiểm tra entitlement hiện tại và idempotently tạo câu hỏi trả phí tiếp theo trong cùng session. |
 | POST | `/interviews/:id/complete` | Kết thúc, tạo report. |
+| POST | `/interviews/:id/report/retry` | Retry report đang `completing`, không charge thêm interview quota. |
 | GET | `/interviews/:id/report` | Đọc report immutable của owner khi completed. |
 | GET | `/dashboard` | Tiến độ, lịch sử và quota. |
 | GET | `/health/operations` | Vendor-neutral aggregate operational state (`Healthy`/`Degraded`), không trả count hay resource ID mặc định. |
@@ -345,6 +346,18 @@ Report có thêm `starSummary` khi có ít nhất một answer STAR-applicable:
   }
 }
 ```
+
+Report cũng trả `sample` và `questionReviews` chỉ cho các câu đã có official
+answer. `suggestedImprovedAnswers` là projection từ coaching đã persist trong
+`answer.evaluation`; report không gọi AI lần hai để rewrite answer. Khi người
+dùng kết thúc sớm sau tối thiểu hai câu, `sample.isPartial=true` và `disclaimer`
+nêu rõ số câu đã trả lời trên tổng số câu đã phát hành, không coi đó là đánh giá
+đủ toàn bộ năng lực. POST `/interviews/{id}/report/retry` yêu cầu
+`Idempotency-Key`, owner scope và chỉ tạo thêm một report job khi không có job
+đang pending/processing; retry không tạo reservation/consume mới.
+GET `/interviews/{id}/report` trả `409 INTERVIEW_REPORT_PROCESSING` khi report
+đang chạy, hoặc `409 INTERVIEW_REPORT_FAILED` khi job cuối thất bại và có thể
+retry; các trạng thái này không làm interview chuyển sang `failed`.
 
 ### Scenario Practice v2
 
