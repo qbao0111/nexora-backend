@@ -555,3 +555,16 @@ This log records completed implementation milestones and verification evidence. 
 - Verification: upstream C2C `pnpm install`, `pnpm build`, and `pnpm test` passed (170 tests); `c2c doctor` passed for bridge, OAuth and quick connection; saved Project/chat binding is in project mode; ChatGPT boot and `workspace_info` plus a hello-style top-level file read returned workspace `NexoraBackend`.
 - Dependencies: None. The connector is scoped to the `NexoraBackend` workspace and project-only memory; repository sources were not uploaded.
 - Remaining blockers/follow-up: PR `#44` is open; final-head Backend CI and C2C review are required before human merge. The current quick connection is temporary and may need a fresh setup/pairing after restart or expiry; a named Cloudflare connection is optional future setup, not required for local use.
+
+## 2026-09-10 — Conditional C2C auto-merge policy
+
+- Status: PR open; hosted CI and remote review pending
+- Owner: Codex / local engineering workflow
+- Branch: `chore/c2c-conditional-auto-merge`
+- Base: `3d8848127963c3ccb6e70a335c79628fc885974a` (`main` after A2 merge)
+- Commit/PR: `c67c8acb1f1a7bac67be91df5f05a255f03fffb9` / `#46` (open)
+- Scope: Updated the Nexora repository C2C policy with an explicit conditional auto-merge gate while keeping human-only merge as the generic default. The machine-local generic policy and NexoraBackend ChatGPT Project instructions were updated separately; ChatGPT remains review-only and production deployment is not authorized.
+- Contracts/traceability: `docs/c2c-review-policy.md`; exact-head `READY_TO_MERGE` evidence, fresh hosted checks, open/non-draft/mergeable PR, unchanged base and scope, and normal non-bypass merge are required. No application, provider, migration or A4 changes.
+- Files/modules: `docs/c2c-review-policy.md`, plus the factual project log entry; global policy is `C:\Users\PC\.codex\c2c\generic-review-policy.md` and Project instructions are stored in the NexoraBackend ChatGPT Project.
+- Verification: policy diff and `git diff --check` pass; C2C doctor is green and Project instructions saved. Hosted CI and independent ChatGPT remote review remain pending for this branch.
+- Dependencies: None. After this tooling policy is merged, fetch latest `main` and start A4 on a fresh `feat/a4-cv-analysis-v2` branch; do not start A5.
