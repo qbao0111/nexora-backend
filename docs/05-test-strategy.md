@@ -32,6 +32,10 @@ Chứng minh requirement trong SRS hoạt động đúng, đặc biệt là quy�
 | T-09 | Account deletion | Personal records/object theo retention policy được xoá/anonymise. |
 | T-10 | Restore backup vào môi trường cô lập | API đọc được dữ liệu hợp lệ sau restore. |
 
+### A2 upload-intent coverage
+
+The production R2 upload path additionally requires automated evidence for durable intent state across scopes/processes, owner and expiry enforcement, signed-URL privacy (no public ACL or credential/signature logging), actual object size/signature/container validation, idempotent/concurrent finalize, and safe replay of `POST /resumes`. Tests use fake R2 seams and SQLite/in-memory fixtures; normal gates never call Cloudflare.
+
 ## 4. Quality gates
 
 Khi corresponding projects tồn tại, baseline local/CI bắt buộc gồm `dotnet restore`, `dotnet build` và `dotnet test`. Implementation chưa complete khi relevant tests fail.

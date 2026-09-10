@@ -20,6 +20,47 @@ public static class PracticeValues
 public sealed record UploadIntent(string Token, string UploadUrl, DateTimeOffset ExpiresAt);
 public sealed record PendingUpload(string Token, Guid UserId, string StorageKey, string FileName, string ContentType, long Size, string Checksum);
 
+/// <summary>
+/// Provider-neutral durable state for a browser upload capability. The raw token and
+/// any signed URL are deliberately not part of this record and must never be persisted.
+/// </summary>
+public sealed record UploadIntentState(
+    Guid Id,
+    Guid UserId,
+    string StorageKey,
+    string FileName,
+    string ContentType,
+    long ExpectedSize,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset ExpiresAt,
+    int Version,
+    long? ActualSize,
+    string? Checksum,
+    DateTimeOffset? CompletedAt)
+{
+    public bool IsCompleted => CompletedAt is not null;
+}
+
+public interface IUploadIntentStore
+{
+    Task<UploadIntentState?> FindByTokenHashAsync(
+        Guid userId,
+        string tokenHash,
+        CancellationToken cancellationToken);
+
+    Task<UploadIntentState> CreateAsync(
+        UploadIntentState state,
+        string tokenHash,
+        CancellationToken cancellationToken);
+
+    Task<UploadIntentState?> CompleteAsync(
+        Guid userId,
+        string tokenHash,
+        long actualSize,
+        string checksum,
+        CancellationToken cancellationToken);
+}
+
 public interface IUploadProvider
 {
     Task<UploadIntent> CreateIntentAsync(Guid userId, string fileName, string contentType, long size, CancellationToken cancellationToken);

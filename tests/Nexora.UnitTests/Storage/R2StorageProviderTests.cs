@@ -1,4 +1,5 @@
 using System.Text;
+using Amazon.S3;
 using Amazon.S3.Model;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -122,6 +123,44 @@ public sealed class R2StorageProviderTests
     }
 
     [Fact]
+    public void PresignedPutRequestUsesExactPrivateObjectAndBoundedExpiry()
+    {
+        var expiresAt = new DateTimeOffset(2026, 9, 10, 0, 5, 0, TimeSpan.Zero);
+
+        var request = R2ObjectClient.CreatePresignedPutRequest(
+            R2Options.Bucket, "resumes/user-id/cv.pdf", "application/pdf", expiresAt);
+
+        Assert.Equal(R2Options.Bucket, request.BucketName);
+        Assert.Equal("resumes/user-id/cv.pdf", request.Key);
+        Assert.Equal(HttpVerb.PUT, request.Verb);
+        Assert.Equal("application/pdf", request.ContentType);
+        Assert.Equal(expiresAt.UtcDateTime, request.Expires);
+    }
+
+    [Fact]
+    public void ConcretePresignerBuildsPrivateEndpointUrlWithoutNetworkAccess()
+    {
+        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(5);
+        using var client = new R2ObjectClient(Options.Create(R2Options));
+
+        var url = client.CreatePresignedPutUrl(
+            R2Options.Bucket, "resumes/user-id/cv.pdf", "application/pdf", expiresAt);
+        var uri = new Uri(url);
+        var expiresPart = uri.Query.Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .SingleOrDefault(part => part.Contains("X-Amz-Expires=", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(expiresPart);
+        var expiresValue = expiresPart!.Split('=', 2)[1];
+
+        Assert.Equal(Uri.UriSchemeHttps, uri.Scheme);
+        Assert.Equal("account-id.r2.cloudflarestorage.com", uri.Host);
+        Assert.Equal("/private-bucket/resumes/user-id/cv.pdf", uri.AbsolutePath);
+        Assert.True(long.TryParse(expiresValue, out var expiresSeconds));
+        Assert.InRange(expiresSeconds, 1L, 3_600L);
+        Assert.Contains("X-Amz-Signature", uri.Query, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("x-amz-acl", uri.Query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ResponseStreamOwnsResponseUntilCallerDisposesIt()
     {
         var owner = new TrackingDisposable();
@@ -148,6 +187,19 @@ public sealed class R2StorageProviderTests
         public byte[] ReadContent { get; init; } = "content"u8.ToArray();
         public Exception? Failure { get; init; }
         public CancellationToken LastCancellationToken { get; private set; }
+        public string CreatePresignedPutUrl(string bucket, string key, string contentType, DateTimeOffset expiresAt)
+        {
+            Capture(bucket, key, CancellationToken.None);
+            ThrowIfConfigured();
+            return $"https://signed.example/{key}?expires={expiresAt.ToUnixTimeSeconds()}";
+        }
+
+        public Task<R2ObjectMetadata> GetMetadataAsync(string bucket, string key, CancellationToken cancellationToken)
+        {
+            Capture(bucket, key, cancellationToken);
+            ThrowIfConfigured();
+            return Task.FromResult(new R2ObjectMetadata(ReadContent.LongLength, "application/octet-stream"));
+        }
 
         public Task<Stream> OpenReadAsync(string bucket, string key, CancellationToken cancellationToken)
         {

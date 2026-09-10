@@ -73,7 +73,7 @@ Không chạy drill vào production target. Không ghi connection string/token v
 - **DEC-03:** final retention periods and approved legal/privacy text completed before processing affected personal data in production.
 - **DEC-04:** hosting/storage vendors, domains, mail and infrastructure accounts completed before production deployment.
 
-Development/testing storage may use `LocalStorageProvider`; production-like configuration may use `R2StorageProvider` with private objects and validated HTTPS endpoint/credentials. R2 only provides durable private object storage: it does not make the current in-memory `LocalUploadProvider` production-safe. Therefore `Features:Upload` must remain disabled in Production until A2 delivers persisted upload intents, signed PUTs and finalize handling. Local filesystem storage is never a production option. The exact deferred-decision wording is canonical in [07-architecture-decisions.md](07-architecture-decisions.md#production-enablement-decisions-dec-01-through-dec-04).
+Development/testing storage may use `LocalStorageProvider`; production-like configuration may use `R2StorageProvider` with private objects and validated HTTPS endpoint/credentials. A2 now supplies the durable database-backed R2 upload-intent, signed PUT and finalize path, so `Features:Upload=true` is technically allowed only when `Storage:Provider=r2`; Production + local upload remains a startup failure. Local filesystem storage is never a production option. Actual production account/hosting enablement remains subject to DEC-04, and the exact deferred-decision wording is canonical in [07-architecture-decisions.md](07-architecture-decisions.md#production-enablement-decisions-dec-01-through-dec-04).
 
 ## Incident response tối thiểu
 

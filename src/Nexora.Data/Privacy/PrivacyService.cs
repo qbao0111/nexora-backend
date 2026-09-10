@@ -140,9 +140,34 @@ public sealed partial class PrivacyService(
 
     private async Task ProcessDeletionAsync(DataPrivacyRequest request, CancellationToken cancellationToken)
     {
+        var now = timeProvider.GetUtcNow();
+        var intentExpiries = await dbContext.UploadIntents.AsNoTracking()
+            .Where(item => item.UserId == request.UserId)
+            .Select(item => item.ExpiresAt)
+            .ToArrayAsync(cancellationToken);
+        var activeIntentExpiries = intentExpiries.Where(expiresAt => expiresAt > now).ToArray();
         var storageKeys = await dbContext.StoredFiles.AsNoTracking().Where(item => item.UserId == request.UserId)
             .Select(item => item.StorageKey).ToArrayAsync(cancellationToken);
-        foreach (var storageKey in storageKeys) await storageProvider.DeleteAsync(storageKey, cancellationToken);
+        var intentStorageKeys = await dbContext.UploadIntents.AsNoTracking().Where(item => item.UserId == request.UserId)
+            .Select(item => item.StorageKey).ToArrayAsync(cancellationToken);
+        foreach (var storageKey in storageKeys.Concat(intentStorageKeys).Distinct(StringComparer.Ordinal))
+            await storageProvider.DeleteAsync(storageKey, cancellationToken);
+
+        if (activeIntentExpiries.Length > 0)
+        {
+            // A still-valid signed PUT cannot be revoked. Keep the intent metadata and
+            // retry after the latest capability expires so a recreated object is deleted.
+            dbContext.ChangeTracker.Clear();
+            await using var delayTransaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+            var delayedRequest = await dbContext.DataPrivacyRequests.SingleAsync(item => item.Id == request.Id, cancellationToken);
+            delayedRequest.Status = PrivacyValues.Queued;
+            delayedRequest.ErrorCode = null;
+            delayedRequest.NextAttemptAt = activeIntentExpiries.Max();
+            delayedRequest.UpdatedAt = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await delayTransaction.CommitAsync(cancellationToken);
+            return;
+        }
 
         dbContext.ChangeTracker.Clear();
         await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
@@ -166,7 +191,6 @@ public sealed partial class PrivacyService(
         var entitlementIds = sessions.Select(item => item.ReservationEvent.EntitlementId).Distinct().ToArray();
         var entitlements = await dbContext.Entitlements.Where(item => entitlementIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var now = timeProvider.GetUtcNow();
         foreach (var session in sessions.Where(item => !finalizedSet.Contains(item.ReservationEventId.ToString("N"))))
         {
             var reservation = session.ReservationEvent;
@@ -197,6 +221,7 @@ public sealed partial class PrivacyService(
         dbContext.Resumes.RemoveRange(dbContext.Resumes.Where(item => item.UserId == request.UserId));
         dbContext.JobDescriptions.RemoveRange(dbContext.JobDescriptions.Where(item => item.UserId == request.UserId));
         dbContext.StoredFiles.RemoveRange(dbContext.StoredFiles.Where(item => item.UserId == request.UserId));
+        dbContext.UploadIntents.RemoveRange(dbContext.UploadIntents.Where(item => item.UserId == request.UserId));
         dbContext.OutboxEvents.RemoveRange(dbContext.OutboxEvents.Where(item => personalAggregateIds.Contains(item.AggregateId)));
         dbContext.IdempotencyRecords.RemoveRange(dbContext.IdempotencyRecords.Where(item => item.ActorId == request.UserId));
         dbContext.RealtimeNotifications.RemoveRange(dbContext.RealtimeNotifications.Where(item => item.UserId == request.UserId));

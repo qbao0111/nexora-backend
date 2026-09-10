@@ -20,10 +20,10 @@ public sealed class ProductionSafetyTests
     }
 
     [Fact]
-    public void ProductionRejectsR2WhenUploadIsEnabled()
+    public void ProductionAllowsR2WhenUploadIsEnabledAfterDurableUploadFlow()
     {
-        Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
-            true, aiEnabled: false, paymentEnabled: false, uploadEnabled: true, storageProvider: "r2"));
+        ProductionSafety.ValidateDevelopmentAdapters(
+            true, aiEnabled: false, paymentEnabled: false, uploadEnabled: true, storageProvider: "r2");
     }
 
     [Fact]

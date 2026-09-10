@@ -74,6 +74,7 @@ public static class DependencyInjection
         services.AddScoped<IStarAttemptService, ScenarioStarService>();
         services.AddScoped<IProgressService, ScenarioStarService>();
         services.AddScoped<IScenarioStarJobProcessor, ScenarioStarService>();
+        services.AddScoped<IUploadIntentStore, UploadIntentStore>();
         services.AddSingleton<IResumeContextBuilder, ResumeContextBuilder>();
         services.AddScoped<PracticeService>();
         services.AddScoped<IPracticeService>(provider => provider.GetRequiredService<PracticeService>());

@@ -21,7 +21,7 @@ DEC-01–04 are production enablement gates, not prerequisites for Phases 0–3.
 - Profile, EF migrations and persistence conventions.
 - Standard error envelope, correlation ID and health endpoints.
 - Ownership/admin authorization policies and negative tests.
-- `IStorageProvider` with `LocalStorageProvider` for development/testing or `R2StorageProvider` for private production-like storage; production private-storage contract remains enforced. Presigned upload intents are a later A2 task.
+- `IStorageProvider` with `LocalStorageProvider` for development/testing or `R2StorageProvider` for private production-like storage; production private-storage contract remains enforced. A2 now supplies the durable R2 upload-intent, signed PUT and finalize path; local server-side upload remains the Development/Testing path.
 - Replace only auth/profile localStorage paths behind a feature flag.
 
 **Exit:** T-01/T-02 and login E2E pass; API follows `/api/v1` and auth transport ADR.

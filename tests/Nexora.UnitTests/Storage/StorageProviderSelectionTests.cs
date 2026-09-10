@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Nexora.Business.Practice;
 using Nexora.Business.Storage;
 using Nexora.Integrations;
 using Nexora.Integrations.Storage;
@@ -13,9 +14,16 @@ public sealed class StorageProviderSelectionTests
     [Fact]
     public void LocalProviderRemainsTheDefault()
     {
-        using var services = BuildServices(Configuration());
+        var descriptors = new ServiceCollection()
+            .AddLogging()
+            .AddSingleton(TimeProvider.System)
+            .AddIntegrations(Configuration());
+        using var services = descriptors.BuildServiceProvider();
 
         Assert.IsType<LocalStorageProvider>(services.GetRequiredService<IStorageProvider>());
+        var descriptor = descriptors.Last(item => item.ServiceType == typeof(IUploadProvider));
+        Assert.Equal(typeof(LocalUploadProvider), descriptor.ImplementationType);
+        Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
     }
 
     [Fact]
@@ -26,6 +34,16 @@ public sealed class StorageProviderSelectionTests
         Assert.IsType<R2StorageProvider>(services.GetRequiredService<IStorageProvider>());
         var options = services.GetRequiredService<IOptions<R2StorageOptions>>().Value;
         Assert.Equal("private-bucket", options.Bucket);
+    }
+
+    [Fact]
+    public void R2UploadProviderIsScopedAndSelectedWithR2Storage()
+    {
+        var services = new ServiceCollection().AddIntegrations(Configuration("r2", includeLocalRoot: false));
+        var descriptor = services.Last(item => item.ServiceType == typeof(IUploadProvider));
+
+        Assert.Equal(typeof(R2UploadProvider), descriptor.ImplementationType);
+        Assert.Equal(ServiceLifetime.Scoped, descriptor.Lifetime);
     }
 
     [Fact]
