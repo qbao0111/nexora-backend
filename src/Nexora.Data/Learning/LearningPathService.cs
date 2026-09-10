@@ -235,7 +235,6 @@ public sealed class LearningPathService(
     private void Reconcile(LearningPath path, LearningPathPlan plan, DateTimeOffset now)
     {
         var changed = false;
-        var desiredKeys = plan.Activities.Select(item => item.Key).ToHashSet(StringComparer.Ordinal);
         var milestonesByCode = path.Milestones.ToDictionary(item => item.Code, StringComparer.Ordinal);
         foreach (var planMilestone in plan.Milestones)
         {
@@ -265,15 +264,19 @@ public sealed class LearningPathService(
             .SelectMany(item => item.Activities)
             .GroupBy(item => item.ActivityKey, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.OrderBy(item => item.Id).First(), StringComparer.Ordinal);
+        var desiredKeys = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var planActivity in plan.Activities)
         {
-            var milestone = milestonesByCode[planActivity.MilestoneCode];
-            if (!existingByKey.TryGetValue(planActivity.Key, out var activity))
+            var effectivePlan = ResolveCurrentActivityPlan(planActivity, existingByKey);
+            desiredKeys.Add(effectivePlan.Key);
+            var milestone = milestonesByCode[effectivePlan.MilestoneCode];
+            if (!existingByKey.TryGetValue(effectivePlan.Key, out var activity))
             {
-                var newActivity = CreateActivity(path, milestone, planActivity, now);
+                var newActivity = CreateActivity(path, milestone, effectivePlan, now);
                 milestone.Activities.Add(newActivity);
                 dbContext.LearningPathActivities.Add(newActivity);
+                existingByKey.Add(effectivePlan.Key, newActivity);
                 changed = true;
                 continue;
             }
@@ -296,7 +299,7 @@ public sealed class LearningPathService(
                 changed = true;
             }
 
-            changed |= UpdateActivityMetadata(activity, planActivity, now);
+            changed |= UpdateActivityMetadata(activity, effectivePlan, now);
         }
 
         foreach (var activity in path.Milestones.SelectMany(item => item.Activities))
@@ -312,6 +315,31 @@ public sealed class LearningPathService(
 
         changed |= UpdateMilestoneStatuses(path, now);
         if (changed) path.UpdatedAt = now;
+    }
+
+    private static LearningPathActivityPlan ResolveCurrentActivityPlan(
+        LearningPathActivityPlan plan,
+        IReadOnlyDictionary<string, LearningPathActivity> existingByKey)
+    {
+        if (!existingByKey.TryGetValue(plan.Key, out var original) ||
+            original.Status != LearningPathValues.Completed ||
+            original.CompletedAt is not { } completedAt ||
+            plan.LatestEvidenceAt is not { } latestEvidenceAt ||
+            latestEvidenceAt <= completedAt)
+            return plan;
+
+        var cyclePrefix = $"{plan.Key}:cycle:";
+        var pendingCycle = existingByKey.Values
+            .Where(item => item.Status == LearningPathValues.Pending &&
+                           item.ActivityKey.StartsWith(cyclePrefix, StringComparison.Ordinal))
+            .OrderByDescending(item => item.CreatedAt)
+            .ThenBy(item => item.Id)
+            .FirstOrDefault();
+        return plan with
+        {
+            Key = pendingCycle?.ActivityKey ??
+                  LearningPathRules.LearningCycleActivityKey(plan.Key, latestEvidenceAt)
+        };
     }
 
     private static LearningPathActivity CreateActivity(

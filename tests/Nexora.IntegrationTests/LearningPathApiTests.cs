@@ -279,6 +279,74 @@ public sealed class LearningPathApiTests
     }
 
     [Fact]
+    public async Task RefreshCreatesOneNewCycleWhenACompletedGapReemergesWithNewEvidence()
+    {
+        var originalEvidenceAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+        var newerEvidenceAt = DateTimeOffset.UtcNow.AddMinutes(10);
+        var service = new MutableSkillProfileService(new SkillProfileView(
+            [Competency("resume.clarity", "Clarity", "resume", 50, originalEvidenceAt)],
+            []));
+        using var factory = NewFactory(service);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        await CreateCareerGoalAsync(client, "Backend Developer");
+        using var generated = await client.PostAsJsonAsync("/api/v1/learning-path", new { });
+        var original = await DataAsync(generated);
+        var originalActivity = Assert.Single(Activities(original));
+        var originalActivityId = originalActivity.GetProperty("id").GetGuid();
+
+        using var completedResponse = await client.PatchAsJsonAsync(
+            $"/api/v1/learning-path/activities/{originalActivityId}",
+            new { status = "completed" });
+        var completed = await DataAsync(completedResponse);
+        var completedAt = Assert.Single(Activities(completed)).GetProperty("completedAt").GetDateTimeOffset();
+
+        using var unchangedResponse = await client.PostAsJsonAsync("/api/v1/learning-path/refresh", new { });
+        var unchanged = await DataAsync(unchangedResponse);
+        Assert.Single(Activities(unchanged));
+        Assert.Equal(completedAt, Assert.Single(Activities(unchanged)).GetProperty("completedAt").GetDateTimeOffset());
+
+        service.Current = new SkillProfileView(
+            [Competency("resume.clarity", "Clarity", "resume", 80, newerEvidenceAt)],
+            []);
+        using var healthyResponse = await client.PostAsJsonAsync("/api/v1/learning-path/refresh", new { });
+        var healthy = await DataAsync(healthyResponse);
+        var healthyActivity = Assert.Single(Activities(healthy));
+        Assert.Equal(originalActivityId, healthyActivity.GetProperty("id").GetGuid());
+        Assert.Equal("completed", healthyActivity.GetProperty("status").GetString());
+
+        service.Current = new SkillProfileView(
+            [Competency("resume.clarity", "Clarity", "resume", 50, newerEvidenceAt)],
+            []);
+        using var reemergedResponse = await client.PostAsJsonAsync("/api/v1/learning-path/refresh", new { });
+        var reemerged = await DataAsync(reemergedResponse);
+        var reemergedActivities = Activities(reemerged).ToArray();
+        var preserved = reemergedActivities.Single(item => item.GetProperty("id").GetGuid() == originalActivityId);
+        var newCycle = Assert.Single(
+            reemergedActivities,
+            item => item.GetProperty("id").GetGuid() != originalActivityId);
+
+        Assert.Equal("completed", preserved.GetProperty("status").GetString());
+        Assert.Equal(completedAt, preserved.GetProperty("completedAt").GetDateTimeOffset());
+        Assert.Equal("pending", newCycle.GetProperty("status").GetString());
+        Assert.Equal("resume.clarity", newCycle.GetProperty("competencyCode").GetString());
+        Assert.Equal(1, reemerged.GetProperty("progress").GetProperty("completedActivityCount").GetInt32());
+        Assert.Equal(2, reemerged.GetProperty("progress").GetProperty("totalActivityCount").GetInt32());
+
+        using var repeatedResponse = await client.PostAsJsonAsync("/api/v1/learning-path/refresh", new { });
+        var repeated = await DataAsync(repeatedResponse);
+        var repeatedActivities = Activities(repeated).ToArray();
+        Assert.Equal(2, repeatedActivities.Length);
+        Assert.Equal(
+            reemergedActivities.Select(item => item.GetProperty("id").GetGuid()).OrderBy(item => item),
+            repeatedActivities.Select(item => item.GetProperty("id").GetGuid()).OrderBy(item => item));
+        using var scope = factory.Services.CreateScope();
+        Assert.Equal(2, await scope.ServiceProvider.GetRequiredService<NexoraDbContext>().LearningPathActivities.CountAsync());
+    }
+
+    [Fact]
     public async Task RefreshWithUnchangedInputsKeepsIdsAndTimestampsStable()
     {
         using var factory = NewFactory(new MutableSkillProfileService(Profile(
@@ -510,10 +578,11 @@ public sealed class LearningPathApiTests
     }
 
     [Fact]
-    public async Task ScenarioGapWithoutPublishedResourceIsSkippedSafely()
+    public async Task ScenarioGapWithoutPublishedResourceUsesExternalLearningAndReconciles()
     {
-        using var factory = NewFactory(new MutableSkillProfileService(Profile(
-            Competency("scenario.problem_solving", "Problem Solving", "scenario", 40))));
+        var service = new MutableSkillProfileService(
+            Profile(Competency("scenario.problem_solving", "Problem Solving", "scenario", 40)));
+        using var factory = NewFactory(service);
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
         var account = await RegisterAsync(client);
@@ -522,9 +591,22 @@ public sealed class LearningPathApiTests
 
         using var response = await client.PostAsJsonAsync("/api/v1/learning-path", new { });
         var data = await DataAsync(response);
+        var activity = Assert.Single(Activities(data));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        Assert.Empty(Activities(data));
+        Assert.Equal(LearningPathValues.ExternalLearning, activity.GetProperty("type").GetString());
+        Assert.Equal("scenario.problem_solving", activity.GetProperty("competencyCode").GetString());
+        Assert.Null(activity.GetProperty("resourceId").GetString());
+        Assert.Null(activity.GetProperty("externalUrl").GetString());
+        Assert.Equal(1, activity.GetProperty("priority").GetInt32());
+        Assert.Contains("Problem Solving", activity.GetProperty("title").GetString());
+
+        service.Current = Profile();
+        using var refreshedResponse = await client.PostAsJsonAsync("/api/v1/learning-path/refresh", new { });
+        var refreshed = await DataAsync(refreshedResponse);
+        var reconciled = Assert.Single(Activities(refreshed));
+        Assert.Equal(activity.GetProperty("id").GetGuid(), reconciled.GetProperty("id").GetGuid());
+        Assert.Equal(LearningPathValues.Obsolete, reconciled.GetProperty("status").GetString());
     }
 
     [Fact]
@@ -627,8 +709,13 @@ public sealed class LearningPathApiTests
         SkillProfileWeaknessSignal weakness) =>
         new([first, second, third, fourth], [weakness]);
 
-    private static SkillProfileCompetency Competency(string code, string name, string category, int score) =>
-        new(code, name, category, score, 1, DateTimeOffset.UtcNow, []);
+    private static SkillProfileCompetency Competency(
+        string code,
+        string name,
+        string category,
+        int score,
+        DateTimeOffset? latestEvidenceAt = null) =>
+        new(code, name, category, score, 1, latestEvidenceAt ?? DateTimeOffset.UtcNow, []);
 
     private static void Authorize(HttpClient client, Account account) =>
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);

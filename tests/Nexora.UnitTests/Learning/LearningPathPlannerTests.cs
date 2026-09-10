@@ -29,14 +29,22 @@ public sealed class LearningPathPlannerTests
     }
 
     [Fact]
-    public void ScenarioGapsWithoutPublishedResourcesDoNotCreateBrokenActivities()
+    public void ScenarioGapsWithoutPublishedResourcesBecomeExternalLearningActivities()
     {
         var profile = new SkillProfileView([Competency("scenario.incident_response", "Incident Response", "scenario", 40)], []);
 
         var plan = LearningPathPlanner.Create(profile, []);
+        var repeated = LearningPathPlanner.Create(profile, []);
+        var activity = Assert.Single(plan.Activities);
 
-        Assert.Empty(plan.Activities);
-        Assert.Empty(plan.Milestones);
+        Assert.Equal(LearningPathValues.ExternalLearning, activity.Type);
+        Assert.Equal("scenario.incident_response", activity.CompetencyCode);
+        Assert.Null(activity.ResourceId);
+        Assert.Null(activity.ExternalUrl);
+        Assert.Equal(1, activity.Priority);
+        Assert.Equal(LearningPathValues.CriticalMilestone, activity.MilestoneCode);
+        Assert.Equal(plan.Activities, repeated.Activities);
+        Assert.Equal(plan.Milestones, repeated.Milestones);
     }
 
     [Fact]
@@ -95,6 +103,20 @@ public sealed class LearningPathPlannerTests
         ]);
 
         Assert.Equal(firstId, Assert.Single(plan.Activities).ResourceId);
+    }
+
+    [Fact]
+    public void LearningCycleActivityKeyIsStableAndBounded()
+    {
+        var baseKey = "resume_improvement:resume.clarity";
+        var evidenceAt = new DateTimeOffset(2026, 9, 11, 8, 0, 0, TimeSpan.Zero);
+
+        var first = LearningPathRules.LearningCycleActivityKey(baseKey, evidenceAt);
+        var second = LearningPathRules.LearningCycleActivityKey(baseKey, evidenceAt);
+
+        Assert.Equal(first, second);
+        Assert.NotEqual(first, LearningPathRules.LearningCycleActivityKey(baseKey, evidenceAt.AddMinutes(1)));
+        Assert.True(first.Length <= LearningPathRules.ActivityKeyMaxLength);
     }
 
     private static SkillProfileCompetency Competency(string code, string name, string category, int score) =>

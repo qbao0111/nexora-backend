@@ -62,6 +62,15 @@ public static class LearningPathRules
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized))).ToLowerInvariant();
         return $"{LearningPathValues.ResumeImprovement}:qualitative:{hash[..24]}";
     }
+
+    public static string LearningCycleActivityKey(string baseKey, DateTimeOffset evidenceAt)
+    {
+        const string cycleSeparator = ":cycle:";
+        var material = $"{baseKey}\u001f{evidenceAt.UtcDateTime.Ticks}";
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material))).ToLowerInvariant()[..24];
+        var prefix = Truncate(baseKey, ActivityKeyMaxLength - cycleSeparator.Length - hash.Length);
+        return $"{prefix}{cycleSeparator}{hash}";
+    }
 }
 
 public sealed record LearningPathScenarioResource(Guid Id, string Competency);
@@ -76,7 +85,10 @@ public sealed record LearningPathActivityPlan(
     string? ExternalUrl,
     int Priority,
     string MilestoneCode,
-    int SortOrder);
+    int SortOrder)
+{
+    public DateTimeOffset? LatestEvidenceAt { get; init; }
+}
 
 public sealed record LearningPathMilestonePlan(string Code, string Title, int SortOrder);
 
@@ -172,6 +184,7 @@ public static class LearningPathPlanner
             var type = category switch
             {
                 "scenario" when resourcesByCompetency.TryGetValue(code, out _) => LearningPathValues.Scenario,
+                "scenario" => LearningPathValues.ExternalLearning,
                 "behavioral" => LearningPathValues.StarDrill,
                 "interview" => LearningPathValues.Interview,
                 "resume" => LearningPathValues.ResumeImprovement,
@@ -190,20 +203,27 @@ public static class LearningPathPlanner
                 LearningPathValues.Scenario => $"Practice {name}",
                 LearningPathValues.StarDrill => $"Drill {name} with STAR",
                 LearningPathValues.Interview => $"Practice {name} in an interview",
+                LearningPathValues.ExternalLearning => $"Study {name} with guided practice",
                 _ => $"Improve {name} in your CV"
             };
+            var description = type == LearningPathValues.ExternalLearning
+                ? $"Practice or study the {name} competency using a suitable learning resource."
+                : $"Use a focused practice session to improve {name}.";
             var key = $"{type}:{code}{(resource is null ? string.Empty : $":{resource.Id:N}")}";
             activities.Add(new LearningPathActivityPlan(
                 key,
                 type,
                 LearningPathRules.Truncate(title, LearningPathRules.ActivityTitleMaxLength),
-                LearningPathRules.Truncate($"Use a focused practice session to improve {name}.", LearningPathRules.ActivityDescriptionMaxLength),
+                LearningPathRules.Truncate(description, LearningPathRules.ActivityDescriptionMaxLength),
                 code,
                 resource?.Id,
                 null,
                 priority,
                 LearningPathRules.MilestoneCodeForPriority(priority),
-                0));
+                0)
+            {
+                LatestEvidenceAt = competency.LatestEvidenceAt
+            });
         }
 
         foreach (var signal in profile.WeaknessSignals
@@ -227,7 +247,10 @@ public static class LearningPathPlanner
                 null,
                 3,
                 LearningPathValues.SupportingMilestone,
-                0));
+                0)
+            {
+                LatestEvidenceAt = signal.LatestEvidenceAt
+            });
         }
 
         var orderedActivities = activities
