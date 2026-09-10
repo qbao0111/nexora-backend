@@ -623,19 +623,59 @@ This log records completed implementation milestones and verification evidence. 
 - Verification: Release build passed with 0 warnings/errors; 300 unit tests and 159 integration tests passed; EF reports no pending model changes; changed-file C# format verification and `git diff --check` are clean; NuGet vulnerability audit is clean; no live provider calls. Iteration 2 corrected root-sequence tie-breaking and synchronized this record with the final local gate counts.
 - Dependencies: A6 must pass exact-head local/remote review before merge; do not start A7. No frontend changes.
 
-## 2026-09-10 - B9 Career Goal / Target Role (current-main synchronization)
+## 2026-09-10 - A7 Free interview + paid continuation (implementation)
+
+- Status: Implementation complete; deterministic verification green; C2C local review pending
+- Owner: Backend workstream A (migration owner: Bảo)
+- Branch: `feat/a7-interview-free-continuation`
+- Base: `c3af51190da78c382c22a9f3294400559cbd22e2` (`main` after A6 merge)
+- Scope: Added the server-owned three-question Free trial (`self_introduction`, `behavioral_star`, `motivation_role_fit`), finish-now/upgrade continuation state, and an idempotent same-session paid `/interviews/{id}/continue` endpoint with entitlement-gated primary/follow-up generation. Paid question limits are policy data and remain separate from session quota; question lineage and STAR grouping continue to use explicit kind/topic/parent metadata.
+- Contracts/traceability: Updated `SPEC.md`, `docs/03-api-data-contract.md`, `docs/08-data-model.md`, `docs/09-ai-integration-spec.md`, `docs/SRS.md`, `docs/11-analysis-design-models.md`, `docs/admin-api.md`, and the A7 checklist in `implementation_plan.md`.
+- Migration: `20260910132606_InterviewFreeContinuation` seeds `interview_question_limit` policy values (Free 3, Basic 6, Weekly 8, Pro 10) and backfills entitlement feature snapshots for existing entitlements; no unrelated schema changes.
+- Verification: `dotnet tool restore`; `dotnet restore Nexora.slnx`; Release solution build passed with 0 warnings/errors; 305 unit and 162 integration tests passed; focused A7/AI/realtime filter passed 36 tests; EF reports no pending model changes; NuGet vulnerability audit is clean; exact changed-C# `dotnet format --verify-no-changes` passed; `git diff --check` passed. Tests use deterministic providers and SQLite; no live AI/payment/provider calls.
+- Dependencies: A7 exact-head local/remote review and merge; A8 per-answer coaching follows only after A7 merge. No frontend changes and no A8/A9 implementation was started.
+
+## 2026-09-10 - A7 corrective iteration 2
+
+- Status: Corrective implementation complete; deterministic gates green; C2C local review handoff pending
+- Owner: Backend workstream A (migration owner: Bao)
+- Task/checkpoint: `c2c_a7b3`, corrective iteration `2`; existing A7 task and branch preserved after a control-plane stall
+- Branch/base: `feat/a7-interview-free-continuation` from `c3af51190da78c382c22a9f3294400559cbd22e2`; no commit or PR created yet
+- Findings resolved: first-question prompt v3 and deterministic provider fixtures now honor server-owned topics; continuation remains `in_progress` while an issued cap question is unanswered; persisted question provenance comes from each `AiExecutionResult`; fake verified-payment checkout and distinct-key continuation concurrency coverage prove one paid question and one interview usage reservation/consumption.
+- Policy: repository and machine-local C2C policies now define bounded review handoff/recovery plus the `EXECUTION_STALLED` progress watchdog. A stall is control-plane state only and does not replay implementation or consume an iteration.
+- Verification: Release build passed with 0 warnings/errors; 306 unit and 164 integration tests passed; EF reports no pending model changes; NuGet vulnerability audit is clean; changed-file C# format verification and `git diff --check` pass. Tests use deterministic providers/SQLite; no live AI, payment or production provider calls.
+- Scope: A7 corrective files only, plus the required policy/log evidence; no A8/A9 or frontend changes. The A7 migration remains unchanged.
+- Next: submit exactly one `STATE: EXECUTED` handoff for iteration 2, obtain bounded C2C local review, then continue the existing commit/push/PR/CI/remote-review lifecycle.
+
+## 2026-09-10 - A7 corrective iteration 3
+
+- Status: One focused review correction complete; deterministic gates green; C2C local review handoff pending
+- Task/checkpoint: `c2c_a7b3`, corrective iteration `3`; this increment reflects the concrete remaining review finding, not the earlier control-plane stall
+- Finding closed: the verified checkout/webhook path now exercises a finite paid `interview_question_limit` through Q4/Q5, asserts terminal `max_questions_reached` plus `isComplete=true`, and verifies an over-cap continuation returns `INTERVIEW_MAX_QUESTIONS_REACHED` without another AI call, question, interview reserve or consume event.
+- Verification after the new regression: Release build passed with 0 warnings/errors; 306 unit and 165 integration tests passed (20 PracticeApiTests); EF remains at no pending model changes; changed-C# format and `git diff --check` are clean. Existing vulnerability-audit evidence remains valid because no dependency changed.
+- Next: send exactly one iteration-3 `STATE: EXECUTED` handoff for the same task and request the bounded local semantic review; no A8/A9 work has started.
+
+## 2026-09-10 - A7 corrective iteration 4 (mechanical CI formatting)
+
+- Status: Mechanical CI correction complete; local and remote semantic review accepted; PR ready for merge pending the repository approval gate
+- Task/checkpoint: `c2c_a7b3`, corrective iteration `4`; hosted run `34502852688` failed only on `ENDOFLINE` for six changed C# files because their committed blobs were LF while `.editorconfig` requires CRLF.
+- Correction: normalized only the six reported C# files to CRLF, preserving their content and all A7 behavior; no new review finding was introduced.
+- Commit/PR: `5f66898e4e7e25d5163b0e11fa95efa83d687afd` on `feat/a7-interview-free-continuation`; PR [#51](https://github.com/qbao0111/nexora-backend/pull/51) targets `main`.
+- Verification: local exact changed-file formatter, Release build (0 warnings/errors), 306 unit tests, 165 integration tests, EF no pending model changes, NuGet vulnerability audit, and `git diff --check` pass. Hosted Backend CI run `34504172946` is green for the exact head; ChatGPT remote review returned `STATE: DONE`, `VERDICT: READY_TO_MERGE`, `PR: 51`, `HEAD: 5f66898e4e7e25d5163b0e11fa95efa83d687afd`, `CI: GREEN`.
+- Next: await explicit human authorization before merging PR #51; no A8/A9 work has started.
+
+## 2026-09-11 - B9 Career Goal / Target Role (current-main synchronization)
 
 - Status: Implementation complete / Ready for independent review
 - Owner: Bảo Nguyên — Backend workstream B
 - Branch: `feat/career-goal`
-- Base: `c3af51190da78c382c22a9f3294400559cbd22e2` (`origin/main`, after A4/A5/A6)
+- Base: `ffc7d570d11f4ec2da2d45bf2ad15a474f35d3cb` (`origin/main`, after A4/A5/A6/A7)
 - Implementation commit: `629ff824b8645900bd080c9d966b7a51aef9498e`
-- Scope: Reapplied the reviewed B9 user-owned Career Goal API/domain/persistence foundation directly on the latest main baseline. Existing B9 semantics are preserved: authenticated owner scope, safe 404 isolation, canonical seniority/optional normalization, target JD ownership checks, PATCH omitted-versus-explicit-null behavior, one active goal per user, atomic activation switching and no delete/archive endpoint. No B10+ logic, AI coupling, interview changes or `PracticeService.cs` changes were introduced.
+- Scope: Reapplied the reviewed B9 user-owned Career Goal API/domain/persistence foundation directly on the current main baseline. Existing B9 semantics are preserved: authenticated owner scope, safe 404 isolation, canonical seniority/optional normalization, target JD ownership checks, PATCH omitted-versus-explicit-null behavior, one active goal per user, atomic activation switching and no delete/archive endpoint. No B10+ logic, AI coupling, interview changes or `PracticeService.cs` changes were introduced.
 - API contracts: `POST /api/v1/career-goals`, `GET /api/v1/career-goals`, `GET /api/v1/career-goals/{id}` and `PATCH /api/v1/career-goals/{id}`. Required `targetRole`/`seniority`, optional industry/company/owned target JD/ISO target date, standard `{data}`/`{error}` envelopes and owner-scoped response fields are documented.
 - Domain/business rules: New goals are active and deactivate the user's prior active goal in one transaction. Service-level user-row locking plus the database filtered unique index prevent multiple active goals; nullable PATCH fields clear only when explicitly sent as `null`. Privacy export includes Career Goals and account deletion removes them.
-- Files/modules: B9 API contracts/controller, `Nexora.Business.Career`, `Nexora.Data.Career`, DbContext/DI, privacy contract/service integration, API/data-model/frontend docs, focused tests and migration-chain assertions. A4 privacy export metadata and A6 interview question lineage/configuration remain intact.
-- Migration impact: Removed stale `20260910072100_B9CareerGoal` artifacts and generated additive `20260910162014_B9CareerGoal` from the latest main snapshot. The fresh migration creates only `career_goals` with owner/JD restrictive FKs, target constraints, UTC timestamps, owner/created and JD indexes, and `IX_career_goals_one_active_per_user` filtered on `Active = TRUE`. A4 `20260910063425_CvAnalysisV2` and A6 `20260910105214_InterviewQuestionContractV1` remain earlier in the chain; no existing migration was modified.
-- Verification: `dotnet restore Nexora.slnx` passed; `dotnet build Nexora.slnx --nologo --no-restore` passed with 0 warnings/errors; `dotnet test --no-build --nologo` passed with 306 unit and 163 integration tests, 0 failed/skipped; focused B9 unit 6/6, B9 integration 4/4, privacy export/deletion 1/1 and migration discovery 1/1 passed. `dotnet ef migrations has-pending-model-changes` reported `No changes have been made to the model since the last migration.`; changed-C# `dotnet format --verify-no-changes` passed; NuGet vulnerability audit reported no vulnerable packages; `git -c core.whitespace=cr-at-eol diff --check` passed.
+- Files/modules: B9 API contracts/controller, `Nexora.Business.Career`, `Nexora.Data.Career`, DbContext/DI, privacy contract/service integration, API/data-model/frontend docs, focused tests and migration-chain assertions. A4 privacy export metadata, A6 interview question lineage/configuration and A7 interview continuation behavior remain intact.
+- Migration impact: Removed stale `20260910072100_B9CareerGoal` artifacts and generated additive `20260910162014_B9CareerGoal` from the current main snapshot. The synchronized chain keeps A7 `20260910132606_InterviewFreeContinuation` before B9; the B9 migration creates only `career_goals` with owner/JD restrictive FKs, target constraints, UTC timestamps, owner/created and JD indexes, and `IX_career_goals_one_active_per_user` filtered on `Active = TRUE`. No existing A7 migration was modified.
+- Verification: Post-synchronization `dotnet restore` passed; `dotnet build Nexora.slnx --nologo` passed with 0 warnings/errors; `dotnet test` passed with 312 unit and 169 integration tests, 0 failed/skipped; `dotnet ef migrations has-pending-model-changes` reported `No changes have been made to the model since the last migration.`; exact changed-C# `dotnet format --verify-no-changes` passed; NuGet vulnerability audit reported no vulnerable packages; `git diff --check` and the CRLF-aware staged diff check passed. No live AI, R2, Resend, payment, production database or production service calls were made.
 - FE impact: No frontend code changed. The existing contract docs describe the endpoints, active-goal ordering and explicit-null PATCH behavior for future UI integration.
-- Remaining blockers: Fetched `origin/main` was verified to contain A4/A5/A6 but not B8 Star Story entities/migration; the old B8 branch was not used and no B8 assumptions were added to B9. B9 is self-contained; clarify B8 main ancestry before dependent B10 work. Independent review remains required.
-- No live AI, R2, Resend, payment, production database or production service calls were made.
+- Remaining blockers: Latest `origin/main` at `ffc7d570d11f4ec2da2d45bf2ad15a474f35d3cb` includes A7 and was verified not to contain B8 Star Story entities or migrations; the old B8 branch was not used and no B8 assumptions were added to B9. B9 is self-contained; clarify B8 main ancestry before dependent B10 work. Independent review remains required.

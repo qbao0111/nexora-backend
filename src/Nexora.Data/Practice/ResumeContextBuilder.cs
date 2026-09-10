@@ -36,13 +36,24 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
     }
 
     public string BuildInterviewQuestionContext(
-        string role, string seniority, string interviewType, string difficulty, string? jobDescription, ResumeProfile? profile)
+        string role,
+        string seniority,
+        string interviewType,
+        string difficulty,
+        string? jobDescription,
+        ResumeProfile? profile,
+        int questionSequence = 1,
+        string? questionTopic = null)
     {
         var builder = new StringBuilder();
         Append(builder, "role", role, 160);
         Append(builder, "seniority", seniority, 80);
         Append(builder, "interview-type", interviewType, 80);
         Append(builder, "difficulty", difficulty, 80);
+        Append(builder, "question-sequence", questionSequence.ToString(System.Globalization.CultureInfo.InvariantCulture), 40);
+        Append(builder, "question-topic", questionTopic, 80);
+        if (!string.IsNullOrWhiteSpace(questionTopic))
+            builder.AppendLine("instruction: the requested question-topic is authoritative; generate one question for that topic only.");
         Append(builder, "job-description", jobDescription, 4_000);
         if (profile is not null) AppendProfile(builder, profile, includeDetails: false);
         return Bound(builder.ToString(), InterviewContextLimit);

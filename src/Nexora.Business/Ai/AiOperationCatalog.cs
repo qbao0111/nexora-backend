@@ -604,7 +604,7 @@ public sealed class FieldBenchmarkResumeAnalysisOperation : AiOperationDefinitio
 public sealed class InterviewFirstQuestionOperation : AiOperationDefinition<GeneratedQuestion>
 {
     public override string Purpose => AiPurposes.InterviewFirstQuestion;
-    public override string PromptVersion => "interview-first-question-v2";
+    public override string PromptVersion => "interview-first-question-v3";
     public override string SchemaVersion => "interview-first-question-v2";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 500;
@@ -620,7 +620,7 @@ public sealed class InterviewFirstQuestionOperation : AiOperationDefinition<Gene
         """);
 
     public override string Instructions =>
-        "Generate one concise, realistic interview question appropriate for the supplied role, seniority, and interview type. If interview type is behavioral, craft a behavioral question inviting a real-world story. The question must be under 2,000 characters. Do not mention or explain the STAR acronym. Write in the language of the role and job description.";
+        "Generate one concise, realistic interview question for the supplied role and seniority. The server-owned question-topic in the context is authoritative whenever present; generate only that topic and never infer semantic topic from interview-type or question-sequence. For self_introduction, ask for the candidate's background and relevant experience. For behavioral_star, invite one real-world situation and the candidate's actions and result. For motivation_role_fit, ask about motivation and fit for the role. For other topics, follow the explicit topic and supplied role context. The question must be under 2,000 characters. Do not mention or explain the STAR acronym. Write in the language of the role and job description.";
 
     public override AiValidationResult<GeneratedQuestion> NormalizeAndValidate(GeneratedQuestion? raw, AiOperationContext context)
     {
