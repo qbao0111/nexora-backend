@@ -83,6 +83,7 @@ Business modules are Identity/Profile, Billing/Entitlement, Resume/JD, Interview
 
 - ASP.NET Core Identity is the credential/role source of truth; `ApplicationUser`/profile extend it.
 - User-owned Resume, JobDescription, Analysis, InterviewSession, Answer, Report, StarDraft and ScenarioAttempt records carry owner identity and timestamps.
+- Resume analysis has explicit `job_targeted` (ResumeProfile + JobDescription) and `field_benchmark` (ResumeProfile + industry/role/seniority) modes; each run stores its context and versioned profile provenance.
 - Billing uses versioned Plan/Price, Order, PaymentEvent, Subscription/Entitlement and immutable UsageEvent records.
 - Files persist private `storage_key`, checksum, detected MIME, size and processing state—not public URLs.
 - Idempotency, outbox and audit records support reliable mutations and jobs.
@@ -94,6 +95,7 @@ Physical constraints and lifecycle ownership: [data model](docs/08-data-model.md
 - Base URL is `/api/v1`; timestamps use UTC ISO-8601.
 - Client inputs never control user identity, price, plan, quota, entitlement or score.
 - Core routes cover `/me`, `/plans`, checkout/payment webhooks, upload/resume/analysis, interviews/answers/completion/report, and dashboard/history.
+- `POST /resume-analyses` requires an explicit mode and idempotency key; `GET /resume-analyses/{id}` returns the mode-specific, strictly validated result and version metadata.
 - User resources always require owner authorization; cross-user lookup should not leak metadata.
 - Response DTOs are allow-listed; EF/provider objects are never serialized directly.
 
@@ -140,6 +142,8 @@ public interface IAiProvider
 Development defaults to `GeminiAiProvider` through the `IAiProvider` boundary. The optional `DeepSeekAiProvider` can be selected with `Ai:Provider=deepseek` for local text-AI evaluation; `IDocumentOcrProvider` remains Gemini regardless of that selector. Deterministic AI test doubles, when needed, stay inside the test project. Gemini and DeepSeek remain internal-development integrations unless DEC-01 later selects a production provider: provider SDK/HTTP types stay in `Nexora.Integrations`, model IDs come from configuration, keys come from secret configuration, and outputs map to Nexora schemas. Details: [AI integration specification](docs/09-ai-integration-spec.md).
 
 The structured executor remains bounded to two provider calls. Only a positively detected **high-policy** DeepSeek reasoning-budget exhaustion may select one per-attempt `low` override; low-policy exhaustion remains an ordinary low-to-low retry, semantic repair remains on the configured policy, and `RepairUsed` continues to mean semantic repair. See the [AI integration specification](docs/09-ai-integration-spec.md#221-confirmed-reasoning-budget-fallback) for detection and telemetry rules.
+
+Resume analysis uses strict provider-neutral schemas for its two modes. The job-targeted operation returns `matchScore` and five named breakdown dimensions; the field-benchmark operation returns `readinessScore` and six named dimensions. Both use a 4,096-token first attempt with at most one validated 8,192-token truncation retry and reuse a valid cached `ResumeProfile`.
 
 ## 12. Billing and quota model
 

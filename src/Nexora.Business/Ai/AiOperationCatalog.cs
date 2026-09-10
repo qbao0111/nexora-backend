@@ -275,6 +275,7 @@ public static class AiOperations
 
     public static readonly ResumeProfileOperation ResumeProfile = new();
     public static readonly ResumeAnalysisOperation ResumeAnalysis = new();
+    public static readonly FieldBenchmarkResumeAnalysisOperation ResumeAnalysisFieldBenchmark = new();
     public static readonly InterviewFirstQuestionOperation InterviewFirstQuestion = new();
     public static readonly InterviewEvaluateOperation InterviewEvaluate = new();
     public static readonly InterviewFollowupOperation InterviewFollowup = new();
@@ -348,55 +349,256 @@ public sealed class ResumeProfileOperation : AiOperationDefinition<ResumeProfile
         => ResumeProfileValidator.NormalizeAndValidate(raw);
 }
 
+public static class ResumeAnalysisMetadata
+{
+    public const string Mode = "resume-analysis-mode";
+}
+
+public static class ResumeAnalysisValidator
+{
+    private const int MaximumSummaryLength = 3_000;
+    private const int MaximumItemLength = 1_000;
+    private const int MaximumListItems = 6;
+
+    public static AiValidationResult<ResumeAnalysisOutput> NormalizeJobTargeted(
+        ResumeAnalysisOutput? raw,
+        AiOperationContext context)
+    {
+        if (raw is null)
+            return Invalid("resume.analysis_invalid");
+        if (!TryGetMode(context, out var requestedMode))
+            return Invalid("resume.analysis_mode_required");
+        if (!string.Equals(requestedMode, ResumeAnalysisModes.JobTargeted, StringComparison.Ordinal))
+            return Invalid("resume.analysis_mode_invalid");
+
+        if (!string.Equals(raw.Mode, ResumeAnalysisModes.JobTargeted, StringComparison.Ordinal))
+            return Invalid("resume.analysis_mode_invalid");
+        if (raw.MatchScore is null or < 0 or > 100)
+            return Invalid("resume.match_score_invalid");
+        if (raw.ReadinessScore is not null)
+            return Invalid("resume.analysis_mode_mismatch");
+        if (!TryNormalizeRequiredText(raw.Summary, MaximumSummaryLength, "resume.summary_blank", out var summary))
+            return Invalid("resume.summary_blank");
+        if (!TryNormalizeList(raw.MatchedKeywordsOrSkills, allowEmpty: true, out var matched))
+            return Invalid("resume.matched_keywords_blank");
+        if (!TryNormalizeList(raw.MissingKeywordsOrSkills, allowEmpty: true, out var missing))
+            return Invalid("resume.missing_keywords_blank");
+        if (!TryNormalizeList(raw.Strengths, allowEmpty: false, out var strengths))
+            return Invalid("resume.strengths_blank");
+        if (!TryNormalizeList(raw.Gaps, allowEmpty: false, out var gaps))
+            return Invalid("resume.gaps_blank");
+        if (!TryNormalizeList(raw.Recommendations, allowEmpty: false, out var recommendations))
+            return Invalid("resume.recommendations_blank");
+        if (!TryNormalizeList(raw.SectionFeedback, allowEmpty: false, out var sectionFeedback))
+            return Invalid("resume.section_feedback_invalid");
+        if (!TryNormalizeBreakdown(raw.Breakdown, [
+                "technicalSkillMatch", "experienceRelevance", "impactEvidence", "clarity", "structure"
+            ], out var breakdown))
+            return Invalid("resume.breakdown_invalid");
+
+        return AiValidationResult<ResumeAnalysisOutput>.Success(new ResumeAnalysisOutput(
+            strengths,
+            gaps,
+            recommendations,
+            raw.MatchScore,
+            null,
+            summary,
+            matched,
+            missing,
+            sectionFeedback,
+            breakdown,
+            ResumeAnalysisModes.JobTargeted));
+    }
+
+    public static AiValidationResult<ResumeAnalysisOutput> NormalizeFieldBenchmark(
+        ResumeAnalysisOutput? raw,
+        AiOperationContext context)
+    {
+        if (raw is null)
+            return Invalid("resume.analysis_invalid");
+        if (!TryGetMode(context, out var requestedMode))
+            return Invalid("resume.analysis_mode_required");
+        if (!string.Equals(requestedMode, ResumeAnalysisModes.FieldBenchmark, StringComparison.Ordinal))
+            return Invalid("resume.analysis_mode_invalid");
+        if (!string.Equals(raw.Mode, ResumeAnalysisModes.FieldBenchmark, StringComparison.Ordinal))
+            return Invalid("resume.analysis_mode_invalid");
+        if (raw.ReadinessScore is null or < 0 or > 100)
+            return Invalid("resume.readiness_score_invalid");
+        if (raw.MatchScore is not null || raw.MatchedKeywordsOrSkills is not null || raw.MissingKeywordsOrSkills is not null)
+            return Invalid("resume.analysis_mode_mismatch");
+        if (!TryNormalizeRequiredText(raw.Summary, MaximumSummaryLength, "resume.summary_blank", out var summary))
+            return Invalid("resume.summary_blank");
+        if (!TryNormalizeList(raw.Strengths, allowEmpty: false, out var strengths))
+            return Invalid("resume.strengths_blank");
+        if (!TryNormalizeList(raw.Gaps, allowEmpty: false, out var gaps))
+            return Invalid("resume.gaps_blank");
+        if (!TryNormalizeList(raw.Recommendations, allowEmpty: false, out var recommendations))
+            return Invalid("resume.recommendations_blank");
+        if (!TryNormalizeList(raw.SectionFeedback, allowEmpty: false, out var sectionFeedback))
+            return Invalid("resume.section_feedback_invalid");
+        if (!TryNormalizeBreakdown(raw.Breakdown, [
+                "technicalFoundation", "projectEvidence", "experiencePresentation", "impactAchievements", "clarity", "roleAlignment"
+            ], out var breakdown))
+            return Invalid("resume.breakdown_invalid");
+
+        return AiValidationResult<ResumeAnalysisOutput>.Success(new ResumeAnalysisOutput(
+            strengths,
+            gaps,
+            recommendations,
+            null,
+            raw.ReadinessScore,
+            summary,
+            null,
+            null,
+            sectionFeedback,
+            breakdown,
+            ResumeAnalysisModes.FieldBenchmark));
+    }
+
+    private static bool TryGetMode(AiOperationContext context, out string mode)
+    {
+        mode = string.Empty;
+        if (context.Metadata is null || !context.Metadata.TryGetValue(ResumeAnalysisMetadata.Mode, out var candidate) || string.IsNullOrWhiteSpace(candidate))
+            return false;
+
+        mode = candidate;
+        return true;
+    }
+
+    private static bool TryNormalizeRequiredText(string? value, int maxLength, string _, out string normalized)
+    {
+        normalized = value?.Trim() ?? string.Empty;
+        return normalized.Length > 0 && normalized.Length <= maxLength;
+    }
+
+    private static bool TryNormalizeList(
+        IReadOnlyCollection<string>? values,
+        bool allowEmpty,
+        out IReadOnlyCollection<string> normalized)
+    {
+        if (values is null || values.Count > MaximumListItems || (!allowEmpty && values.Count == 0) || values.Any(value => string.IsNullOrWhiteSpace(value)))
+        {
+            normalized = [];
+            return false;
+        }
+
+        normalized = values.Select(value => value.Trim()).ToArray();
+        return normalized.All(value => value.Length <= MaximumItemLength);
+    }
+
+    private static bool TryNormalizeBreakdown(
+        IReadOnlyDictionary<string, int>? values,
+        IReadOnlyCollection<string> requiredKeys,
+        out IReadOnlyDictionary<string, int> normalized)
+    {
+        var normalizedValues = new Dictionary<string, int>(StringComparer.Ordinal);
+        normalized = normalizedValues;
+        if (values is null || values.Count != requiredKeys.Count)
+            return false;
+
+        var required = requiredKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var candidates = values
+            .Select(item => (Key: item.Key.Trim(), item.Value))
+            .Where(item => item.Key.Length > 0)
+            .ToArray();
+        if (candidates.Length != required.Count ||
+            candidates.Select(item => item.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count() != required.Count ||
+            candidates.Any(item => !required.Contains(item.Key)))
+            return false;
+
+        foreach (var key in requiredKeys)
+        {
+            var match = candidates.Single(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase));
+            if (match.Value is < 0 or > 100)
+                return false;
+            normalizedValues[key] = match.Value;
+        }
+
+        return normalizedValues.Count == requiredKeys.Count;
+    }
+
+    private static AiValidationResult<ResumeAnalysisOutput> Invalid(string reason) =>
+        AiValidationResult<ResumeAnalysisOutput>.Failure(reason, "semantic", repairable: true);
+}
+
 public sealed class ResumeAnalysisOperation : AiOperationDefinition<ResumeAnalysisOutput>
 {
     private const int InitialOutputTokens = 4_096;
     private const int TruncationRetryOutputTokens = 8_192;
 
     public override string Purpose => AiPurposes.ResumeAnalysis;
-    public override string PromptVersion => "resume-analysis-v2";
-    public override string SchemaVersion => "resume-analysis-v2";
-    public override string RubricVersion => "analysis-v2";
+    public override string PromptVersion => "resume-analysis-job-targeted-v2";
+    public override string SchemaVersion => "resume-analysis-job-targeted-v2";
+    public override string RubricVersion => "analysis-job-targeted-v2";
     public override int MaxOutputTokens => InitialOutputTokens;
-
     public override bool SupportsOutputTruncationRetry => true;
-
     public override int GetEffectiveMaxOutputTokens(int attempt, bool outputTruncationRetry) =>
         ValidateEffectiveMaxOutputTokens(attempt == 2 && outputTruncationRetry ? TruncationRetryOutputTokens : InitialOutputTokens);
 
     public override JsonDocument OutputSchema { get; } = JsonDocument.Parse("""
         {
           "type": "object",
+          "additionalProperties": false,
           "properties": {
-            "strengths": { "type": "array", "items": { "type": "string" } },
-            "gaps": { "type": "array", "items": { "type": "string" } },
-            "recommendations": { "type": "array", "items": { "type": "string" } }
+            "mode": { "type": "string", "enum": ["job_targeted"] },
+            "matchScore": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "summary": { "type": "string", "minLength": 1, "maxLength": 3000 },
+            "matchedKeywordsOrSkills": { "type": "array", "minItems": 0, "maxItems": 6, "items": { "type": "string", "maxLength": 1000 } },
+            "missingKeywordsOrSkills": { "type": "array", "minItems": 0, "maxItems": 6, "items": { "type": "string", "maxLength": 1000 } },
+            "strengths": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "type": "string", "maxLength": 1000 } },
+            "gaps": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "type": "string", "maxLength": 1000 } },
+            "recommendations": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "type": "string", "maxLength": 1000 } },
+            "sectionFeedback": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "type": "string", "maxLength": 1000 } },
+            "breakdown": { "type": "object", "additionalProperties": false, "properties": { "technicalSkillMatch": { "type": "integer", "minimum": 0, "maximum": 100 }, "experienceRelevance": { "type": "integer", "minimum": 0, "maximum": 100 }, "impactEvidence": { "type": "integer", "minimum": 0, "maximum": 100 }, "clarity": { "type": "integer", "minimum": 0, "maximum": 100 }, "structure": { "type": "integer", "minimum": 0, "maximum": 100 } }, "required": ["technicalSkillMatch", "experienceRelevance", "impactEvidence", "clarity", "structure"] }
           },
-          "required": ["strengths", "gaps", "recommendations"]
+          "required": ["mode", "matchScore", "summary", "matchedKeywordsOrSkills", "missingKeywordsOrSkills", "strengths", "gaps", "recommendations", "sectionFeedback", "breakdown"]
         }
         """);
 
     public override string Instructions =>
-        "Analyze the candidate's profile against the target job description. Return strengths (1-3 grounded items directly matching job requirements), gaps (1-3 specific missing qualifications or skills), and recommendations (1-3 actionable steps to increase readiness). Do not leave any array empty. Write in the language of the job description.";
+        "Analyze the candidate's resume profile against the target job description. Return mode='job_targeted', a 0-100 matchScore, a concise grounded summary, matched and missing skills (which may be empty when none are evidenced), 1-6 strengths, gaps and recommendations, sectionFeedback, and the five-key 0-100 breakdown. Never invent candidate achievements or qualifications. Write in the language of the supplied job description.";
 
-    public override AiValidationResult<ResumeAnalysisOutput> NormalizeAndValidate(ResumeAnalysisOutput? raw, AiOperationContext context)
-    {
-        if (raw is null)
-            return AiValidationResult<ResumeAnalysisOutput>.Failure("resume.analysis_invalid", "semantic", repairable: true);
+    public override AiValidationResult<ResumeAnalysisOutput> NormalizeAndValidate(ResumeAnalysisOutput? raw, AiOperationContext context) =>
+        ResumeAnalysisValidator.NormalizeJobTargeted(raw, context);
+}
 
-        var strengths = raw.Strengths?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [];
-        var gaps = raw.Gaps?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [];
-        var recommendations = raw.Recommendations?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [];
+public sealed class FieldBenchmarkResumeAnalysisOperation : AiOperationDefinition<ResumeAnalysisOutput>
+{
+    private const int InitialOutputTokens = 4_096;
+    private const int TruncationRetryOutputTokens = 8_192;
 
-        if (strengths.Length == 0)
-            return AiValidationResult<ResumeAnalysisOutput>.Failure("resume.strengths_blank", "semantic", repairable: true);
-        if (gaps.Length == 0)
-            return AiValidationResult<ResumeAnalysisOutput>.Failure("resume.gaps_blank", "semantic", repairable: true);
-        if (recommendations.Length == 0)
-            return AiValidationResult<ResumeAnalysisOutput>.Failure("resume.recommendations_blank", "semantic", repairable: true);
+    public override string Purpose => AiPurposes.ResumeAnalysis;
+    public override string PromptVersion => "resume-analysis-field-benchmark-v2";
+    public override string SchemaVersion => "resume-analysis-field-benchmark-v2";
+    public override string RubricVersion => "analysis-field-benchmark-v2";
+    public override int MaxOutputTokens => InitialOutputTokens;
+    public override bool SupportsOutputTruncationRetry => true;
+    public override int GetEffectiveMaxOutputTokens(int attempt, bool outputTruncationRetry) =>
+        ValidateEffectiveMaxOutputTokens(attempt == 2 && outputTruncationRetry ? TruncationRetryOutputTokens : InitialOutputTokens);
 
-        return AiValidationResult<ResumeAnalysisOutput>.Success(new ResumeAnalysisOutput(strengths, gaps, recommendations));
-    }
+    public override JsonDocument OutputSchema { get; } = JsonDocument.Parse("""
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "type": "string", "enum": ["field_benchmark"] },
+            "readinessScore": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "summary": { "type": "string", "minLength": 1, "maxLength": 3000 },
+            "strengths": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "type": "string", "maxLength": 1000 } },
+            "gaps": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "type": "string", "maxLength": 1000 } },
+            "recommendations": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "type": "string", "maxLength": 1000 } },
+            "sectionFeedback": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "type": "string", "maxLength": 1000 } },
+            "breakdown": { "type": "object", "additionalProperties": false, "properties": { "technicalFoundation": { "type": "integer", "minimum": 0, "maximum": 100 }, "projectEvidence": { "type": "integer", "minimum": 0, "maximum": 100 }, "experiencePresentation": { "type": "integer", "minimum": 0, "maximum": 100 }, "impactAchievements": { "type": "integer", "minimum": 0, "maximum": 100 }, "clarity": { "type": "integer", "minimum": 0, "maximum": 100 }, "roleAlignment": { "type": "integer", "minimum": 0, "maximum": 100 } }, "required": ["technicalFoundation", "projectEvidence", "experiencePresentation", "impactAchievements", "clarity", "roleAlignment"] }
+          },
+          "required": ["mode", "readinessScore", "summary", "strengths", "gaps", "recommendations", "sectionFeedback", "breakdown"]
+        }
+        """);
+
+    public override string Instructions =>
+        "Benchmark the candidate's resume profile for the supplied industry, target role and seniority. Return mode='field_benchmark', a 0-100 readinessScore, concise grounded summary, 1-6 strengths, gaps and recommendations, sectionFeedback, and the six-key 0-100 breakdown. Never invent candidate achievements or qualifications. Write in the language of the supplied context.";
+
+    public override AiValidationResult<ResumeAnalysisOutput> NormalizeAndValidate(ResumeAnalysisOutput? raw, AiOperationContext context) =>
+        ResumeAnalysisValidator.NormalizeFieldBenchmark(raw, context);
 }
 
 public sealed class InterviewFirstQuestionOperation : AiOperationDefinition<GeneratedQuestion>

@@ -83,6 +83,85 @@ public sealed class PrivacyApiTests
     }
 
     [Fact]
+    public async Task FieldBenchmarkExportIncludesSafeProvenanceWithoutProfileSnapshot()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var now = DateTimeOffset.UtcNow;
+        var resumeId = Guid.NewGuid();
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var storedFile = new StoredFile
+            {
+                Id = Guid.NewGuid(),
+                UserId = account.UserId,
+                StorageKey = "resumes/export-field-benchmark.pdf",
+                FileName = "cv.pdf",
+                ContentType = "application/pdf",
+                Size = 100,
+                Checksum = "export",
+                CreatedAt = now
+            };
+            db.Add(new ResumeRecord
+            {
+                Id = resumeId,
+                UserId = account.UserId,
+                StoredFileId = storedFile.Id,
+                StoredFile = storedFile,
+                Status = PracticeValues.Ready,
+                ExtractedText = "Backend engineer",
+                StructuredProfile = "{\"summary\":\"Backend engineer\"}",
+                ProfileModelVersion = "gemini-dev",
+                ProfilePromptVersion = "resume-profile-v2",
+                ProfileSchemaVersion = "resume-profile-v2",
+                Version = 3,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            db.Add(new ResumeAnalysis
+            {
+                Id = Guid.NewGuid(),
+                UserId = account.UserId,
+                ResumeId = resumeId,
+                ResumeVersion = 3,
+                Mode = ResumeAnalysisModes.FieldBenchmark,
+                ContextJson = "{\"mode\":\"field_benchmark\",\"industry\":\"Fintech\",\"targetRole\":\"Backend Engineer\",\"seniority\":\"senior\"}",
+                Status = PracticeValues.Completed,
+                ModelVersion = "gemini-dev",
+                PromptVersion = "resume-analysis-field-benchmark-v2",
+                SchemaVersion = "resume-analysis-field-benchmark-v2",
+                RubricVersion = "analysis-field-benchmark-v2",
+                ProfileSnapshot = "{\"private\":\"do-not-export\"}",
+                ProfileModelVersion = "gemini-dev",
+                ProfilePromptVersion = "resume-profile-v2",
+                ProfileSchemaVersion = "resume-profile-v2",
+                Result = "{\"readinessScore\":74}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                CompletedAt = now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var response = await client.GetAsync("/api/v1/me/export");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var exported = await DataAsync(response);
+        var analysis = exported.GetProperty("analyses")[0];
+        Assert.Equal("field_benchmark", analysis.GetProperty("mode").GetString());
+        Assert.Equal("Fintech", analysis.GetProperty("context").GetProperty("industry").GetString());
+        Assert.Equal(3, analysis.GetProperty("resumeVersion").GetInt32());
+        Assert.Equal("analysis-field-benchmark-v2", analysis.GetProperty("rubricVersion").GetString());
+        Assert.Equal("resume-profile-v2", analysis.GetProperty("profileSchemaVersion").GetString());
+        Assert.DoesNotContain("ProfileSnapshot", exported.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("do-not-export", exported.GetRawText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task DeletionRetainsUploadIntentUntilSignedCapabilityExpires()
     {
         var storage = new RecordingStorageProvider { RecreateOnFirstDelete = true };

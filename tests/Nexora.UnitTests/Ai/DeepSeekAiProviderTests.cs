@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Nexora.Business.Ai;
 using Nexora.Business.Common;
+using Nexora.Business.Practice;
 using Nexora.Integrations.Ai;
 
 namespace Nexora.UnitTests.Ai;
@@ -243,7 +244,12 @@ public sealed class DeepSeekAiProviderTests
         var result = await executor.ExecuteAsync(
             AiOperations.ResumeAnalysis,
             "candidate input",
-            new AiOperationContext("low-retry"),
+            new AiOperationContext(
+                "low-retry",
+                Metadata: new Dictionary<string, string>
+                {
+                    [ResumeAnalysisMetadata.Mode] = ResumeAnalysisModes.JobTargeted
+                }),
             CancellationToken.None);
 
         Assert.Equal(2, result.Attempts);
@@ -567,7 +573,21 @@ public sealed class DeepSeekAiProviderTests
     private static string ValidResumeAnalysisContent() => JsonSerializer.Serialize(new ResumeAnalysisOutput(
         ["Strength"],
         ["Gap"],
-        ["Recommendation"]));
+        ["Recommendation"],
+        MatchScore: 75,
+        Summary: "Grounded summary",
+        MatchedKeywordsOrSkills: [],
+        MissingKeywordsOrSkills: [],
+        SectionFeedback: ["Grounded section feedback."],
+        Breakdown: new Dictionary<string, int>
+        {
+            ["technicalSkillMatch"] = 75,
+            ["experienceRelevance"] = 70,
+            ["impactEvidence"] = 65,
+            ["clarity"] = 80,
+            ["structure"] = 75
+        },
+        Mode: ResumeAnalysisModes.JobTargeted));
 
     private static HttpResponseMessage ExhaustedResponse(int maxOutputTokens) => new(HttpStatusCode.OK)
     {

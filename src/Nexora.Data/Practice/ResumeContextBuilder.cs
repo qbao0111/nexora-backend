@@ -15,10 +15,22 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
     public string BuildProfileExtractionContext(string rawExtractedText) =>
         $"<resume-text>\n{Bound(rawExtractedText, ProfileInputLimit)}\n</resume-text>";
 
-    public string BuildResumeAnalysisContext(ResumeProfile profile, string jobDescription)
+    public string BuildResumeAnalysisContext(ResumeProfile profile, string jobDescription) =>
+        BuildResumeAnalysisContext(profile, new ResumeAnalysisContext(
+            ResumeAnalysisMode.JobTargeted,
+            jobDescription,
+            null,
+            null,
+            null));
+
+    public string BuildResumeAnalysisContext(ResumeProfile profile, ResumeAnalysisContext context)
     {
         var builder = new StringBuilder();
-        Append(builder, "target-job", jobDescription, 8_000);
+        Append(builder, "analysis-mode", context.Mode.ToWireValue(), 40);
+        Append(builder, "target-job", context.JobDescription, 8_000);
+        Append(builder, "industry", context.Industry, 160);
+        Append(builder, "target-role", context.TargetRole, 160);
+        Append(builder, "seniority", context.Seniority, 80);
         AppendProfile(builder, profile, includeDetails: true);
         return Bound(builder.ToString(), AnalysisContextLimit);
     }

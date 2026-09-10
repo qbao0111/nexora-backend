@@ -437,13 +437,28 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
         });
         builder.Entity<ResumeAnalysis>(entity =>
         {
-            entity.ToTable("resume_analyses");
+            entity.ToTable("resume_analyses", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_resume_analyses_mode",
+                    "\"Mode\" IN ('job_targeted', 'field_benchmark')");
+                table.HasCheckConstraint(
+                    "CK_resume_analyses_mode_job_description",
+                    "((\"Mode\" = 'job_targeted' AND \"JobDescriptionId\" IS NOT NULL AND \"JobDescriptionVersion\" IS NOT NULL) OR (\"Mode\" = 'field_benchmark' AND \"JobDescriptionId\" IS NULL AND \"JobDescriptionVersion\" IS NULL))");
+            });
             entity.HasKey(analysis => analysis.Id);
             entity.HasIndex(analysis => new { analysis.UserId, analysis.CreatedAt });
+            entity.Property(analysis => analysis.Mode).HasMaxLength(32).IsRequired();
+            entity.Property(analysis => analysis.ContextJson).HasColumnType("jsonb");
             entity.Property(analysis => analysis.Status).HasMaxLength(20).IsRequired();
             entity.Property(analysis => analysis.ModelVersion).HasMaxLength(80).IsRequired();
             entity.Property(analysis => analysis.PromptVersion).HasMaxLength(80).IsRequired();
             entity.Property(analysis => analysis.SchemaVersion).HasMaxLength(80).IsRequired();
+            entity.Property(analysis => analysis.RubricVersion).HasMaxLength(80);
+            entity.Property(analysis => analysis.ProfileSnapshot).HasColumnType("jsonb");
+            entity.Property(analysis => analysis.ProfileModelVersion).HasMaxLength(80);
+            entity.Property(analysis => analysis.ProfilePromptVersion).HasMaxLength(80);
+            entity.Property(analysis => analysis.ProfileSchemaVersion).HasMaxLength(80);
             entity.Property(analysis => analysis.Result).HasColumnType("jsonb");
             entity.Property(analysis => analysis.ErrorCode).HasMaxLength(80);
             entity.HasOne(analysis => analysis.User).WithMany().HasForeignKey(analysis => analysis.UserId).OnDelete(DeleteBehavior.Restrict);

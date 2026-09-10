@@ -94,12 +94,22 @@ The adapter and executor must never copy a provider response body, credential, p
 
 Document fallback is a separate `IDocumentOcrProvider` boundary. `GeminiDocumentOcrProvider` receives the original document only after the local extraction quality gate is suspicious/failed, and returns faithful extracted text plus the compact resume profile in one document-understanding response. It is not used for normal text PDF/DOCX extraction and is not a production OCR decision.
 
+### 2.3 Resume analysis v2 modes
+
+`resume.analysis` is one provider-neutral purpose with an explicit mode selected by the persisted analysis command. `job_targeted` uses the cached `ResumeProfile` plus the selected JobDescription and persists operation versions `resume-analysis-job-targeted-v2` / `analysis-job-targeted-v2`. It returns a 0-100 `matchScore`, grounded matched/missing skills, strengths, gaps, recommendations, section feedback and the required breakdown dimensions `technicalSkillMatch`, `experienceRelevance`, `impactEvidence`, `clarity`, `structure`.
+
+`field_benchmark` uses the same cached profile plus the required `industry`, `targetRole` and `seniority` context, with no JobDescription. It persists `resume-analysis-field-benchmark-v2` / `analysis-field-benchmark-v2` and returns a 0-100 `readinessScore`, grounded strengths, gaps, recommendations, section feedback and `technicalFoundation`, `projectEvidence`, `experiencePresentation`, `impactAchievements`, `clarity`, `roleAlignment` breakdown dimensions. The mode is included in the operation metadata and must match the response; provider-specific fields or concepts do not enter Business/API contracts.
+
+Both schemas are strict (`additionalProperties: false`) and require bounded collections, exact breakdown keys and server-side semantic validation. Strengths, gaps, recommendations and section feedback are non-empty; matched/missing skills may be empty when no evidence exists. A `finish_reason=length` response is rejected before deserialization; the existing executor may make one truncation retry at 8,192 tokens after the 4,096-token first attempt. Semantic repair and provider retries remain within the global two-call ceiling. A valid cached profile is serialized as a per-analysis snapshot with its model/prompt/schema provenance; OCR fallback profiles remain unversioned until the canonical text profile operation regenerates them, so no profile AI call is made again for each analysis mode once the cache is current.
+
+`sectionFeedback` is a bounded array of grounded strings. Each analysis also persists the nullable `RubricVersion` selected by its operation and exposes it with the other safe execution metadata; `ProfileSnapshot` remains private and is excluded from privacy exports.
+
 ## 3. Job contract
 
 | Job | Input | Output/state | Quota point |
 | --- | --- | --- | --- |
 | ExtractResume | stored file ID | uploaded → extracting → ready/failed, with `ocr_fallback` when the local quality gate rejects text | none |
-| AnalyzeResume | resume/JD versions | analysis completed/failed | Theo entitlement riêng nếu plan định nghĩa; không dùng nhầm interview reservation |
+| AnalyzeResume | resume version + explicit `job_targeted`/`field_benchmark` context | analysis completed/failed with mode-specific schema and versioned profile snapshot | Theo entitlement riêng nếu plan định nghĩa; không dùng nhầm interview reservation |
 | StartInterview | interview context | session starting → active hoặc failed | API transaction reserves + creates `starting` session/job; worker success transaction persists validated first usable question + consumes + activates; terminal pre-activation failure transaction voids + fails |
 | EvaluateAnswer | question/answer snapshot | evaluation + next action | included in session entitlement |
 | BuildReport | completing session | one immutable report; completed/terminal job failure | included after interview consume; retry idempotent và không charge thêm |

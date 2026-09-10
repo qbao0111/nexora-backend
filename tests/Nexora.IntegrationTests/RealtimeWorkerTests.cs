@@ -83,7 +83,7 @@ public sealed class RealtimeWorkerTests
             await db.SaveChangesAsync();
         }
         var jd = await PostAsync(client, "/api/v1/job-descriptions", new { title = "Backend", content = "C# and PostgreSQL development" });
-        var analysis = await PostAsync(client, "/api/v1/resume-analyses", new { resumeId, jobDescriptionId = jd.GetProperty("id").GetGuid() });
+        var analysis = await PostAsync(client, "/api/v1/resume-analyses", new { resumeId, mode = "job_targeted", jobDescriptionId = jd.GetProperty("id").GetGuid() });
         var id = analysis.GetProperty("id").GetGuid();
         Assert.Equal("queued", analysis.GetProperty("status").GetString());
         await ProcessJobsAsync(factory);

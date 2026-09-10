@@ -23,6 +23,7 @@ public sealed partial class PrivacyService(
 {
     private const string DeletionType = "account_deletion";
     private const int MaxAttempts = 3;
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<CoreDataExport> ExportAsync(Guid userId, CancellationToken cancellationToken)
     {
@@ -46,8 +47,24 @@ public sealed partial class PrivacyService(
             resumes.OrderBy(item => item.CreatedAt).Select(item => new ExportResume(item.Id, item.StoredFile.FileName, item.StoredFile.ContentType,
                 item.StoredFile.Size, item.Status, item.CreatedAt)).ToArray(),
             jobDescriptions.OrderBy(item => item.CreatedAt).Select(item => new ExportJobDescription(item.Id, item.Title, item.Content, item.CreatedAt)).ToArray(),
-            analyses.OrderBy(item => item.CreatedAt).Select(item => new ExportAnalysis(item.Id, item.ResumeId, item.JobDescriptionId, item.Status,
-                Parse(item.Result), item.CreatedAt)).ToArray(),
+            analyses.OrderBy(item => item.CreatedAt).Select(item => new ExportAnalysis(
+                item.Id,
+                item.ResumeId,
+                item.JobDescriptionId,
+                item.Status,
+                Parse(item.Result),
+                item.CreatedAt,
+                item.Mode,
+                ParseAnalysisContext(item.ContextJson, item.Mode),
+                item.ResumeVersion,
+                item.JobDescriptionVersion,
+                item.ModelVersion,
+                item.PromptVersion,
+                item.SchemaVersion,
+                item.RubricVersion,
+                item.ProfileModelVersion,
+                item.ProfilePromptVersion,
+                item.ProfileSchemaVersion)).ToArray(),
             sessions.OrderBy(item => item.CreatedAt).Select(item => new ExportInterview(MapInterview(item), item.Report is null ? null : MapReport(item.Report))).ToArray());
     }
 
@@ -274,6 +291,26 @@ public sealed partial class PrivacyService(
         if (string.IsNullOrWhiteSpace(value)) return null;
         using var document = JsonDocument.Parse(value);
         return document.RootElement.Clone();
+    }
+
+    private static ResumeAnalysisContextView? ParseAnalysisContext(string? value, string? mode)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<ResumeAnalysisContextView>(value, JsonOptions);
+                if (parsed is not null) return parsed;
+            }
+            catch (JsonException)
+            {
+                // Do not include malformed persisted context in a privacy export.
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(mode)
+            ? null
+            : new ResumeAnalysisContextView(mode, null, null, null);
     }
 
     private static JsonElement EmptyJson()

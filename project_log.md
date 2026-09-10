@@ -568,3 +568,17 @@ This log records completed implementation milestones and verification evidence. 
 - Files/modules: `docs/c2c-review-policy.md`, plus the factual project log entry; global policy is `C:\Users\PC\.codex\c2c\generic-review-policy.md` and Project instructions are stored in the NexoraBackend ChatGPT Project.
 - Verification: policy diff and `git diff --check` pass; C2C doctor is green and Project instructions saved. Hosted CI run `34442473665` was green for the prior head `9b26515c426675d5282a38490b502cfeb802c94e`; this log-only correction requires fresh exact-head CI and independent ChatGPT remote review before merge.
 - Dependencies: None. After this tooling policy is merged, fetch latest `main` and start A4 on a fresh `feat/a4-cv-analysis-v2` branch; do not start A5.
+
+## 2026-09-10 - A4 CV Analysis v2
+
+- Status: PR `#47` open; hosted CI GREEN for the verified exact code head; C2C remote review pending
+- Owner: Backend workstream A
+- Branch: `feat/a4-cv-analysis-v2`
+- Base: `5c731fb028e59b67b54f525f8d79104623b337a1` (`main`)
+- Code commit/PR: `348d85660ca78cbe336fecd212b1bc8eda474672` / `#47` (open); verified exact PR head: `1edd625b4ca1a27034c2ebe5995607488325e766`
+- Scope: Added explicit `job_targeted` and `field_benchmark` analysis modes, optional JD/context contracts, persisted mode/context/profile snapshots and execution provenance, strict provider-neutral schemas and semantic validation, and one bounded 4096->8192 truncation retry. Added the A4 EF migration only; no A5, Scenario/STAR, Interview, Billing or provider-selection changes.
+- Security/reliability: Existing owner authorization, stable idempotency fingerprint, quota reservation/consumption, outbox and realtime behavior remain authoritative and unchanged. No live AI/provider calls or secrets are used.
+- Verification: Release restore/build passed with 0 warnings/errors; 296 unit tests and 149 integration tests passed sequentially (including field-benchmark truncation and mixed-context regressions); EF reports no pending model changes; vulnerable-package audit is clean; exact changed-file `dotnet format --verify-no-changes` passed after the final corrections (including formatter-required existing lines in the touched ProductPlatform test file); `git -c core.whitespace=cr-at-eol diff --check` passed. One initial parallel integration run hit a Windows file lock and was rerun sequentially successfully.
+- C2C evidence: `c2c_a4f1` iteration 3 execution summary/output was recorded for connector review; ChatGPT returned `STATE: LOCAL_ACCEPTED` after independently checking the workspace and current diff.
+- Remote gate: hosted Backend CI run `34456351413` passed for the verified exact head above; the PR was open, non-draft and mergeable at capture time. This log update is metadata-only; refresh exact-head evidence after it is pushed.
+- Dependencies: A4 comparison remains future work; A5 free quota remains unchecked. C2C remote review remains required before merge.
