@@ -145,7 +145,8 @@ public sealed record AiOperationContext(
     string? InterviewType = null,
     int? TargetQuestionCount = null,
     IReadOnlyDictionary<string, string>? Metadata = null,
-    string? CandidateAnswer = null);
+    string? CandidateAnswer = null,
+    string? GroundingTranscript = null);
 
 public sealed record AiExecutionResult<T>(
     T Value,

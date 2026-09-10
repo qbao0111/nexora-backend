@@ -1255,7 +1255,10 @@ public sealed partial class PracticeService(
         var execResult = await structuredAiExecutor.ExecuteAsync(
             AiOperations.InterviewReport,
             reportContext,
-            new AiOperationContext(snapshot.Id.ToString("N"), snapshot.UserId),
+            new AiOperationContext(
+                snapshot.Id.ToString("N"),
+                snapshot.UserId,
+                GroundingTranscript: string.Join("\n", answeredQuestions.Select(item => item.Answer!.Content))),
             cancellationToken);
         var output = execResult.Value;
         ValidateScores(output.Scores);
@@ -1823,9 +1826,10 @@ public sealed partial class PracticeService(
             return null;
 
         var questions = session.Questions.Count;
-        var answered = session.Answers.Count;
-        var canFinishNow = questions > 0 && answered >= questions;
-        if (questions >= questionLimit && canFinishNow)
+        var answered = session.Answers.Count(answer => !string.IsNullOrWhiteSpace(answer.Content));
+        var canFinishNow = answered >= MinimumReportAnswers;
+        var allIssuedQuestionsAnswered = questions > 0 && answered >= questions;
+        if (questions >= questionLimit && allIssuedQuestionsAnswered)
         {
             var isFreeCap = questionLimit <= InterviewQuestionValues.FreeQuestionLimit;
             return new InterviewContinuationView(

@@ -142,6 +142,8 @@ internal sealed class TestAiProvider : IAiProvider
         var groundedStrength = string.IsNullOrWhiteSpace(candidateAnswer)
             ? "Clear response."
             : $"Grounded point: {candidateAnswer[..Math.Min(candidateAnswer.Length, 120)]}";
+        var reportAnswer = GetFirstTranscriptAnswer(request.UntrustedInput) ?? "answer";
+        var reportEvidence = reportAnswer[..Math.Min(reportAnswer.Length, 120)];
         var improvedAnswer = string.IsNullOrWhiteSpace(candidateAnswer)
             ? "Keep the same answer and add concrete evidence if available."
             : candidateAnswer;
@@ -194,12 +196,12 @@ internal sealed class TestAiProvider : IAiProvider
                 AiOperations.ScoreScale),
             var type when type == typeof(InterviewReportOutput) => new InterviewReportOutput(
                 [
-                    new RubricScore("correctness", 75, "Transcript cho thấy hướng giải quyết phù hợp."),
-                    new RubricScore("structure", 70, "Các ý có trình tự nhưng STAR chưa đầy đủ."),
-                    new RubricScore("completeness", 65, "Transcript thiếu một số kết quả định lượng."),
-                    new RubricScore("clarity", 80, "Câu trả lời rõ ràng và tập trung.")
+                    new RubricScore("correctness", 75, $"Evidence from answer: {reportEvidence}"),
+                    new RubricScore("structure", 70, $"Evidence from answer: {reportEvidence}"),
+                    new RubricScore("completeness", 65, $"Evidence from answer: {reportEvidence}"),
+                    new RubricScore("clarity", 80, $"Evidence from answer: {reportEvidence}")
                 ],
-                ["Diễn đạt rõ ràng"],
+                [$"Grounded point: {reportEvidence}"],
                 ["Thiếu kết quả định lượng"],
                 ["Luyện trả lời theo STAR"],
                 AiOperations.ScoreScale),
@@ -227,5 +229,11 @@ internal sealed class TestAiProvider : IAiProvider
         .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Where(line => line.StartsWith(label, StringComparison.OrdinalIgnoreCase))
         .Select(line => line[label.Length..].Trim())
+        .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+    private static string? GetFirstTranscriptAnswer(string input) => input
+        .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Where(line => line.StartsWith("A:", StringComparison.OrdinalIgnoreCase))
+        .Select(line => line[2..].Trim())
         .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 }

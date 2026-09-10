@@ -41,6 +41,10 @@ public sealed class PracticeApiTests
 
         var answer1 = await AnswerAsync(client, interviewId, q1.GetProperty("id").GetGuid(), "Tôi giới thiệu kinh nghiệm của mình.", "a7-free-a1");
         var q2 = answer1.GetProperty("nextQuestion");
+        var afterFirstContinuation = answer1.GetProperty("continuation");
+        Assert.Equal(InterviewContinuationValues.InProgress, afterFirstContinuation.GetProperty("state").GetString());
+        Assert.False(afterFirstContinuation.GetProperty("canFinishNow").GetBoolean());
+        Assert.False(afterFirstContinuation.GetProperty("canUpgradeAndContinue").GetBoolean());
         Assert.Equal(InterviewQuestionValues.Primary, q2.GetProperty("kind").GetString());
         Assert.Equal(InterviewQuestionValues.BehavioralStar, q2.GetProperty("topic").GetString());
         Assert.Equal(JsonValueKind.Null, q2.GetProperty("parentQuestionId").ValueKind);
@@ -53,6 +57,7 @@ public sealed class PracticeApiTests
         Assert.Equal(JsonValueKind.Null, q3.GetProperty("parentQuestionId").ValueKind);
         Assert.False(answer2.GetProperty("isComplete").GetBoolean());
         Assert.Equal(InterviewContinuationValues.InProgress, answer2.GetProperty("continuation").GetProperty("state").GetString());
+        Assert.True(answer2.GetProperty("continuation").GetProperty("canFinishNow").GetBoolean());
         Assert.False(answer2.GetProperty("continuation").GetProperty("canUpgradeAndContinue").GetBoolean());
         Assert.Contains("[motivation_role_fit]", q3.GetProperty("content").GetString(), StringComparison.Ordinal);
 
@@ -559,7 +564,10 @@ public sealed class PracticeApiTests
         var firstQuestion = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
         var firstResult = await AnswerAsync(client, interviewId, firstQuestion, "First grounded answer.", "partial-report-answer-one");
         var secondQuestion = firstResult.GetProperty("nextQuestion").GetProperty("id").GetGuid();
-        await AnswerAsync(client, interviewId, secondQuestion, "Second grounded answer.", "partial-report-answer-two");
+        var secondResult = await AnswerAsync(client, interviewId, secondQuestion, "Second grounded answer.", "partial-report-answer-two");
+        Assert.Equal(InterviewContinuationValues.InProgress, secondResult.GetProperty("continuation").GetProperty("state").GetString());
+        Assert.True(secondResult.GetProperty("continuation").GetProperty("canFinishNow").GetBoolean());
+        Assert.False(secondResult.GetProperty("continuation").GetProperty("canUpgradeAndContinue").GetBoolean());
 
         await CompleteAsync(client, interviewId, "partial-report-complete");
         await ProcessJobsAsync(factory);

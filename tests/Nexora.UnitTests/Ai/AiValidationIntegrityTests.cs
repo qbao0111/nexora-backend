@@ -11,7 +11,8 @@ public sealed class AiValidationIntegrityTests
         Metadata: new Dictionary<string, string>
         {
             [ResumeAnalysisMetadata.Mode] = ResumeAnalysisModes.JobTargeted
-        });
+        },
+        GroundingTranscript: "Evidence Strength Gap Action Grounded answer");
 
     [Fact]
     public void ResumeProfileAcceptsUsefulSkillsWithoutSummary()
@@ -126,6 +127,89 @@ public sealed class AiValidationIntegrityTests
     public void InterviewReportUsesOneProviderAttempt()
     {
         Assert.Equal(1, AiOperations.InterviewReport.MaxAttempts);
+    }
+
+    [Fact]
+    public void InterviewReportRejectsNovelNumericMetricInRubricEvidence()
+    {
+        var result = AiOperations.InterviewReport.NormalizeAndValidate(
+            Report("I improved latency by 70 percent using caching."),
+            ReportContext("I improved latency by 20 percent using caching."));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("report.rubric_evidence_ungrounded", result.FailureReason);
+    }
+
+    [Fact]
+    public void InterviewReportRejectsNovelTechnologyInRubricEvidence()
+    {
+        var result = AiOperations.InterviewReport.NormalizeAndValidate(
+            Report("I migrated Kubernetes workloads."),
+            ReportContext("I improved latency by 20 percent using caching."));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("report.rubric_evidence_ungrounded", result.FailureReason);
+    }
+
+    [Fact]
+    public void InterviewReportRejectsFabricatedStrength()
+    {
+        var result = AiOperations.InterviewReport.NormalizeAndValidate(
+            Report("I improved latency by 20 percent using caching.", "I led a team of ten engineers."),
+            ReportContext("I improved latency by 20 percent using caching."));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("report.strengths_ungrounded", result.FailureReason);
+    }
+
+    [Fact]
+    public void InterviewReportAcceptsEvidenceAndStrengthGroundedInAnsweredContent()
+    {
+        var result = AiOperations.InterviewReport.NormalizeAndValidate(
+            Report("I improved latency by 20 percent using caching.", "I improved latency using caching."),
+            ReportContext("I improved latency by 20 percent using caching."));
+
+        Assert.True(result.IsValid, result.FailureReason);
+    }
+
+    [Fact]
+    public void ResumeProfileOnlyFactDoesNotGroundInterviewReportEvidence()
+    {
+        var result = AiOperations.InterviewReport.NormalizeAndValidate(
+            Report("I built React applications."),
+            ReportContext("I debugged the API."));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("report.rubric_evidence_ungrounded", result.FailureReason);
+    }
+
+    [Fact]
+    public void UnansweredQuestionTextDoesNotGroundInterviewReportEvidence()
+    {
+        var result = AiOperations.InterviewReport.NormalizeAndValidate(
+            Report("I designed Kubernetes orchestration."),
+            ReportContext("I debugged the API."));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("report.rubric_evidence_ungrounded", result.FailureReason);
+    }
+
+    [Fact]
+    public void InterviewReportStillRequiresCanonicalFourRubricCriteria()
+    {
+        var scores = new[]
+        {
+            new RubricScore("correctness", 80, "I debugged the API."),
+            new RubricScore("structure", 80, "I debugged the API."),
+            new RubricScore("completeness", 80, "I debugged the API."),
+            new RubricScore("unsupported", 80, "I debugged the API.")
+        };
+        var result = AiOperations.InterviewReport.NormalizeAndValidate(
+            new InterviewReportOutput(scores, ["I debugged the API."], ["Add evidence."], ["Add evidence."], AiOperations.ScoreScale),
+            ReportContext("I debugged the API."));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("rubric.criteria_extra", result.FailureReason);
     }
 
     [Theory]
@@ -273,6 +357,22 @@ public sealed class AiValidationIntegrityTests
         new("completeness", 75, "Evidence"),
         new("clarity", 75, "Evidence")
     ];
+
+    private static InterviewReportOutput Report(string evidence, string strength = "I improved latency by 20 percent using caching.") =>
+        new(
+            [
+                new RubricScore("correctness", 80, evidence),
+                new RubricScore("structure", 80, evidence),
+                new RubricScore("completeness", 80, evidence),
+                new RubricScore("clarity", 80, evidence)
+            ],
+            [strength],
+            ["Add missing evidence if available."],
+            ["Describe the result with concrete evidence if available."],
+            AiOperations.ScoreScale);
+
+    private static AiOperationContext ReportContext(string transcript) =>
+        new("report-grounding", GroundingTranscript: transcript);
 
     private static ScenarioDimensionEvaluation Dimension(string criterion) =>
         new(criterion, 75, "Candidate evidence", "Grounded feedback");

@@ -224,6 +224,19 @@ public static class AnswerCoachingValidator
         return AiValidationResult<AnswerCoachingOutput>.Success(new AnswerCoachingOutput(strengths, improvements, improvedAnswer));
     }
 
+    internal static bool IsGroundedReportEvidence(string output, string groundingTranscript) =>
+        HasGroundingOverlap(output, groundingTranscript) &&
+        !ContainsUnsupportedFact(output, groundingTranscript) &&
+        !ContainsNovelCandidateFact(output, groundingTranscript);
+
+    internal static bool IsGroundedReportStrength(string output, string groundingTranscript) =>
+        HasGroundingOverlap(output, groundingTranscript) &&
+        !ContainsUnsupportedFact(output, groundingTranscript) &&
+        !ContainsNovelStrengthClaim(output, groundingTranscript);
+
+    private static bool HasGroundingOverlap(string output, string groundingTranscript) =>
+        !string.IsNullOrWhiteSpace(groundingTranscript) && HasMeaningfulOverlap(output, groundingTranscript);
+
     private static string[]? NormalizeList(
         IReadOnlyCollection<string>? values,
         string name,
@@ -1225,6 +1238,17 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
         var actionPlan = NormalizeReportCollection(raw.ActionPlan);
         if (actionPlan is null)
             return AiValidationResult<InterviewReportOutput>.Failure("report.action_plan_invalid", "semantic", repairable: true);
+
+        if (string.IsNullOrWhiteSpace(context.GroundingTranscript))
+            return AiValidationResult<InterviewReportOutput>.Failure("report.grounding_context_missing", "semantic", repairable: false);
+
+        if (rubricResult.NormalizedValue!.Any(score =>
+                !AnswerCoachingValidator.IsGroundedReportEvidence(score.Evidence, context.GroundingTranscript)))
+            return AiValidationResult<InterviewReportOutput>.Failure("report.rubric_evidence_ungrounded", "semantic", repairable: true);
+
+        if (strengths.Any(strength =>
+                !AnswerCoachingValidator.IsGroundedReportStrength(strength, context.GroundingTranscript)))
+            return AiValidationResult<InterviewReportOutput>.Failure("report.strengths_ungrounded", "semantic", repairable: true);
 
         return AiValidationResult<InterviewReportOutput>.Success(
             new InterviewReportOutput(rubricResult.NormalizedValue!, strengths, gaps, actionPlan, AiOperations.ScoreScale));
