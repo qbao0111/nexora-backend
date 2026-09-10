@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Nexora.Data.Billing;
+using Nexora.Data.Career;
 using Nexora.Data.Identity;
 using Nexora.Data.Practice;
 using Nexora.Data.Privacy;
@@ -41,6 +42,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<Scenario> Scenarios => Set<Scenario>();
     public DbSet<ScenarioAttempt> ScenarioAttempts => Set<ScenarioAttempt>();
     public DbSet<StarAttempt> StarAttempts => Set<StarAttempt>();
+    public DbSet<CareerGoal> CareerGoals => Set<CareerGoal>();
     public DbSet<Nexora.Data.Realtime.RealtimeNotification> RealtimeNotifications => Set<Nexora.Data.Realtime.RealtimeNotification>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -105,6 +107,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
         ConfigurePrivacy(builder);
         ConfigureFeatureManagement(builder);
         ConfigureScenarioStar(builder);
+        ConfigureCareerGoals(builder);
         builder.Entity<Nexora.Data.Realtime.RealtimeNotification>(entity =>
         {
             entity.ToTable("realtime_notifications");
@@ -558,6 +561,32 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.Property(request => request.Status).HasMaxLength(20).IsRequired();
             entity.Property(request => request.IdempotencyKey).HasMaxLength(128).IsRequired();
             entity.Property(request => request.ErrorCode).HasMaxLength(80);
+        });
+    }
+
+    private static void ConfigureCareerGoals(ModelBuilder builder)
+    {
+        builder.Entity<CareerGoal>(entity =>
+        {
+            entity.ToTable("career_goals");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.UserId, item.CreatedAt });
+            entity.HasIndex(item => item.TargetJobDescriptionId);
+            entity.HasIndex(item => item.UserId)
+                .IsUnique()
+                .HasDatabaseName("IX_career_goals_one_active_per_user")
+                .HasFilter("\"Active\" = TRUE");
+            entity.Property(item => item.TargetRole).HasMaxLength(160).IsRequired();
+            entity.Property(item => item.Seniority).HasMaxLength(40).IsRequired();
+            entity.Property(item => item.Industry).HasMaxLength(120);
+            entity.Property(item => item.TargetCompany).HasMaxLength(160);
+            entity.Property(item => item.TargetDate).HasColumnType("date");
+            entity.Property(item => item.Active).IsRequired().HasDefaultValue(true);
+            entity.Property(item => item.CreatedAt).IsRequired();
+            entity.Property(item => item.UpdatedAt).IsRequired();
+            entity.HasOne(item => item.User).WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(item => item.TargetJobDescription).WithMany().HasForeignKey(item => item.TargetJobDescriptionId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

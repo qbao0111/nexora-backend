@@ -34,6 +34,8 @@ public sealed partial class PrivacyService(
             .Where(item => item.UserId == userId).ToArrayAsync(cancellationToken);
         var jobDescriptions = await dbContext.JobDescriptions.AsNoTracking().Where(item => item.UserId == userId)
             .ToArrayAsync(cancellationToken);
+        var careerGoals = await dbContext.CareerGoals.AsNoTracking().Where(item => item.UserId == userId)
+            .ToArrayAsync(cancellationToken);
         var analyses = await dbContext.ResumeAnalyses.AsNoTracking().Where(item => item.UserId == userId)
             .ToArrayAsync(cancellationToken);
         var sessions = await dbContext.InterviewSessions.AsNoTracking()
@@ -47,6 +49,9 @@ public sealed partial class PrivacyService(
             resumes.OrderBy(item => item.CreatedAt).Select(item => new ExportResume(item.Id, item.StoredFile.FileName, item.StoredFile.ContentType,
                 item.StoredFile.Size, item.Status, item.CreatedAt)).ToArray(),
             jobDescriptions.OrderBy(item => item.CreatedAt).Select(item => new ExportJobDescription(item.Id, item.Title, item.Content, item.CreatedAt)).ToArray(),
+            careerGoals.OrderByDescending(item => item.Active).ThenBy(item => item.CreatedAt)
+                .Select(item => new ExportCareerGoal(item.Id, item.TargetRole, item.Seniority, item.Industry, item.TargetCompany,
+                    item.TargetJobDescriptionId, item.TargetDate, item.Active, item.CreatedAt, item.UpdatedAt)).ToArray(),
             analyses.OrderBy(item => item.CreatedAt).Select(item => new ExportAnalysis(
                 item.Id,
                 item.ResumeId,
@@ -235,6 +240,7 @@ public sealed partial class PrivacyService(
         dbContext.InterviewQuestions.RemoveRange(dbContext.InterviewQuestions.Where(item => sessionIds.Contains(item.InterviewSessionId)));
         dbContext.InterviewSessions.RemoveRange(sessions);
         dbContext.ResumeAnalyses.RemoveRange(dbContext.ResumeAnalyses.Where(item => item.UserId == request.UserId));
+        dbContext.CareerGoals.RemoveRange(dbContext.CareerGoals.Where(item => item.UserId == request.UserId));
         dbContext.Resumes.RemoveRange(dbContext.Resumes.Where(item => item.UserId == request.UserId));
         dbContext.JobDescriptions.RemoveRange(dbContext.JobDescriptions.Where(item => item.UserId == request.UserId));
         dbContext.StoredFiles.RemoveRange(dbContext.StoredFiles.Where(item => item.UserId == request.UserId));

@@ -42,6 +42,10 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | GET | `/resumes/:id` | Đọc trạng thái xử lý CV và lỗi an toàn của owner. |
 | POST | `/resume-analyses` | Tạo job phân tích CV theo mode `job_targeted` hoặc `field_benchmark`. |
 | GET | `/resume-analyses/:id` | Trạng thái/kết quả phân tích. |
+| POST | `/career-goals` | Tạo Career Goal/Target Role của owner; goal mới trở thành active. |
+| GET | `/career-goals` | Liệt kê Career Goal của owner, active goal đứng trước. |
+| GET | `/career-goals/:id` | Đọc một Career Goal của owner. |
+| PATCH | `/career-goals/:id` | Cập nhật Career Goal của owner; hỗ trợ đổi active goal. |
 | POST | `/interviews` | Tạo và bắt đầu phiên phỏng vấn. |
 | GET | `/interviews/:id` | Đọc session state/question hiện tại của owner. |
 | POST | `/interviews/:id/answers` | Lưu câu trả lời, đánh giá và mở câu hỏi tiếp theo theo policy server. |
@@ -84,6 +88,29 @@ Frontend gửi `userId`, `token` và `newPassword` tới `POST /api/v1/auth/rese
 ### Export và xoá dữ liệu cá nhân
 
 `GET /api/v1/me/export` chỉ trả core data thuộc owner. `POST /api/v1/me/deletion-requests` tạo audit state `queued → processing → completed|failed`; cùng user và `Idempotency-Key` trả request gốc. Sau khi accepted, access/refresh session hiện tại không còn hợp lệ. Worker xoá private object và personal practice records rồi anonymize Identity account; billing/usage ledger được giữ làm audit theo retention được phê duyệt. Thời hạn retention production vẫn do DEC-03 quyết định.
+
+### Career Goal / Target Role
+
+Career Goal là resource riêng của user và không có delete/archive endpoint trong B9. Tất cả endpoint chỉ query theo authenticated user; một ID thuộc user khác trả `404 CAREER_GOAL_NOT_FOUND`.
+
+`POST /api/v1/career-goals` nhận:
+
+```json
+{
+  "targetRole": "Backend Developer",
+  "seniority": "senior",
+  "industry": "Fintech",
+  "targetCompany": "Example Bank",
+  "targetJobDescriptionId": "00000000-0000-0000-0000-000000000000",
+  "targetDate": "2027-06-30"
+}
+```
+
+`targetRole` bắt buộc, tối đa 160 ký tự; `seniority` bắt buộc, tối đa 40 ký tự và phải là một trong `intern`, `entry`, `junior`, `mid`, `senior`, `lead`, `staff`, `principal`, `manager`, `director`, `executive` (các alias `entry-level`/`mid-level` được chuẩn hoá). `industry` tối đa 120 ký tự và `targetCompany` tối đa 160 ký tự; chuỗi optional rỗng được chuẩn hoá thành `null`. `targetDate` dùng định dạng ISO `YYYY-MM-DD`.
+
+Goal mới luôn `active: true` và transaction sẽ chuyển goal active trước đó của cùng user thành inactive. Database cũng có partial unique index để chỉ cho phép một active goal trên mỗi user. Nếu `targetJobDescriptionId` được gửi, JD phải tồn tại và thuộc authenticated user; nếu không, API trả `404 JOB_DESCRIPTION_NOT_FOUND`.
+
+`GET /api/v1/career-goals` trả toàn bộ goal của owner, sắp xếp active trước rồi tới mới nhất. `PATCH /api/v1/career-goals/{id}` nhận các field editable: `targetRole`, `seniority`, `industry`, `targetCompany`, `targetJobDescriptionId`, `targetDate`, `active`. Field bị bỏ qua giữ nguyên; nullable field gửi `null` để clear; `active: true` áp dụng cùng invariant một-goal-active. Response thành công dùng envelope `{ "data": { ... } }` và gồm `id`, target fields, `active`, `createdAt`, `updatedAt`.
 
 ### Tạo interview
 

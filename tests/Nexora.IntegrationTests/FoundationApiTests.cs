@@ -116,10 +116,16 @@ public sealed class FoundationApiTests : IClassFixture<NexoraApiFactory>
         var options = new DbContextOptionsBuilder<NexoraDbContext>()
             .UseNpgsql("Host=localhost;Database=metadata_only;Username=nexora").Options;
         using var context = new NexoraDbContext(options);
-        Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_InitialIdentityFoundation", StringComparison.Ordinal));
-        Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_Phase2BillingEntitlement", StringComparison.Ordinal));
-        Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_Phase2PlanCatalogue", StringComparison.Ordinal));
-        Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_Phase3CoreAiPractice", StringComparison.Ordinal));
-        Assert.Contains(context.Database.GetMigrations(), migration => migration.EndsWith("_Phase4PrivacyHardening", StringComparison.Ordinal));
+        var migrations = context.Database.GetMigrations().ToArray();
+        Assert.Contains(migrations, migration => migration.EndsWith("_InitialIdentityFoundation", StringComparison.Ordinal));
+        Assert.Contains(migrations, migration => migration.EndsWith("_Phase2BillingEntitlement", StringComparison.Ordinal));
+        Assert.Contains(migrations, migration => migration.EndsWith("_Phase2PlanCatalogue", StringComparison.Ordinal));
+        Assert.Contains(migrations, migration => migration.EndsWith("_Phase3CoreAiPractice", StringComparison.Ordinal));
+        Assert.Contains(migrations, migration => migration.EndsWith("_Phase4PrivacyHardening", StringComparison.Ordinal));
+        Assert.Contains(migrations, migration => migration.EndsWith("_ProductionUploadIntents", StringComparison.Ordinal));
+        Assert.Contains(migrations, migration => migration.EndsWith("_CvAnalysisV2", StringComparison.Ordinal));
+        Assert.Contains(migrations, migration => migration.EndsWith("_InterviewQuestionContractV1", StringComparison.Ordinal));
+        Assert.Contains("20260910162014_B9CareerGoal", migrations);
+        Assert.DoesNotContain("20260910072100_B9CareerGoal", migrations);
     }
 }

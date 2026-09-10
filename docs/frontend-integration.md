@@ -87,6 +87,12 @@ For password recovery, call `POST /auth/forgot-password` with `{ "email": "..." 
 
    Save `data.id` as `jobDescriptionId`. For the coordinated CV-analysis flow, send the same stable `Idempotency-Key` used for the subsequent analysis request; this makes JD creation replay-safe. Standalone JD creation may omit it.
 
+## Career Goal / Target Role
+
+Career Goals are user-owned target context shared by future skill, learning and recommendation features. Use `POST /api/v1/career-goals` with `targetRole` and `seniority`; a newly created goal is active and automatically deactivates the user's previous active goal. Use `GET /api/v1/career-goals` to hydrate the full list and choose the item with `active: true`.
+
+`PATCH /api/v1/career-goals/{id}` supports `targetRole`, `seniority`, `industry`, `targetCompany`, `targetJobDescriptionId`, `targetDate` and `active`. Omit a property to leave it unchanged; send `null` for nullable `industry`, `targetCompany`, `targetJobDescriptionId` or `targetDate` to clear it. A referenced Job Description must belong to the same user. The API returns only owner-scoped goals and uses the standard `{ "data": ... }`/`{ "error": ... }` envelopes.
+
 7. `POST /resume-analyses` (`201`, Bearer + idempotency key):
 
    ```json

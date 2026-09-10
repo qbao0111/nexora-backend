@@ -861,7 +861,13 @@ CareerGoal
 - active
 ```
 
-Chỉ tạo schema sau khi Bảo merge P0 CV/Interview migration.
+- [x] User-owned `CareerGoal` persistence and additive migration on top of the current A4/A5/A6/A7 migration chain.
+- [x] Owner-scoped `POST`, `GET` list/detail and `PATCH` APIs under `/api/v1/career-goals`.
+- [x] Server-side normalization/validation for target role, canonical seniority, optional fields and target date.
+- [x] Optional target JD reference validates existence and authenticated-user ownership.
+- [x] One active goal per user enforced atomically in service transactions and by a PostgreSQL partial unique index.
+- [x] PATCH omitted-vs-null semantics for nullable fields, with no delete/archive endpoint in B9.
+- [x] Unit/integration coverage for authentication, validation, ownership, persistence, clearing, activation and concurrency.
 
 ## B10. Skill Profile [P1]
 
