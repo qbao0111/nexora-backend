@@ -503,13 +503,13 @@ This log records completed implementation milestones and verification evidence. 
 
 ## 2026-09-10 — Backend GitHub Actions CI
 
-- Status: Blocked
+- Status: Completed
 - Owner: Backend engineering
 - Branch: `chore/backend-ci`
-- Commit/PR: not created or pushed, as requested
+- Commit/PR: `ba90e974d126b90f70f6e7c7c19e654ad8a19f7a` / `#43`
 - Scope: Added one least-privilege GitHub Actions workflow for PRs to `main`, pushes to `main` and manual dispatch. No application behavior, provider semantics, migration or deployment path changed.
 - Contracts/traceability: `NFR-QUAL-01` and the canonical quality gates in `docs/05-test-strategy.md`; repository `.editorconfig`, `global.json` and local `dotnet-ef` tool manifest remain authoritative.
 - Files/modules: `.github/workflows/backend-ci.yml`; this log entry only.
-- Verification: YAML parsed successfully and all nine shell steps passed Bash syntax validation; `dotnet tool restore`; `dotnet restore Nexora.slnx`; Release build passed with 0 warnings/errors; 235 unit and 133 integration tests passed; EF reported no pending model changes; .NET 10 JSON vulnerability audit reported no vulnerable direct/transitive packages; changed-file format selection and scoped format passed; `git diff --check` passed. The intentionally non-blocking full-repository format probe still reports 18 pre-existing findings outside this CI diff.
+- Verification: YAML parsed successfully and all nine shell steps passed Bash syntax validation; `dotnet tool restore`; `dotnet restore Nexora.slnx`; Release build passed with 0 warnings/errors; 235 unit and 133 integration tests passed; EF reported no pending model changes; .NET 10 JSON vulnerability audit reported no vulnerable direct/transitive packages; changed-file format selection and scoped format passed; `git diff --check` passed. GitHub Actions run `34420764114` for PR `#43` completed successfully in 2m09s with every workflow gate green. The intentionally non-blocking full-repository format probe still reports 18 pre-existing findings outside this CI diff.
 - Dependencies: None. Integration tests remain isolated through in-memory SQLite/WebApplicationFactory and deterministic providers; no PostgreSQL/Neon, R2, Resend or production secret is required.
-- Remaining blockers/follow-up: Awaiting authorization to commit/push. Afterward, observe the first Ubuntu-hosted run; if green, update this entry to `Completed` with its commit/PR and configure the stable `Backend CI / Build, test, and validate` check as required in the GitHub `main` Ruleset.
+- Remaining blockers/follow-up: None for the workflow. Configure the stable `Backend CI / Build, test, and validate` check as required in the GitHub `main` Ruleset.
