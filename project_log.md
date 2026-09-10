@@ -532,7 +532,7 @@ This log records completed implementation milestones and verification evidence. 
 - Owner: Codex / local engineering workflow
 - Branch: `chore/c2c-review-workflow`
 - Setup origin: Workspace setup/testing began on `feat/r2-storage-provider`; this tooling delivery belongs to `chore/c2c-review-workflow`.
-- Commit/PR: pending delivery metadata; no repository commit or PR exists yet
+- Commit/PR: `195a339225fcf59d740352c55b8f9de650bcb469` / PR pending
 - Scope: Added the Nexora C2C profile and repository-specific review policy, configured the reusable global C2C skill/policy outside the repository, and connected the `NexoraBackend` ChatGPT Project through the temporary connection. No application code, provider decision, deployment, merge or A2 implementation was performed.
 - Contracts/traceability: `AGENTS.md`, `README.md` team workflow, `SPEC.md`/`docs/README.md` ownership hierarchy, and `implementation_plan.md` remain authoritative.
 - Files/modules: `.c2c.json`, `docs/c2c-review-policy.md`, `project_log.md`; global files are under the user Codex C2C configuration directory.
