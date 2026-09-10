@@ -525,3 +525,17 @@ This log records completed implementation milestones and verification evidence. 
 - Verification: YAML parsed successfully and all nine shell steps passed Bash syntax validation; `dotnet tool restore`; `dotnet restore Nexora.slnx`; Release build passed with 0 warnings/errors; 235 unit and 133 integration tests passed; EF reported no pending model changes; .NET 10 JSON vulnerability audit reported no vulnerable direct/transitive packages; changed-file format selection and scoped format passed; `git diff --check` passed. GitHub Actions run `34420764114` for PR `#43` completed successfully in 2m09s with every workflow gate green. The intentionally non-blocking full-repository format probe still reports 18 pre-existing findings outside this CI diff.
 - Dependencies: None. Integration tests remain isolated through in-memory SQLite/WebApplicationFactory and deterministic providers; no PostgreSQL/Neon, R2, Resend or production secret is required.
 - Remaining blockers/follow-up: None for the workflow. Configure the stable `Backend CI / Build, test, and validate` check as required in the GitHub `main` Ruleset.
+
+## 2026-09-10 — Codex with ChatGPT workspace workflow
+
+- Status: Completed
+- Owner: Codex / local engineering workflow
+- Branch: `chore/c2c-review-workflow`
+- Setup origin: Workspace setup/testing began on `feat/r2-storage-provider`; this tooling delivery belongs to `chore/c2c-review-workflow`.
+- Commit/PR: pending delivery metadata; no repository commit or PR exists yet
+- Scope: Added the Nexora C2C profile and repository-specific review policy, configured the reusable global C2C skill/policy outside the repository, and connected the `NexoraBackend` ChatGPT Project through the temporary connection. No application code, provider decision, deployment, merge or A2 implementation was performed.
+- Contracts/traceability: `AGENTS.md`, `README.md` team workflow, `SPEC.md`/`docs/README.md` ownership hierarchy, and `implementation_plan.md` remain authoritative.
+- Files/modules: `.c2c.json`, `docs/c2c-review-policy.md`, `project_log.md`; global files are under the user Codex C2C configuration directory.
+- Verification: upstream C2C `pnpm install`, `pnpm build`, and `pnpm test` passed (170 tests); `c2c doctor` passed for bridge, OAuth and quick connection; saved Project/chat binding is in project mode; ChatGPT boot and `workspace_info` plus a hello-style top-level file read returned workspace `NexoraBackend`.
+- Dependencies: None. The connector is scoped to the `NexoraBackend` workspace and project-only memory; repository sources were not uploaded.
+- Remaining blockers/follow-up: Commit, push, hosted CI and C2C review are pending; merge remains human-owned. The current quick connection is temporary and may need a fresh setup/pairing after restart or expiry; a named Cloudflare connection is optional future setup, not required for local use.
