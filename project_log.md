@@ -515,12 +515,12 @@ This log records completed implementation milestones and verification evidence. 
 
 ## 2026-09-10 — A2 production R2 upload intent (local candidate)
 
-- Status: Completed locally; pending review
+- Status: PR open; hosted CI and remote review pending
 - Owner: Backend workstream A
 - Branch: `feat/a2-production-upload`
 - Base: `3d21cff7e4665914f9cc169309b53a682f64e345` (`main`)
 - Ancestry evidence: after `git fetch origin`, `HEAD`, `origin/main` and `git merge-base HEAD origin/main` all resolve to `3d21cff7e4665914f9cc169309b53a682f64e345`.
-- Commit/PR: pending local commit / PR not opened
+- Commit/PR: `f85a4695b948d13b43a4519ff2431f105bd92642` / `#45` (open)
 - Scope: Replaced the production in-memory upload-intent path with durable PostgreSQL intent state, short-lived private R2 signed PUT URLs and idempotent finalize validation. Local server-side upload remains the Development/Testing path; no Scenario/STAR, Interview or CV-analysis semantic changes were made.
 - Contracts/traceability: `IUploadIntentStore` owns durable token-hash state; R2 `POST /api/v1/uploads/presign` issues an independent random capability without a presign idempotency header, and `POST /api/v1/resumes` remains the replay-safe finalize boundary. `implementation_plan.md` A2/A3, ADR-004, `SPEC.md` and `docs/03-api-data-contract.md` are aligned.
 - Security decisions: token hashes only in the database; owner and expiry checks; private signed PUT without public ACL; actual R2 object metadata/bytes are revalidated for size, PDF/DOCX signature/container and checksum; provider errors/logs exclude credentials, signed URLs and file contents; worker rechecks stored-file size/checksum.
