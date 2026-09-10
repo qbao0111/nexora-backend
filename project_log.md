@@ -571,13 +571,14 @@ This log records completed implementation milestones and verification evidence. 
 
 ## 2026-09-10 - A4 CV Analysis v2
 
-- Status: PR `#47` open; hosted CI pending; C2C remote review pending
+- Status: PR `#47` open; hosted CI GREEN for the verified exact code head; C2C remote review pending
 - Owner: Backend workstream A
 - Branch: `feat/a4-cv-analysis-v2`
 - Base: `5c731fb028e59b67b54f525f8d79104623b337a1` (`main`)
-- Commit/PR: `348d85660ca78cbe336fecd212b1bc8eda474672` / `#47` (open)
+- Code commit/PR: `348d85660ca78cbe336fecd212b1bc8eda474672` / `#47` (open); verified exact PR head: `1edd625b4ca1a27034c2ebe5995607488325e766`
 - Scope: Added explicit `job_targeted` and `field_benchmark` analysis modes, optional JD/context contracts, persisted mode/context/profile snapshots and execution provenance, strict provider-neutral schemas and semantic validation, and one bounded 4096->8192 truncation retry. Added the A4 EF migration only; no A5, Scenario/STAR, Interview, Billing or provider-selection changes.
 - Security/reliability: Existing owner authorization, stable idempotency fingerprint, quota reservation/consumption, outbox and realtime behavior remain authoritative and unchanged. No live AI/provider calls or secrets are used.
 - Verification: Release restore/build passed with 0 warnings/errors; 296 unit tests and 149 integration tests passed sequentially (including field-benchmark truncation and mixed-context regressions); EF reports no pending model changes; vulnerable-package audit is clean; exact changed-file `dotnet format --verify-no-changes` passed after the final corrections (including formatter-required existing lines in the touched ProductPlatform test file); `git -c core.whitespace=cr-at-eol diff --check` passed. One initial parallel integration run hit a Windows file lock and was rerun sequentially successfully.
 - C2C evidence: `c2c_a4f1` iteration 3 execution summary/output was recorded for connector review; ChatGPT returned `STATE: LOCAL_ACCEPTED` after independently checking the workspace and current diff.
-- Dependencies: A4 comparison remains future work; A5 free quota remains unchecked. Hosted exact-head CI and C2C remote review remain required before merge.
+- Remote gate: hosted Backend CI run `34456351413` passed for the verified exact head above; the PR was open, non-draft and mergeable at capture time. This log update is metadata-only; refresh exact-head evidence after it is pushed.
+- Dependencies: A4 comparison remains future work; A5 free quota remains unchecked. C2C remote review remains required before merge.
