@@ -804,3 +804,19 @@ This log records completed implementation milestones and verification evidence. 
 - FE impact: No frontend code changed. The Learning Path response shape, active Career Goal dependency, gap policy, statuses, progress semantics and refresh behavior are documented for future UI integration.
 - Remaining blockers: No hosted CI or Pull Request was created. Independent review remains required; B12/B13 were not started.
 - No live AI, R2, Resend, payment, production database or production service calls were made.
+
+## 2026-09-11 — B11 Learning Path review corrections
+
+- Status: Functional correction complete / Ready for re-review
+- Owner: Bảo Nguyên — Backend workstream B
+- Branch: `feat/learning-path`
+- Base main: `00d34e5657b63439d494d353e4a593802891081a` (`origin/main`)
+- Original implementation commit: `db3dbe6945407a616e17a2ac71c06e6408da3304`
+- Corrective commit: `e66a0e3a74a01f81b49e620eed248f90b1943f78`
+- Scope: Fixed re-emerging gaps without rewriting completed history. A completed activity remains completed with the same ID and CompletedAt; newer evidence that leaves the competency below threshold creates one deterministic pending learning-cycle activity, unchanged evidence creates no duplicate, and an existing pending cycle remains stable. Resolved pending activities still become obsolete. Scenario gaps without a published matching resource now remain visible as `external_learning` activities with the original competency code, preserved priority/milestone and null resource/link; no IDs or URLs are fabricated.
+- API/data contracts: Existing Learning Path endpoints and response envelope remain unchanged. Documentation now includes `external_learning` and the newer-evidence cycle behavior; no migration or ModelSnapshot change was required.
+- Verification: `dotnet restore Nexora.slnx` passed; `dotnet build Nexora.slnx --nologo --no-restore` passed with 0 warnings/errors; `dotnet test --no-build --nologo` passed with 336 unit and 213 integration tests, 0 failed/skipped; focused B11 coverage passed 6 unit and 24 integration tests; `dotnet ef migrations has-pending-model-changes --project src/Nexora.Data --startup-project src/Nexora.Api` reported `No changes have been made to the model since the last migration.`; current changed-C# `dotnet format` style and analyzer verification passed for 15 files; NuGet audit reported no known vulnerable packages; CRLF-aware `git diff --check` passed. No hosted CI or Pull Request was used for this correction.
+- Migration impact: None. Existing `20260910192103_B11LearningPath` remains the sole B11 migration and the model snapshot is unchanged; the correction is deterministic Business/Data reconciliation plus tests/docs.
+- FE impact: No frontend code changed. Clients should render `external_learning` without inventing a URL and retain completed activity IDs/completion timestamps across refresh responses.
+- Remaining blockers: Independent re-review remains required; B12/B13 were not started.
+- No live AI, R2, Resend, payment, production database or production service calls were made.
