@@ -45,6 +45,8 @@ All user-owned records: `id UUID/ULID`, `user_id`, `created_at timestamptz`, `up
 
 The two result shapes are strict and provider-neutral. Job-targeted output contains `matchScore`, matched/missing skills and the five named breakdown dimensions; field-benchmark output contains `readinessScore` and its six named dimensions. Invalid mode/context combinations are rejected before enqueueing a job.
 
+`career_goals` stores `target_role` (max 160), `seniority` (max 40), nullable `industry` (max 120), nullable `target_company` (max 160), nullable `target_job_description_id`, nullable `target_date` as a SQL `date`, and required `active`. The foreign key to `job_descriptions` is restrictive; the service verifies that the referenced JD has the same owner. A PostgreSQL partial unique index on `user_id` where `active = true` backs the service-level row-lock transition and enforces one active goal per user.
+
 ### Interview session state machine
 
 ```text

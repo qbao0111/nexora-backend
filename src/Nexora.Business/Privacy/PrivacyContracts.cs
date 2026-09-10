@@ -15,6 +15,8 @@ public static class PrivacyValues
 public sealed record ExportProfile(Guid Id, string Email, string? DisplayName, DateTimeOffset CreatedAt);
 public sealed record ExportResume(Guid Id, string FileName, string ContentType, long Size, string Status, DateTimeOffset CreatedAt);
 public sealed record ExportJobDescription(Guid Id, string Title, string Content, DateTimeOffset CreatedAt);
+public sealed record ExportCareerGoal(Guid Id, string TargetRole, string Seniority, string? Industry, string? TargetCompany,
+    Guid? TargetJobDescriptionId, DateOnly? TargetDate, bool Active, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 public sealed record ExportAnalysis(
     Guid Id,
     Guid ResumeId,
@@ -40,6 +42,7 @@ public sealed record CoreDataExport(
     BillingSummary Billing,
     IReadOnlyCollection<ExportResume> Resumes,
     IReadOnlyCollection<ExportJobDescription> JobDescriptions,
+    IReadOnlyCollection<ExportCareerGoal> CareerGoals,
     IReadOnlyCollection<ExportAnalysis> Analyses,
     IReadOnlyCollection<ExportInterview> Interviews);
 public sealed record DeletionRequestView(Guid Id, string Status, int Attempts, DateTimeOffset RequestedAt, DateTimeOffset? CompletedAt);

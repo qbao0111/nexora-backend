@@ -32,6 +32,12 @@ public sealed class PrivacyApiTests
             content = "Private candidate requirements"
         })) Assert.Equal(HttpStatusCode.Created, jd.StatusCode);
 
+        using (var careerGoal = await client.PostAsJsonAsync("/api/v1/career-goals", new
+        {
+            targetRole = "Backend Developer",
+            seniority = "senior"
+        })) Assert.Equal(HttpStatusCode.Created, careerGoal.StatusCode);
+
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
@@ -52,6 +58,7 @@ public sealed class PrivacyApiTests
         var exported = await DataAsync(export);
         Assert.Equal(account.UserId, exported.GetProperty("profile").GetProperty("id").GetGuid());
         Assert.Equal("Private role", exported.GetProperty("jobDescriptions")[0].GetProperty("title").GetString());
+        Assert.Equal("Backend Developer", exported.GetProperty("careerGoals")[0].GetProperty("targetRole").GetString());
         Assert.DoesNotContain("storageKey", exported.GetRawText(), StringComparison.OrdinalIgnoreCase);
 
         using var deletionRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/me/deletion-requests");
@@ -70,6 +77,7 @@ public sealed class PrivacyApiTests
             Assert.Equal(0, await db.StoredFiles.CountAsync(item => item.UserId == account.UserId));
             Assert.Equal(0, await db.Resumes.CountAsync(item => item.UserId == account.UserId));
             Assert.Equal(0, await db.JobDescriptions.CountAsync(item => item.UserId == account.UserId));
+            Assert.Equal(0, await db.CareerGoals.CountAsync(item => item.UserId == account.UserId));
             Assert.Equal(0, await db.UserProfiles.CountAsync(item => item.UserId == account.UserId));
             Assert.Equal(0, await db.RefreshTokens.CountAsync(item => item.UserId == account.UserId));
             Assert.Equal(0, await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId));

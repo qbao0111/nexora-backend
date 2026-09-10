@@ -1145,6 +1145,64 @@ namespace Nexora.Data.Persistence.Migrations
                     b.ToTable("usage_events", (string)null);
                 });
 
+            modelBuilder.Entity("Nexora.Data.Career.CareerGoal", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Active")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Industry")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("Seniority")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("TargetCompany")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<DateOnly?>("TargetDate")
+                        .HasColumnType("date");
+
+                    b.Property<Guid?>("TargetJobDescriptionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TargetRole")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TargetJobDescriptionId");
+
+                    b.HasIndex("UserId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_career_goals_one_active_per_user")
+                        .HasFilter("\"Active\" = TRUE");
+
+                    b.HasIndex("UserId", "CreatedAt");
+
+                    b.ToTable("career_goals", (string)null);
+                });
+
             modelBuilder.Entity("Nexora.Data.Identity.ApplicationUser", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2420,6 +2478,24 @@ namespace Nexora.Data.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Entitlement");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Nexora.Data.Career.CareerGoal", b =>
+                {
+                    b.HasOne("Nexora.Data.Practice.JobDescription", "TargetJobDescription")
+                        .WithMany()
+                        .HasForeignKey("TargetJobDescriptionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Nexora.Data.Identity.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("TargetJobDescription");
 
                     b.Navigation("User");
                 });
