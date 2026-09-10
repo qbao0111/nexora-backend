@@ -484,14 +484,27 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
         });
         builder.Entity<InterviewQuestion>(entity =>
         {
-            entity.ToTable("interview_questions");
+            entity.ToTable("interview_questions", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_interview_questions_kind",
+                    "\"Kind\" IN ('primary', 'followup')");
+                table.HasCheckConstraint(
+                    "CK_interview_questions_parent",
+                    "((\"Kind\" = 'primary' AND \"ParentQuestionId\" IS NULL) OR (\"Kind\" = 'followup' AND \"ParentQuestionId\" IS NOT NULL))");
+            });
             entity.HasKey(question => question.Id);
             entity.HasIndex(question => new { question.InterviewSessionId, question.Sequence }).IsUnique();
+            entity.HasIndex(question => question.ParentQuestionId);
+            entity.Property(question => question.Kind).HasMaxLength(16).IsRequired();
+            entity.Property(question => question.Topic).HasMaxLength(80).IsRequired();
             entity.Property(question => question.Content).HasMaxLength(2_000).IsRequired();
             entity.Property(question => question.PromptVersion).HasMaxLength(80).IsRequired();
             entity.Property(question => question.ModelVersion).HasMaxLength(80).IsRequired();
             entity.HasOne(question => question.InterviewSession).WithMany(session => session.Questions)
                 .HasForeignKey(question => question.InterviewSessionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(question => question.ParentQuestion).WithMany(question => question.FollowUps)
+                .HasForeignKey(question => question.ParentQuestionId).OnDelete(DeleteBehavior.Restrict);
         });
         builder.Entity<InterviewAnswer>(entity =>
         {

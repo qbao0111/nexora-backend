@@ -610,3 +610,15 @@ This log records completed implementation milestones and verification evidence. 
 - Verification: Focused Free quota integration coverage passed (7 tests), including both mode orderings, pre-result failure void/refund, same-key replay, cross-mode distinct-key concurrency and paid-limit configuration. Full Release build passed with 0 warnings/errors; 296 unit and 156 integration tests passed; EF reports no pending model changes; the vulnerable-package audit is clean; changed-file `dotnet format --verify-no-changes` passed; `git -c core.whitespace=cr-at-eol diff --check` passed. C2C execution records for iterations 1 and 2 contain the exact gate summaries; iteration 2 is the local-review correction only.
 - Migration impact: none; existing entitlement, usage-event and idempotency schema reused.
 - Dependencies: A5 review/merge; A6 Interview Contract v1 follows from latest `main`. No frontend changes.
+
+## 2026-09-10 - A6 Interview Contract v1 (implementation)
+
+- Status: Implementation complete; deterministic verification green; C2C local review checkpoint
+- Owner: Backend workstream A (migration owner: Bảo)
+- Branch: `feat/a6-interview-contract-v1`
+- Base: `72f072b9dcbc7ec8ad955329e0268d2e2760e391` (`main` after A5 merge)
+- Scope: Added explicit server-owned interview question `kind` (`primary`/`followup`), `topic`, and nullable `ParentQuestionId` lineage; validated parent/session/topic relationships; and grouped report STAR evidence by explicit story root instead of sequence position.
+- Migration: `20260910105214_InterviewQuestionContractV1` adds the question columns, self-reference/index/check constraints, and backfills existing rows without changing unrelated schemas.
+- Contracts/traceability: `docs/03-api-data-contract.md`, `docs/08-data-model.md`, `docs/09-ai-integration-spec.md`, and the A6 section of `implementation_plan.md` now define sequence as ordering only. The reserved free primary topics remain `self_introduction`, `behavioral_star`, `motivation_role_fit`; complete Q1–Q3/paywall flow remains A7.
+- Verification: Release build passed with 0 warnings/errors; 300 unit tests and 159 integration tests passed; EF reports no pending model changes; changed-file C# format verification and `git diff --check` are clean; NuGet vulnerability audit is clean; no live provider calls. Iteration 2 corrected root-sequence tie-breaking and synchronized this record with the final local gate counts.
+- Dependencies: A6 must pass exact-head local/remote review before merge; do not start A7. No frontend changes.

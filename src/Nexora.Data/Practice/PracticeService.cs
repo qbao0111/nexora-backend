@@ -426,6 +426,7 @@ public sealed partial class PracticeService(
             .Include(item => item.Answers)
             .SingleOrDefaultAsync(item => item.Id == interviewId && item.UserId == userId, cancellationToken)
             ?? throw NotFound();
+        ValidateQuestionContracts(session.Questions);
         return MapInterview(session, session.Questions, session.Answers);
     }
 
@@ -442,18 +443,17 @@ public sealed partial class PracticeService(
         var snapshot = await dbContext.InterviewSessions.AsNoTracking().Include(item => item.Questions).Include(item => item.Answers)
             .Include(item => item.Resume).Include(item => item.JobDescription)
             .SingleOrDefaultAsync(item => item.Id == interviewId && item.UserId == userId, cancellationToken) ?? throw NotFound();
+        ValidateQuestionContracts(snapshot.Questions);
         if (snapshot.Status != PracticeValues.Active) throw InvalidState();
         var question = snapshot.Questions.SingleOrDefault(item => item.Id == questionId) ?? throw NotFound();
         if (snapshot.Answers.Any(item => item.QuestionId == questionId)) throw Conflict("ANSWER_ALREADY_EXISTS", "Câu hỏi đã có câu trả lời chính thức.");
 
-        var isFollowUp = question.Sequence > 1;
+        var isFollowUp = string.Equals(question.Kind, InterviewQuestionValues.Followup, StringComparison.Ordinal);
         string[]? previousMissingElements = null;
         if (isFollowUp)
         {
-            var previousAnswer = snapshot.Answers
-                .Where(a => a.QuestionId != questionId)
-                .OrderByDescending(a => a.CreatedAt)
-                .FirstOrDefault();
+            var parent = snapshot.Questions.Single(item => item.Id == question.ParentQuestionId);
+            var previousAnswer = snapshot.Answers.SingleOrDefault(a => a.QuestionId == parent.Id);
 
             if (previousAnswer?.Evaluation is not null)
             {
@@ -491,7 +491,8 @@ public sealed partial class PracticeService(
             profile,
             question.Sequence,
             isFollowUp,
-            previousMissingElements);
+            previousMissingElements,
+            question.Topic);
         try
         {
             var isBehavioral = string.Equals(snapshot.InterviewType.Trim(), "behavioral", StringComparison.OrdinalIgnoreCase)
@@ -499,7 +500,8 @@ public sealed partial class PracticeService(
             var metadata = new Dictionary<string, string>
             {
                 ["questionSequence"] = question.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                ["isFollowup"] = isFollowUp ? "true" : "false"
+                ["isFollowup"] = isFollowUp ? "true" : "false",
+                ["questionTopic"] = question.Topic
             };
             if (previousMissingElements is not null && previousMissingElements.Length > 0)
             {
@@ -512,7 +514,7 @@ public sealed partial class PracticeService(
                 cancellationToken);
             evaluation = evalResult.Value;
 
-            if (snapshot.Questions.Count < 2)
+            if (!isFollowUp && snapshot.Questions.Count < 2)
             {
                 try
                 {
@@ -567,6 +569,9 @@ public sealed partial class PracticeService(
                 Id = Guid.NewGuid(),
                 InterviewSessionId = session.Id,
                 Sequence = session.Questions.Count + 1,
+                Kind = InterviewQuestionValues.Followup,
+                Topic = question.Topic,
+                ParentQuestionId = question.Id,
                 Content = generated.Content.Trim()[..Math.Min(generated.Content.Trim().Length, 2_000)],
                 PromptVersion = PromptVersion,
                 ModelVersion = CurrentModelVersion,
@@ -602,6 +607,7 @@ public sealed partial class PracticeService(
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         var session = await dbContext.InterviewSessions.Include(item => item.Questions).Include(item => item.Answers)
             .SingleOrDefaultAsync(item => item.Id == interviewId && item.UserId == userId, cancellationToken) ?? throw NotFound();
+        ValidateQuestionContracts(session.Questions);
         if (session.Status == PracticeValues.Completing)
         {
             var retryAt = timeProvider.GetUtcNow();
@@ -962,6 +968,8 @@ public sealed partial class PracticeService(
             Id = Guid.NewGuid(),
             InterviewSessionId = session.Id,
             Sequence = 1,
+            Kind = InterviewQuestionValues.Primary,
+            Topic = InterviewQuestionValues.TopicForInterviewType(snapshot.InterviewType),
             Content = generated.Content.Trim()[..Math.Min(generated.Content.Trim().Length, 2_000)],
             PromptVersion = PromptVersion,
             ModelVersion = CurrentModelVersion,
@@ -1142,6 +1150,7 @@ public sealed partial class PracticeService(
     {
         var session = await dbContext.InterviewSessions.AsNoTracking().Include(item => item.Questions).Include(item => item.Answers)
             .SingleOrDefaultAsync(item => item.Id == interviewId && item.UserId == userId, cancellationToken) ?? throw NotFound();
+        ValidateQuestionContracts(session.Questions);
         var answer = session.Answers.Single(item => item.Id == answerId);
         var next = session.Questions.OrderBy(item => item.Sequence).FirstOrDefault(item => item.Sequence > session.Questions.Single(q => q.Id == answer.QuestionId).Sequence);
         return new AnswerResult(MapAnswer(answer), next is null ? null : MapQuestion(next), next is null);
@@ -1244,20 +1253,25 @@ public sealed partial class PracticeService(
         IEnumerable<InterviewQuestion> questions,
         IEnumerable<InterviewAnswer> answers)
     {
-        var questionSequences = questions.ToDictionary(item => item.Id, item => item.Sequence);
+        var questionMap = questions.ToDictionary(item => item.Id);
+        ValidateQuestionContracts(questionMap.Values);
         var evaluations = new List<PersistedStarEvaluation>();
         foreach (var answer in answers)
         {
-            if (TryReadStarEvaluation(answer, questionSequences, out var evaluation) && evaluation is not null)
+            if (TryReadStarEvaluation(answer, questionMap, out var evaluation) && evaluation is not null)
                 evaluations.Add(evaluation);
         }
 
-        var orderedEvaluations = evaluations
-            .OrderBy(item => item.Sequence)
-            .ThenBy(item => item.CreatedAt)
-            .ThenBy(item => item.AnswerId)
+        var stories = evaluations
+            .GroupBy(item => item.RootQuestionId)
+            .Select(story => BuildStarStory(story, questionMap))
+            .OrderByDescending(item => item.Evaluations.Count)
+            .ThenBy(item => item.RootSequence)
             .ToArray();
-        if (orderedEvaluations.Length == 0) return null;
+        if (stories.Length == 0) return null;
+
+        var story = stories[0];
+        var orderedEvaluations = story.Evaluations.ToArray();
 
         var situation = MergeStarComponent(orderedEvaluations, star => star.Situation);
         var task = MergeStarComponent(orderedEvaluations, star => star.Task);
@@ -1308,18 +1322,23 @@ public sealed partial class PracticeService(
 
     private static bool TryReadStarEvaluation(
         InterviewAnswer answer,
-        Dictionary<Guid, int> questionSequences,
+        Dictionary<Guid, InterviewQuestion> questions,
         out PersistedStarEvaluation? evaluation)
     {
         evaluation = null;
-        if (string.IsNullOrWhiteSpace(answer.Evaluation) || !questionSequences.TryGetValue(answer.QuestionId, out var sequence))
+        if (string.IsNullOrWhiteSpace(answer.Evaluation) || !questions.TryGetValue(answer.QuestionId, out var question))
             return false;
 
         try
         {
             var star = JsonSerializer.Deserialize<AnswerEvaluation>(answer.Evaluation, JsonOptions)?.Star;
             if (!IsUsableStar(star)) return false;
-            evaluation = new PersistedStarEvaluation(answer.Id, sequence, answer.CreatedAt, star!);
+            evaluation = new PersistedStarEvaluation(
+                answer.Id,
+                question.Sequence,
+                ResolveStoryRoot(question.Id, questions),
+                answer.CreatedAt,
+                star!);
             return true;
         }
         catch (JsonException)
@@ -1372,11 +1391,70 @@ public sealed partial class PracticeService(
             : new StarComponentEvaluation(0, false, string.Empty, latestUndetected.Feedback);
     }
 
+    private static StarStorySummary BuildStarStory(
+        IGrouping<Guid, PersistedStarEvaluation> story,
+        Dictionary<Guid, InterviewQuestion> questions)
+    {
+        var evaluations = story
+            .OrderBy(item => item.Sequence)
+            .ThenBy(item => item.CreatedAt)
+            .ThenBy(item => item.AnswerId)
+            .ToArray();
+        if (!questions.TryGetValue(story.Key, out var rootQuestion) ||
+            !string.Equals(rootQuestion.Kind, InterviewQuestionValues.Primary, StringComparison.Ordinal))
+            throw InvalidState();
+        return new StarStorySummary(story.Key, rootQuestion.Sequence, evaluations);
+    }
+
+    private static Guid ResolveStoryRoot(Guid questionId, Dictionary<Guid, InterviewQuestion> questions)
+    {
+        var visited = new HashSet<Guid>();
+        var currentId = questionId;
+        while (true)
+        {
+            if (!visited.Add(currentId) || !questions.TryGetValue(currentId, out var question))
+                throw InvalidState();
+            if (question.ParentQuestionId is null) return question.Id;
+            currentId = question.ParentQuestionId.Value;
+        }
+    }
+
+    private static void ValidateQuestionContracts(IEnumerable<InterviewQuestion> questions)
+    {
+        var questionMap = questions.ToDictionary(item => item.Id);
+        foreach (var question in questionMap.Values)
+        {
+            if (!InterviewQuestionValues.IsSupportedKind(question.Kind) ||
+                string.IsNullOrWhiteSpace(question.Topic) || question.Topic.Trim().Length > 80)
+                throw InvalidState();
+
+            if (string.Equals(question.Kind, InterviewQuestionValues.Primary, StringComparison.Ordinal))
+            {
+                if (question.ParentQuestionId is not null) throw InvalidState();
+                continue;
+            }
+
+            if (question.ParentQuestionId is null ||
+                !questionMap.TryGetValue(question.ParentQuestionId.Value, out var parent) ||
+                parent.Id == question.Id ||
+                parent.InterviewSessionId != question.InterviewSessionId ||
+                parent.Sequence >= question.Sequence ||
+                !string.Equals(parent.Topic, question.Topic, StringComparison.Ordinal))
+                throw InvalidState();
+        }
+    }
+
     private sealed record PersistedStarEvaluation(
         Guid AnswerId,
         int Sequence,
+        Guid RootQuestionId,
         DateTimeOffset CreatedAt,
         StarEvaluation Star);
+
+    private sealed record StarStorySummary(
+        Guid RootQuestionId,
+        int RootSequence,
+        IReadOnlyCollection<PersistedStarEvaluation> Evaluations);
 
     private static bool NotBlank(string? value) => !string.IsNullOrWhiteSpace(value);
 
@@ -1476,7 +1554,14 @@ public sealed partial class PracticeService(
     private static InterviewView MapInterview(InterviewSession session, IEnumerable<InterviewQuestion> questions, IEnumerable<InterviewAnswer> answers) =>
         new(session.Id, session.Status, session.Role, session.Seniority, session.InterviewType, session.Difficulty, session.Version,
             questions.OrderBy(item => item.Sequence).Select(MapQuestion).ToArray(), answers.OrderBy(item => item.CreatedAt).Select(MapAnswer).ToArray(), session.CreatedAt, session.UpdatedAt);
-    private static QuestionView MapQuestion(InterviewQuestion question) => new(question.Id, question.Sequence, question.Content, question.CreatedAt);
+    private static QuestionView MapQuestion(InterviewQuestion question) => new(
+        question.Id,
+        question.Sequence,
+        question.Kind,
+        question.Topic,
+        question.ParentQuestionId,
+        question.Content,
+        question.CreatedAt);
     private static AnswerView MapAnswer(InterviewAnswer answer) => new(answer.Id, answer.QuestionId, answer.Content, answer.DurationSeconds, ParseJson(answer.Evaluation), answer.CreatedAt);
     private static ReportView MapReport(InterviewReport report, IEnumerable<InterviewQuestion> questions, IEnumerable<InterviewAnswer> answers) => new(report.Id, report.InterviewSessionId, report.OverallScore,
         ParseJson(report.Rubric) ?? default(JsonElement), ParseJson(report.Strengths) ?? default(JsonElement), ParseJson(report.Gaps) ?? default(JsonElement),

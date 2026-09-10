@@ -1355,10 +1355,18 @@ namespace Nexora.Data.Persistence.Migrations
                     b.Property<Guid>("InterviewSessionId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
                     b.Property<string>("ModelVersion")
                         .IsRequired()
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
+
+                    b.Property<Guid?>("ParentQuestionId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("PromptVersion")
                         .IsRequired()
@@ -1368,12 +1376,24 @@ namespace Nexora.Data.Persistence.Migrations
                     b.Property<int>("Sequence")
                         .HasColumnType("integer");
 
+                    b.Property<string>("Topic")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("ParentQuestionId");
 
                     b.HasIndex("InterviewSessionId", "Sequence")
                         .IsUnique();
 
-                    b.ToTable("interview_questions", (string)null);
+                    b.ToTable("interview_questions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_interview_questions_kind", "\"Kind\" IN ('primary', 'followup')");
+
+                            t.HasCheckConstraint("CK_interview_questions_parent", "((\"Kind\" = 'primary' AND \"ParentQuestionId\" IS NULL) OR (\"Kind\" = 'followup' AND \"ParentQuestionId\" IS NOT NULL))");
+                        });
                 });
 
             modelBuilder.Entity("Nexora.Data.Practice.InterviewReport", b =>
@@ -1614,12 +1634,12 @@ namespace Nexora.Data.Persistence.Migrations
                     b.Property<int>("ResumeVersion")
                         .HasColumnType("integer");
 
-                    b.Property<string>("SchemaVersion")
-                        .IsRequired()
+                    b.Property<string>("RubricVersion")
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
 
-                    b.Property<string>("RubricVersion")
+                    b.Property<string>("SchemaVersion")
+                        .IsRequired()
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
 
@@ -1645,9 +1665,10 @@ namespace Nexora.Data.Persistence.Migrations
 
                     b.HasIndex("UserId", "CreatedAt");
 
-                    b.ToTable("resume_analyses", (string)null, t =>
+                    b.ToTable("resume_analyses", null, t =>
                         {
                             t.HasCheckConstraint("CK_resume_analyses_mode", "\"Mode\" IN ('job_targeted', 'field_benchmark')");
+
                             t.HasCheckConstraint("CK_resume_analyses_mode_job_description", "((\"Mode\" = 'job_targeted' AND \"JobDescriptionId\" IS NOT NULL AND \"JobDescriptionVersion\" IS NOT NULL) OR (\"Mode\" = 'field_benchmark' AND \"JobDescriptionId\" IS NULL AND \"JobDescriptionVersion\" IS NULL))");
                         });
                 });
@@ -2460,7 +2481,14 @@ namespace Nexora.Data.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("Nexora.Data.Practice.InterviewQuestion", "ParentQuestion")
+                        .WithMany("FollowUps")
+                        .HasForeignKey("ParentQuestionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("InterviewSession");
+
+                    b.Navigation("ParentQuestion");
                 });
 
             modelBuilder.Entity("Nexora.Data.Practice.InterviewReport", b =>
@@ -2682,6 +2710,8 @@ namespace Nexora.Data.Persistence.Migrations
             modelBuilder.Entity("Nexora.Data.Practice.InterviewQuestion", b =>
                 {
                     b.Navigation("Answer");
+
+                    b.Navigation("FollowUps");
                 });
 
             modelBuilder.Entity("Nexora.Data.Practice.InterviewSession", b =>

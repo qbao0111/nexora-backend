@@ -17,6 +17,56 @@ public static class PracticeValues
     public const string Completing = "completing";
 }
 
+/// <summary>
+/// Server-owned semantics for interview questions. Sequence is ordering only;
+/// it never determines whether a question is a follow-up.
+/// </summary>
+public static class InterviewQuestionValues
+{
+    public const string Primary = "primary";
+    public const string Followup = "followup";
+
+    public const string SelfIntroduction = "self_introduction";
+    public const string BehavioralStar = "behavioral_star";
+    public const string MotivationRoleFit = "motivation_role_fit";
+    public const string Technical = "technical";
+    public const string CvTargeted = "cv_targeted";
+    public const string JdTargeted = "jd_targeted";
+    public const string Scenario = "scenario";
+
+    public static bool IsSupportedKind(string? kind) =>
+        string.Equals(kind, Primary, StringComparison.Ordinal) ||
+        string.Equals(kind, Followup, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Canonical topics reserved for the first three free primary questions.
+    /// A6 defines the contract; A7 owns when these questions are generated.
+    /// </summary>
+    public static string PrimaryTopicForSequence(int sequence) => sequence switch
+    {
+        1 => SelfIntroduction,
+        2 => BehavioralStar,
+        3 => MotivationRoleFit,
+        _ => SelfIntroduction
+    };
+
+    /// <summary>
+    /// Maps the current interview type to a stable topic for the first question
+    /// without making the AI provider authoritative for question semantics.
+    /// </summary>
+    public static string TopicForInterviewType(string interviewType) => interviewType.Trim().ToLowerInvariant() switch
+    {
+        "behavioral" => BehavioralStar,
+        "technical" => Technical,
+        "cv_targeted" => CvTargeted,
+        "jd_targeted" => JdTargeted,
+        "scenario" => Scenario,
+        "motivation_role_fit" => MotivationRoleFit,
+        "self_introduction" => SelfIntroduction,
+        _ => SelfIntroduction
+    };
+}
+
 public enum ResumeAnalysisMode
 {
     JobTargeted,
@@ -241,7 +291,8 @@ public interface IResumeContextBuilder
         ResumeProfile? profile,
         int questionSequence = 1,
         bool isFollowUp = false,
-        IReadOnlyCollection<string>? followupTargetElements = null);
+        IReadOnlyCollection<string>? followupTargetElements = null,
+        string? questionTopic = null);
     string BuildFollowupQuestionContext(string role, string seniority, string interviewType, string? jobDescription, string question, string answer, StarEvaluation? star, ResumeProfile? profile);
     string BuildReportContext(string transcript, ResumeProfile? profile);
 }
@@ -290,7 +341,14 @@ public sealed record StartInterviewCommand(
     Guid? ResumeId,
     Guid? JobDescriptionId);
 
-public sealed record QuestionView(Guid Id, int Sequence, string Content, DateTimeOffset CreatedAt);
+public sealed record QuestionView(
+    Guid Id,
+    int Sequence,
+    string Kind,
+    string Topic,
+    Guid? ParentQuestionId,
+    string Content,
+    DateTimeOffset CreatedAt);
 public sealed record AnswerView(Guid Id, Guid QuestionId, string Content, int? DurationSeconds, object? Evaluation, DateTimeOffset CreatedAt);
 public sealed record InterviewView(
     Guid Id,

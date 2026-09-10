@@ -572,12 +572,15 @@ Tasks:
 
 ### Question model
 
-- [ ] `primary` vs `followup`.
-- [ ] `ParentQuestionId?`.
-- [ ] topic/kind rõ.
-- [ ] migration do **Bảo** tạo trong phase này.
-- [ ] sửa STAR story aggregation để group đúng story, không còn assumption tất cả seq>1 cùng Q1.
-- [ ] regression test giữ canonical STAR weights 20/20/35/25.
+- [x] `primary` vs `followup`.
+- [x] `ParentQuestionId?`.
+- [x] topic/kind rõ.
+- [x] migration do **Bảo** tạo trong phase này.
+- [x] sửa STAR story aggregation để group đúng story, không còn assumption tất cả seq>1 cùng Q1.
+- [x] regression test giữ canonical STAR weights 20/20/35/25.
+
+Contract v1 is now persisted and server-validated. `sequence` remains ordering
+only; the complete Q1–Q3 free flow and paid continuation remain A7 scope.
 
 ### Interview plan
 
