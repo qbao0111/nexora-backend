@@ -94,7 +94,7 @@ Physical constraints and lifecycle ownership: [data model](docs/08-data-model.md
 
 - Base URL is `/api/v1`; timestamps use UTC ISO-8601.
 - Client inputs never control user identity, price, plan, quota, entitlement or score.
-- Core routes cover `/me`, `/plans`, checkout/payment webhooks, upload/resume/analysis, interviews/answers/completion/report, and dashboard/history.
+- Core routes cover `/me`, `/plans`, checkout/payment webhooks, upload/resume/analysis, interviews/answers/continuation/completion/report, and dashboard/history.
 - `POST /resume-analyses` requires an explicit mode and idempotency key; `GET /resume-analyses/{id}` returns the mode-specific, strictly validated result and version metadata.
 - User resources always require owner authorization; cross-user lookup should not leak metadata.
 - Response DTOs are allow-listed; EF/provider objects are never serialized directly.
@@ -123,6 +123,14 @@ active → abandoned
 - Completion happens exactly once; report creation is idempotent.
 - Optimistic concurrency/versioning prevents duplicate answers and transitions.
 - `completed`, `failed` and `abandoned` are immutable terminal states except explicit audited administrative/recovery procedures.
+
+The free interview trial issues exactly three primary questions in the
+server-owned topic order `self_introduction`, `behavioral_star`,
+`motivation_role_fit`. After Q3, `continuation` exposes finish-now versus
+upgrade-required without adding a session state. A paid `/continue` re-checks
+entitlement before AI, keeps the same session and idempotency identity, and
+creates a policy-selected primary; an explicit follow-up is allowed only for a
+paid behavioral question whose evaluation has missing STAR evidence.
 
 `docs/08-data-model.md` owns the canonical persisted interview state names and transitions, subject to the formal behavior and business rules in `docs/SRS.md`; API and design documents reference them.
 

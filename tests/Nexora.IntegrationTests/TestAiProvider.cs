@@ -121,15 +121,26 @@ internal sealed class TestAiProvider : IAiProvider
             return Task.FromResult((T)strictFieldAnalysis);
         }
 
-        var behavioral = request.UntrustedInput.Contains("interview-type: behavioral", StringComparison.OrdinalIgnoreCase);
+        var questionTopic = GetQuestionTopic(request.UntrustedInput);
+        var behavioral = string.Equals(questionTopic, InterviewQuestionValues.BehavioralStar, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(questionTopic, InterviewQuestionValues.Behavioral, StringComparison.OrdinalIgnoreCase)
+            || (questionTopic is null && request.UntrustedInput.Contains("interview-type: behavioral", StringComparison.OrdinalIgnoreCase));
+        var generatedQuestion = request.Purpose == "interview.followup"
+            ? "Bạn sẽ cải thiện kết quả đó như thế nào nếu làm lại?"
+            : questionTopic?.ToLowerInvariant() switch
+            {
+                InterviewQuestionValues.SelfIntroduction => "Hãy giới thiệu ngắn gọn về kinh nghiệm phù hợp nhất với vai trò này.",
+                InterviewQuestionValues.BehavioralStar => "Hãy kể về một tình huống bạn giải quyết vấn đề khó trong vai trò này.",
+                InterviewQuestionValues.MotivationRoleFit => "Điều gì thu hút bạn ở vai trò này và vì sao bạn phù hợp?",
+                InterviewQuestionValues.Behavioral => "Hãy kể về một tình huống bạn giải quyết vấn đề khó trong vai trò này.",
+                _ when behavioral => "Hãy kể về một tình huống bạn giải quyết vấn đề khó trong vai trò này.",
+                _ => "Explain dependency injection."
+            };
+        if (questionTopic is not null)
+            generatedQuestion = $"[{questionTopic}] {generatedQuestion}";
         object result = typeof(T) switch
         {
-            var type when type == typeof(GeneratedQuestion) => new GeneratedQuestion(
-                request.Purpose == "interview.followup"
-                    ? "Bạn sẽ cải thiện kết quả đó như thế nào nếu làm lại?"
-                    : behavioral
-                        ? "Hãy kể về một tình huống bạn giải quyết vấn đề khó trong vai trò này."
-                        : "Explain dependency injection."),
+            var type when type == typeof(GeneratedQuestion) => new GeneratedQuestion(generatedQuestion),
             var type when type == typeof(AnswerEvaluation) => new AnswerEvaluation(
                 [
                     new RubricScore("correctness", 75, "Câu trả lời nêu được cách xử lý."),
@@ -194,4 +205,11 @@ internal sealed class TestAiProvider : IAiProvider
         };
         return Task.FromResult((T)result);
     }
+
+    private static string? GetQuestionTopic(string input) => input
+        .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Where(line => line.StartsWith("question-topic:", StringComparison.OrdinalIgnoreCase))
+        .Select(line => line["question-topic:".Length..].Trim())
+        .Select(topic => string.IsNullOrWhiteSpace(topic) ? null : topic)
+        .FirstOrDefault();
 }

@@ -23,6 +23,7 @@ public static class PracticeValues
 /// </summary>
 public static class InterviewQuestionValues
 {
+    public const int FreeQuestionLimit = 3;
     public const string Primary = "primary";
     public const string Followup = "followup";
 
@@ -30,6 +31,7 @@ public static class InterviewQuestionValues
     public const string BehavioralStar = "behavioral_star";
     public const string MotivationRoleFit = "motivation_role_fit";
     public const string Technical = "technical";
+    public const string Behavioral = "behavioral";
     public const string CvTargeted = "cv_targeted";
     public const string JdTargeted = "jd_targeted";
     public const string Scenario = "scenario";
@@ -65,6 +67,30 @@ public static class InterviewQuestionValues
         "self_introduction" => SelfIntroduction,
         _ => SelfIntroduction
     };
+
+    /// <summary>
+    /// Selects the first paid continuation topic from server-owned session context.
+    /// The client never supplies this choice and free primary topics remain fixed.
+    /// </summary>
+    public static string PaidTopicForContext(string interviewType, bool hasResume, bool hasJobDescription) =>
+        hasJobDescription
+            ? JdTargeted
+            : hasResume
+                ? CvTargeted
+                : interviewType.Trim().ToLowerInvariant() switch
+                {
+                    "behavioral" => Behavioral,
+                    "technical" => Technical,
+                    "scenario" => Scenario,
+                    _ => Technical
+                };
+}
+
+public static class InterviewContinuationValues
+{
+    public const string InProgress = "in_progress";
+    public const string UpgradeRequired = "upgrade_required";
+    public const string MaxQuestionsReached = "max_questions_reached";
 }
 
 public enum ResumeAnalysisMode
@@ -280,7 +306,15 @@ public interface IResumeContextBuilder
     string BuildProfileExtractionContext(string rawExtractedText);
     string BuildResumeAnalysisContext(ResumeProfile profile, string jobDescription);
     string BuildResumeAnalysisContext(ResumeProfile profile, ResumeAnalysisContext context);
-    string BuildInterviewQuestionContext(string role, string seniority, string interviewType, string difficulty, string? jobDescription, ResumeProfile? profile);
+    string BuildInterviewQuestionContext(
+        string role,
+        string seniority,
+        string interviewType,
+        string difficulty,
+        string? jobDescription,
+        ResumeProfile? profile,
+        int questionSequence = 1,
+        string? questionTopic = null);
     string BuildAnswerEvaluationContext(
         string role,
         string seniority,
@@ -361,9 +395,18 @@ public sealed record InterviewView(
     IReadOnlyCollection<QuestionView> Questions,
     IReadOnlyCollection<AnswerView> Answers,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    InterviewContinuationView? Continuation = null);
 
-public sealed record AnswerResult(AnswerView Answer, QuestionView? NextQuestion, bool IsComplete);
+public sealed record AnswerResult(
+    AnswerView Answer,
+    QuestionView? NextQuestion,
+    bool IsComplete,
+    InterviewContinuationView? Continuation = null);
+public sealed record InterviewContinuationView(
+    string State,
+    bool CanFinishNow,
+    bool CanUpgradeAndContinue);
 public sealed record ReportView(
     Guid Id,
     Guid InterviewId,
@@ -392,6 +435,7 @@ public interface IPracticeService
     Task<InterviewView> StartInterviewAsync(Guid userId, StartInterviewCommand command, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> GetInterviewAsync(Guid userId, Guid interviewId, CancellationToken cancellationToken);
     Task<AnswerResult> SubmitAnswerAsync(Guid userId, Guid interviewId, Guid questionId, string content, int? durationSeconds, string idempotencyKey, CancellationToken cancellationToken);
+    Task<InterviewView> ContinueInterviewAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> CompleteInterviewAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
     Task<ReportView> GetReportAsync(Guid userId, Guid interviewId, CancellationToken cancellationToken);
     Task<DashboardView> GetDashboardAsync(Guid userId, CancellationToken cancellationToken);

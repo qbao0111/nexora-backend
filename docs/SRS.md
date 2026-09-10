@@ -117,7 +117,7 @@ Candidate browser -> Nexora frontend -> Nexora .NET API -> PostgreSQL
 | --- | --- | --- | --- |
 | FR-INT-01 | Candidate chọn role, seniority, interview type, difficulty và tuỳ chọn CV/JD trước khi start. | Must | Invalid/foreign CV-JD ID bị từ chối. |
 | FR-INT-02 | Session dùng canonical lifecycle `draft → starting → active → completing → completed`, `starting → failed`, `active → abandoned`; lưu question, official answer, timestamps/version và re-open sau refresh không mất dữ liệu. Chỉ `active` nhận official answer, submission phải idempotent. | Must | State/invalid-transition/concurrency và create-answer-reload integration tests. |
-| FR-INT-03 | AI có thể sinh follow-up theo answer; phải lưu câu hỏi đã sinh để tái hiện session. | Should | Same session GET trả thứ tự question ổn định. |
+| FR-INT-03 | Khi entitlement cho phép phần trả phí, AI có thể sinh follow-up theo evaluation của một câu hỏi behavioral có thiếu bằng chứng; phải lưu kind/topic/parent để tái hiện session. Free flow luôn dùng ba primary topic chuẩn trước khi continuation. | Should | Same session GET trả thứ tự question ổn định; không gọi AI cho câu bị paywall. |
 | FR-INT-04 | Report hiển thị rubric scores, evidence từ transcript, strengths, gaps và action plan. | Must | Report không chỉ có điểm tổng; rubric fields bắt buộc. |
 | FR-INT-05 | Audio/video và speech metrics là opt-in; consent được lưu trước khi bắt đầu recording. | Could | Không tạo recording khi chưa consent. |
 

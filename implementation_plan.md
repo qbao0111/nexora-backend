@@ -595,8 +595,8 @@ Q4+ CV/JD/technical/adaptive
 follow-up chỉ xuất hiện khi evaluation thực sự cần đào sâu
 ```
 
-- [ ] Không pre-generate paid question trước khi entitlement cho phép.
-- [ ] Không tốn AI call cho câu bị paywall.
+- [x] Không pre-generate paid question trước khi entitlement cho phép.
+- [x] Không tốn AI call cho câu bị paywall.
 
 ## A7. Free interview + paid continuation [P0]
 
@@ -645,11 +645,11 @@ webhook verified
 
 Tasks:
 
-- [ ] Không tạo session mới sau upgrade.
-- [ ] Re-check entitlement server-side.
-- [ ] Endpoint continue/generate-next có Idempotency-Key.
-- [ ] Không tin `paid=true` từ FE.
-- [ ] Session state machine không thêm `paywalled` nếu không cần; paywall là continuation state/policy.
+- [x] Không tạo session mới sau upgrade.
+- [x] Re-check entitlement server-side.
+- [x] Endpoint continue/generate-next có Idempotency-Key.
+- [x] Không tin `paid=true` từ FE.
+- [x] Session state machine không thêm `paywalled` nếu không cần; paywall là continuation state/policy.
 
 ## A8. Per-answer coaching [P0]
 
