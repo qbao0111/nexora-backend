@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Nexora.Data.Billing;
 using Nexora.Data.Career;
 using Nexora.Data.Identity;
+using Nexora.Data.Learning;
 using Nexora.Data.Practice;
 using Nexora.Data.Privacy;
 
@@ -43,6 +44,9 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<ScenarioAttempt> ScenarioAttempts => Set<ScenarioAttempt>();
     public DbSet<StarAttempt> StarAttempts => Set<StarAttempt>();
     public DbSet<CareerGoal> CareerGoals => Set<CareerGoal>();
+    public DbSet<LearningPath> LearningPaths => Set<LearningPath>();
+    public DbSet<LearningPathMilestone> LearningPathMilestones => Set<LearningPathMilestone>();
+    public DbSet<LearningPathActivity> LearningPathActivities => Set<LearningPathActivity>();
     public DbSet<Nexora.Data.Realtime.RealtimeNotification> RealtimeNotifications => Set<Nexora.Data.Realtime.RealtimeNotification>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -108,6 +112,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
         ConfigureFeatureManagement(builder);
         ConfigureScenarioStar(builder);
         ConfigureCareerGoals(builder);
+        ConfigureLearningPaths(builder);
         builder.Entity<Nexora.Data.Realtime.RealtimeNotification>(entity =>
         {
             entity.ToTable("realtime_notifications");
@@ -587,6 +592,61 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.HasOne(item => item.User).WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(item => item.TargetJobDescription).WithMany().HasForeignKey(item => item.TargetJobDescriptionId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigureLearningPaths(ModelBuilder builder)
+    {
+        builder.Entity<LearningPath>(entity =>
+        {
+            entity.ToTable("learning_paths");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.UserId, item.CareerGoalId })
+                .IsUnique()
+                .HasDatabaseName("IX_learning_paths_one_per_user_career_goal");
+            entity.HasIndex(item => new { item.UserId, item.UpdatedAt });
+            entity.Property(item => item.Status).HasMaxLength(20).IsRequired();
+            entity.Property(item => item.CreatedAt).IsRequired();
+            entity.Property(item => item.UpdatedAt).IsRequired();
+            entity.HasOne(item => item.User).WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(item => item.CareerGoal).WithMany().HasForeignKey(item => item.CareerGoalId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<LearningPathMilestone>(entity =>
+        {
+            entity.ToTable("learning_path_milestones");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.LearningPathId, item.Code }).IsUnique();
+            entity.HasIndex(item => new { item.LearningPathId, item.SortOrder });
+            entity.Property(item => item.Code).HasMaxLength(40).IsRequired();
+            entity.Property(item => item.Title).HasMaxLength(160).IsRequired();
+            entity.Property(item => item.Status).HasMaxLength(20).IsRequired();
+            entity.Property(item => item.CreatedAt).IsRequired();
+            entity.Property(item => item.UpdatedAt).IsRequired();
+            entity.HasOne(item => item.LearningPath).WithMany(path => path.Milestones)
+                .HasForeignKey(item => item.LearningPathId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<LearningPathActivity>(entity =>
+        {
+            entity.ToTable("learning_path_activities");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.LearningPathId, item.ActivityKey }).IsUnique();
+            entity.HasIndex(item => new { item.LearningPathId, item.Status, item.SortOrder });
+            entity.HasIndex(item => item.ResourceId);
+            entity.Property(item => item.ActivityKey).HasMaxLength(160).IsRequired();
+            entity.Property(item => item.Type).HasMaxLength(40).IsRequired();
+            entity.Property(item => item.Title).HasMaxLength(200).IsRequired();
+            entity.Property(item => item.Description).HasMaxLength(500).IsRequired();
+            entity.Property(item => item.CompetencyCode).HasMaxLength(120);
+            entity.Property(item => item.ExternalUrl).HasMaxLength(2_048);
+            entity.Property(item => item.Priority).IsRequired();
+            entity.Property(item => item.SortOrder).IsRequired();
+            entity.Property(item => item.Status).HasMaxLength(20).IsRequired();
+            entity.Property(item => item.CreatedAt).IsRequired();
+            entity.Property(item => item.UpdatedAt).IsRequired();
+            entity.HasOne(item => item.LearningPath).WithMany()
+                .HasForeignKey(item => item.LearningPathId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.Milestone).WithMany(milestone => milestone.Activities)
+                .HasForeignKey(item => item.LearningPathMilestoneId).OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

@@ -47,6 +47,10 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | GET | `/career-goals/:id` | Đọc một Career Goal của owner. |
 | PATCH | `/career-goals/:id` | Cập nhật Career Goal của owner; hỗ trợ đổi active goal. |
 | GET | `/skill-profile` | Skill Profile read model của owner, tổng hợp từ evidence hợp lệ. |
+| GET | `/learning-path` | Đọc learning path hiện tại của active Career Goal; không tạo dữ liệu. |
+| POST | `/learning-path` | Tạo learning path ban đầu cho active Career Goal; lặp lại là idempotent. |
+| POST | `/learning-path/refresh` | Reconcile learning path hiện tại với Skill Profile mới nhất. |
+| PATCH | `/learning-path/activities/:activityId` | Đánh dấu activity owner là completed. |
 | POST | `/interviews` | Tạo và bắt đầu phiên phỏng vấn. |
 | GET | `/interviews/:id` | Đọc session state/question hiện tại của owner. |
 | POST | `/interviews/:id/answers` | Lưu câu trả lời, đánh giá và mở câu hỏi tiếp theo theo policy server. |
@@ -152,6 +156,18 @@ Goal mới luôn `active: true` và transaction sẽ chuyển goal active trư�
 Numeric competencies use only validated structured scores from completed owner-scoped `ResumeAnalysis` breakdowns, canonical final `InterviewReport` rubrics (with answer-rubric fallback when no valid report exists), applicable/detected STAR components, and completed valid `ScenarioAttempt` evaluations. Codes are deterministic: `resume.<dimension>`, `interview.<criterion>`, `behavioral.<component>` and `scenario.<normalized-competency>`; `resume.clarity` and `interview.clarity` remain separate. Scores are the equal-weight arithmetic mean per code with one final `Math.Round(..., MidpointRounding.AwayFromZero)` operation. `evidenceCount`, `latestEvidenceAt` and `sources` provide traceability.
 
 CV `Gaps` and `MissingKeywordsOrSkills` may appear as qualitative `weaknessSignals`, but never manufacture a numeric competency score. Invalid/malformed individual evidence is skipped; no valid scored evidence returns `200` with an empty `competencies` array. The response never exposes raw CV text, interview answers, STAR quotes, scenario answers or full AI output.
+
+### Learning Path
+
+Learning Path là dữ liệu persisted, owner-scoped và luôn gắn với một Career Goal. Các endpoint yêu cầu Bearer authentication và trả envelope chuẩn { "data": ... }. GET /api/v1/learning-path chỉ đọc path của Career Goal đang active; nếu goal chưa có path, trả 404 LEARNING_PATH_NOT_FOUND, còn nếu user chưa có active goal trả 400 ACTIVE_CAREER_GOAL_REQUIRED. GET không tự tạo hoặc refresh dữ liệu.
+
+POST /api/v1/learning-path tạo path ban đầu từ ISkillProfileService; lần đầu trả 201, gọi lặp khi path đã tồn tại trả 200 cùng id. POST /api/v1/learning-path/refresh tạo path nếu chưa có hoặc reconcile path hiện tại và trả 200. Cả hai thao tác được serialize theo owner và database unique key (user_id, career_goal_id).
+
+Response có id, careerGoalId, status, timestamps, progress và milestones. progress gồm completedActivityCount, totalActivityCount, percentage; activity obsolete không nằm trong mẫu số, path không có activity có 0/0 và percentage: 0. Milestone/activity được sắp xếp deterministic bằng server order. Activity trả id, type, title, description, competencyCode, nullable resourceId/externalUrl, priority, status, order và nullable completedAt.
+
+Planner map gap số có score < 60 vào priority 1 và 60..74 vào priority 2; score >= 75 không tạo numeric gap. scenario.<competency> tạo scenario activity với Scenario đã published tương ứng; nếu chưa có resource phù hợp, gap vẫn được biểu diễn bằng external_learning với cùng competencyCode, priority/milestone và resourceId/externalUrl đều null. behavioral.*, interview.* và resume.* lần lượt tạo star_drill, interview và resume_improvement. CV qualitative signal chỉ tạo supporting resume_improvement, không tạo điểm số và không lấn át numeric gaps. B11 không tự sinh URL hoặc Scenario ID.
+
+PATCH /api/v1/learning-path/activities/{activityId} nhận { "status": "completed" }. Chỉ transition pending -> completed được phép; lặp lại transition completed là idempotent, không có API đưa completed trở lại pending. Activity obsolete trả 409; ID của owner khác trả 404 LEARNING_PATH_ACTIVITY_NOT_FOUND. Refresh không xóa activity đã completed, giữ nguyên id/completedAt, chuyển pending gap đã được giải quyết thành obsolete và thêm gap mới ở trạng thái pending. Nếu cùng competency vẫn là gap nhưng có LatestEvidenceAt mới hơn CompletedAt, refresh giữ activity completed cũ và tạo đúng một activity pending cho learning cycle mới; refresh lặp lại với cùng evidence không nhân bản activity.
 
 ### Tạo interview
 

@@ -107,6 +107,14 @@ The profile uses validated CV breakdowns, final interview-report rubric (or answ
 
    Save `data.id` as `analysisId`. `GET /resume-analyses/{analysisId}` (`200`) returns `queued → processing → completed` or `failed`; a failed result includes `errorCode` when available. Poll with bounded backoff (about 1s, 2s, 3s, 5s; stop after a UI timeout).
 
+## Learning Path
+
+After an active Career Goal exists, call POST /api/v1/learning-path to create its initial path. A repeated call is safe and returns the same path; use GET /api/v1/learning-path for hydration and POST /api/v1/learning-path/refresh after new practice/CV evidence. GET never creates a path. If there is no active goal, the API returns ACTIVE_CAREER_GOAL_REQUIRED; if the active goal has no generated path, GET returns LEARNING_PATH_NOT_FOUND.
+
+The response is a nested milestones[].activities[] read model. Each activity contains a stable id, type, priority, status, order, optional competencyCode/resourceId, and server-computed progress is based only on non-obsolete activities. Types are scenario, external_learning, star_drill, interview and resume_improvement; external_learning has no server-provided resourceId or URL when no published Scenario matches, so the client should render the competency guidance without inventing a link.
+
+To complete an activity, send PATCH /api/v1/learning-path/activities/{activityId} with { "status": "completed" }. Completion is idempotent; clients should not offer an uncomplete transition. When refreshing, retain completed activity IDs and completedAt values, hide/label obsolete pending activities, and add new pending activities. If newer evidence leaves a previously completed competency below threshold, the response contains the preserved completed activity plus one new pending activity for that cycle; repeated refreshes with unchanged evidence do not add more rows. Switching the active Career Goal selects a separate path and does not delete the previous goal's path/history.
+
 ## Interview and report flow
 
 1. Optional `GET /plans` (`200`) and `POST /checkout-sessions` (`201`, idempotency key) for a paid development entitlement:

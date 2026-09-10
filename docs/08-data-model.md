@@ -51,6 +51,14 @@ The two result shapes are strict and provider-neutral. Job-targeted output conta
 
 `SkillProfile` is a computed, owner-scoped read model and is not a persisted entity/table. `GET /api/v1/skill-profile` projects and validates existing completed evidence from `resume_analyses`, `interview_reports`/`interview_answers`, `star_attempts` and `scenario_attempts`; B10 adds no `DbSet`, model snapshot change or migration. Numeric output is grouped by deterministic competency code and includes the equal-weight score, unique evidence count, latest evidence timestamp and source summaries. CV gaps/missing keywords remain qualitative weakness signals only. Raw CV, answer, STAR and scenario content is not returned.
 
+### Learning Path persistence
+
+B11 adds the normalized learning_paths, learning_path_milestones and learning_path_activities tables. A path is owned by UserId, references the same user's CareerGoalId, and has status, created_at and updated_at; a unique (UserId, CareerGoalId) index enforces one current path per user/goal while preserving paths for previous goals. Milestones have stable Code/SortOrder and activities have a stable per-path ActivityKey, type, deterministic metadata, optional CompetencyCode/ResourceId/ExternalUrl, priority/order, status and nullable CompletedAt.
+
+Activity statuses are pending, completed and obsolete; only pending-to-completed is exposed by the API. Refresh reconciliation is additive: completed activities are never deleted or reset, pending activities no longer required become obsolete, and new gaps become pending rows. When a completed gap has newer Skill Profile evidence and remains below threshold, the original completed row is preserved and one deterministic evidence-cycle activity is added; repeated refresh with the same evidence reuses that pending row. The unique activity key and user-serialized transaction make initial generation and refresh idempotent under repeated/concurrent requests. Published Scenario IDs are selected server-side; a scenario gap without a published match becomes an external_learning activity with null resource/link, and B11 never accepts arbitrary resource IDs or URLs from the client.
+
+Numeric gap policy is explicit: scores below 60 are critical priority, scores 60 through 74 are developing priority, and scores 75 or higher are not numeric gaps. Qualitative CV signals may produce supporting resume activities but never a numeric score. Progress is computed at read time as completed activities divided by non-obsolete activities; an empty path returns 0/0 and 0%. Learning Path rows are included in privacy export and deleted during account deletion before the Career Goal rows.
+
 ### Interview session state machine
 
 ```text
