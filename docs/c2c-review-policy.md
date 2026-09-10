@@ -29,8 +29,8 @@ The global C2C policy defines the mechanics; this section applies them to Nexora
 Keep these concepts separate:
 
 - **Implementation iteration:** one substantive implementation or corrective change to product code, tests, configuration or task-owned documentation. Waiting, rereading unchanged files, capturing evidence and resuming a review do not consume an iteration.
-- **Semantic review:** an independent ChatGPT review of requirements, architecture, security, behavior, tests and scope. Run one local review after deterministic validation and one final remote review after hosted CI is green for the exact pushed `HEAD`.
-- **Evidence refresh:** a metadata-only read of the current branch/PR, base, diff and checks, or an execution-record update. Evidence refresh resumes the existing review and is not a new implementation iteration or semantic review. A changed `HEAD`/base/diff, adverse check, scope drift or new blocker invalidates the prior approval and requires fresh exact-head review.
+- **Semantic review:** an independent ChatGPT review of requirements, architecture, security, behavior, tests and scope. For a straightforward, low-risk change choose one review (early local or final exact-head remote). Require both for authorization/security, billing/entitlement, destructive data changes, high-blast-radius contracts, or major architecture work. A corrective review is needed only after repository content changes for a finding.
+- **Evidence refresh:** a metadata-only read of the current branch/PR, base, diff and checks, or an execution-record update. Evidence refresh resumes the existing review and is not a new implementation iteration or semantic review. A changed `HEAD`/base/diff invalidates only evidence that depends on the changed inputs; changed behavior, contracts, security scope, an adverse check or a new blocker requires fresh exact-head review. Documentation/mechanical-only changes may reuse unaffected semantic evidence.
 
 Codex owns deterministic and mechanical failures before asking ChatGPT for semantic review: compilation, tests, formatting, EF verification, vulnerability scans, CI syntax and repository hygiene. Escalate only when the failure exposes a genuine contract or architectural decision.
 
@@ -42,6 +42,26 @@ Codex owns deterministic and mechanical failures before asking ChatGPT for seman
 - A late ChatGPT verdict remains attached to the same task/checkpoint when applicable. Do not create a duplicate task or `STATE: EXECUTED`, and do not increment the implementation iteration unless repository content changes in response to a concrete finding.
 - On timeout recovery, re-read `workspace_info`, `git_status`, execution summary/test evidence and exact `HEAD`/diff identity. If they are unchanged, continue at review/commit/remote validation; do not rerun implementation or unaffected gates.
 - Reuse exact checkpoint evidence while the source diff and gate inputs are unchanged. Rerun only checks invalidated by a subsequent change or required by repository policy.
+
+## Review mode override
+
+`C2C_MODE: AUTO` is the default automated Codex ↔ ChatGPT connector/review workflow. A task may explicitly select `C2C_MODE: MANUAL_RELAY` (or clearly request manual ChatGPT review/human relay):
+
+- The user is the transport between Codex and ChatGPT. Codex must not invoke ChatGPT/browser/reviewer connectors, wait or poll for a ChatGPT response, or start corrective iterations from a semantic review.
+- After implementation and appropriate deterministic validation, stop with a compact handoff containing task/iteration, branch/`HEAD`, scope, changed files, diff summary, checks/results, risks/questions, and the exact ChatGPT review request.
+- The user sends that handoff manually. A later user-provided verdict or corrective prompt attaches to the same task/checkpoint; manual relay never creates a new task. Increment the implementation iteration only when repository content changes for a finding.
+- Codex must not auto-merge in `MANUAL_RELAY` unless the user separately authorizes it.
+
+## Risk-based validation
+
+- Docs-only: documentation and repository hygiene checks unless CI requires more.
+- Test-only: affected tests plus required repository checks.
+- Isolated business logic: focused tests first, then broader tests when blast radius warrants it.
+- Data model/migration: EF/model verification and relevant integration tests.
+- Dependency change: dependency/vulnerability checks.
+- Formatting-only: formatter and diff checks; reuse unaffected semantic/test evidence.
+- No source or input change: reuse the exact checkpoint evidence.
+- Run the full solution build/test set when impact is broad, before a release, or required by hosted CI.
 
 ## Connector health and failover
 
@@ -59,7 +79,7 @@ The repository profile allows at most six genuine implementation/corrective iter
 
 Before local or remote semantic review, run the same applicable deterministic gates used by Backend CI, including the changed-file formatter. After hosted CI is green, gather one compact exact-head evidence record and request the final remote review. Do not repeat a semantic review for unchanged code merely because evidence was refreshed.
 
-`project_log.md` records durable implementation facts and verification outcomes. Do not create a metadata-only PR-head/CI churn loop: volatile exact SHAs, mergeability and review state belong in C2C execution records and remote evidence. An in-progress entry may use `pending` for a not-yet-created commit or PR; never invent either value.
+`project_log.md` records durable implementation facts and verification outcomes and is updated before the final commit/push. It may include a known branch, PR or commit naturally, but must not require a post-CI edit for a final run ID, READY_TO_MERGE verdict, mergeability or final SHA. Volatile exact values belong in C2C execution records and remote evidence. Never turn green CI into `project_log` edit → push → CI churn. An in-progress entry may use `pending` for a not-yet-created commit or PR; never invent either value.
 
 ## Invariants to protect
 
@@ -81,7 +101,7 @@ Before local or remote semantic review, run the same applicable deterministic ga
 
 Nexora opts into conditional auto-merge, but only for a task that explicitly authorizes it. Codex may merge a pull request automatically only when all of the following are true:
 
-1. The current task explicitly permits auto-merge.
+1. The current task explicitly permits auto-merge, either for this task or for a declared task sequence that includes it.
 2. Independent ChatGPT review returns exactly `STATE: DONE`, `VERDICT: READY_TO_MERGE`, the PR number, the approved exact `HEAD`, and `CI: GREEN`.
 3. Immediately before merging, Codex verifies that the PR is open, not draft and mergeable; the current remote head exactly matches the approved head; required hosted checks for that exact head are green; no commit appeared after review; the remote base/main has not changed in a meaningful unreviewed way; no unresolved blocker or review finding exists; and the PR scope still matches the task.
 4. The normal repository merge method succeeds without an admin or bypass override.

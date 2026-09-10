@@ -635,6 +635,17 @@ This log records completed implementation milestones and verification evidence. 
 - Verification: `dotnet tool restore`; `dotnet restore Nexora.slnx`; Release solution build passed with 0 warnings/errors; 305 unit and 162 integration tests passed; focused A7/AI/realtime filter passed 36 tests; EF reports no pending model changes; NuGet vulnerability audit is clean; exact changed-C# `dotnet format --verify-no-changes` passed; `git diff --check` passed. Tests use deterministic providers and SQLite; no live AI/payment/provider calls.
 - Dependencies: A7 exact-head local/remote review and merge; A8 per-answer coaching follows only after A7 merge. No frontend changes and no A8/A9 implementation was started.
 
+## 2026-09-11 — C2C workflow optimization baseline
+
+- Status: Policy update ready for review; no product implementation changes
+- Owner: Codex / local engineering workflow
+- Branch: `chore/c2c-flow-optimization-v2`
+- Base: `ffc7d570d11f4ec2da2d45bf2ad15a474f35d3cb` (`main` after A7 merge)
+- Scope: Reconciled the global and Nexora C2C policies around adaptive semantic review, risk-based validation, exact-head evidence reuse, durable handoff, declared task-sequence merge authorization, and the per-task `C2C_MODE: AUTO` / `C2C_MODE: MANUAL_RELAY` override. `project_log.md` remains a durable implementation record and no longer requires post-CI metadata churn.
+- Files/modules: `docs/c2c-review-policy.md`, machine-local `C:\Users\PC\.codex\c2c\generic-review-policy.md`, `.c2c.json` unchanged.
+- Verification: policy diff inspection and `git diff --check` are required before commit; no application build/test or EF migration work is implied by this docs-only change.
+- Dependencies: A7 is merged as PR `#51` with merge commit `ffc7d570d11f4ec2da2d45bf2ad15a474f35d3cb`; A8 may start from the latest `main` after this policy baseline is accepted. No frontend changes and no A8/A9 implementation started.
+
 ## 2026-09-10 - A7 corrective iteration 2
 
 - Status: Corrective implementation complete; deterministic gates green; C2C local review handoff pending
