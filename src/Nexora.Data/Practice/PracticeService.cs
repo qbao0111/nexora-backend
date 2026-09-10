@@ -84,6 +84,7 @@ public sealed partial class PracticeService(
     public async Task<ResumeView> CreateResumeAsync(Guid userId, string uploadToken, CancellationToken cancellationToken)
     {
         var upload = await uploadProvider.GetCompletedAsync(userId, uploadToken, cancellationToken);
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
         var duplicate = await dbContext.StoredFiles.AsNoTracking().SingleOrDefaultAsync(file => file.StorageKey == upload.StorageKey, cancellationToken);
         if (duplicate is not null)
         {
@@ -116,8 +117,24 @@ public sealed partial class PracticeService(
             UpdatedAt = now
         };
         dbContext.AddRange(storedFile, resume, Outbox("ResumeExtractionRequested", "resume", resume.Id, now));
-        await dbContext.SaveChangesAsync(cancellationToken);
-        return MapResume(resume);
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(transaction, cancellationToken);
+            return MapResume(resume);
+        }
+        catch (DbUpdateException)
+        {
+            if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
+            dbContext.ChangeTracker.Clear();
+            var concurrent = await dbContext.StoredFiles.AsNoTracking()
+                .SingleOrDefaultAsync(file => file.StorageKey == upload.StorageKey && file.UserId == userId, cancellationToken);
+            if (concurrent is null) throw;
+            var existing = await dbContext.Resumes.AsNoTracking().Include(item => item.StoredFile)
+                .SingleOrDefaultAsync(item => item.StoredFileId == concurrent.Id && item.UserId == userId, cancellationToken);
+            if (existing is null) throw;
+            return MapResume(existing);
+        }
     }
 
     public async Task<ResumeView> GetResumeAsync(Guid userId, Guid resumeId, CancellationToken cancellationToken)
@@ -652,8 +669,21 @@ public sealed partial class PracticeService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await using var source = await storageProvider.OpenReadAsync(resume.StoredFile.StorageKey, cancellationToken);
-        await using var buffered = new MemoryStream();
-        await source.CopyToAsync(buffered, cancellationToken);
+        await using var buffered = await ReadStoredFileBoundedAsync(source, resume.StoredFile.Size, cancellationToken);
+        var actualChecksum = buffered.Length == resume.StoredFile.Size
+            ? Convert.ToHexString(SHA256.HashData(buffered.GetBuffer().AsSpan(0, checked((int)buffered.Length)))).ToLowerInvariant()
+            : string.Empty;
+        if (buffered.Length != resume.StoredFile.Size ||
+            !string.Equals(actualChecksum, resume.StoredFile.Checksum, StringComparison.OrdinalIgnoreCase))
+        {
+            resume.Status = PracticeValues.Failed;
+            resume.UpdatedAt = timeProvider.GetUtcNow();
+            EnqueueResourceChanged(resume.UserId, "resume", resume.Id, resume.Status, resume.UpdatedAt);
+            MarkProcessed(job);
+            StorageIntegrityFailed(logger, resume.Id, buffered.Length, resume.StoredFile.Size);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return;
+        }
         buffered.Position = 0;
 
         DocumentExtractionResult? localExtraction = null;
@@ -691,6 +721,35 @@ public sealed partial class PracticeService(
 
         ValidateResumeProfile(fallback.Profile);
         await CompleteResumeExtractionAsync(resume, job, extraction, fallback.Profile, ocrFallbackUsed: true, cancellationToken: cancellationToken);
+    }
+
+    private static async Task<MemoryStream> ReadStoredFileBoundedAsync(
+        Stream source,
+        long expectedSize,
+        CancellationToken cancellationToken)
+    {
+        const int bufferSize = 80 * 1024;
+        const long maximumStoredFileSize = 25 * 1024 * 1024;
+        if (expectedSize is < 0 or > maximumStoredFileSize)
+            return new MemoryStream();
+
+        var buffered = new MemoryStream(capacity: checked((int)expectedSize));
+        var buffer = new byte[bufferSize];
+        var bytesRead = 0L;
+        while (bytesRead <= expectedSize)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var remaining = expectedSize + 1 - bytesRead;
+            var readLength = (int)Math.Min(buffer.Length, remaining);
+            if (readLength <= 0) break;
+            var read = await source.ReadAsync(buffer.AsMemory(0, readLength), cancellationToken);
+            if (read == 0) break;
+            bytesRead += read;
+            await buffered.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            if (bytesRead > expectedSize) break;
+        }
+
+        return buffered;
     }
 
     private async Task CompleteResumeExtractionAsync(
@@ -1301,6 +1360,9 @@ public sealed partial class PracticeService(
 
     [LoggerMessage(LogLevel.Warning, "Resume {ResumeId} local extraction failed with {ExceptionType}; trying document fallback")]
     private static partial void LocalExtractionFailed(ILogger logger, Guid resumeId, string exceptionType);
+
+    [LoggerMessage(LogLevel.Error, "Resume {ResumeId} storage integrity check failed: actualBytes={ActualBytes} expectedBytes={ExpectedBytes}")]
+    private static partial void StorageIntegrityFailed(ILogger logger, Guid resumeId, long actualBytes, long expectedBytes);
 
     [LoggerMessage(LogLevel.Information, "Resume {ResumeId} entered document OCR fallback after {LocalQuality} local quality")]
     private static partial void OcrFallbackStarted(ILogger logger, Guid resumeId, string localQuality);

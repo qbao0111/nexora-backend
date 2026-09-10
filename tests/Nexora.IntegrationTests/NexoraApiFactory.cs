@@ -35,6 +35,9 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
     internal NexoraApiFactory(string environment) : this(environment, new Dictionary<string, string?>())
     { }
 
+    internal NexoraApiFactory(string environment, IReadOnlyDictionary<string, string?> configurationOverrides, Action<IServiceCollection> configureServices) :
+        this((IAiProvider?)null, MergeEnvironmentOverrides(environment, configurationOverrides), configureServices) => _environment = environment;
+
     internal NexoraApiFactory(string environment, IReadOnlyDictionary<string, string?> configurationOverrides) :
         this((IAiProvider?)null, MergeEnvironmentOverrides(environment, configurationOverrides)) => _environment = environment;
 

@@ -26,6 +26,7 @@ ApplicationUser 1--N Subscription 1--N Entitlement 1--N UsageEvent
 | `subscriptions`, `entitlements` | Quyền theo thời hạn | Có `starts_at`, `ends_at`, `status`, snapshot. |
 | `usage_events` | Ledger reserve/consume/void/adjustment quota | immutable, unique idempotency key. |
 | `resumes`, `stored_files` | CV file + extracted text | `storage_key` private; checksum, MIME, scan/extract state. |
+| `upload_intents` | Durable browser-upload capability state | owner-scoped token hash, private storage key, expected/actual size, expiry, checksum and finalized timestamp; unique token/storage-key constraints. |
 | `job_descriptions`, `resume_analyses` | JD và output analysis | input snapshot/model/prompt version. |
 | `interview_sessions`, `interview_questions`, `interview_answers`, `interview_reports` | Practice loop | answer unique per official question, session state machine. |
 | `star_drafts`, `scenario_attempts` | Practice support | owner ID, version/status. |

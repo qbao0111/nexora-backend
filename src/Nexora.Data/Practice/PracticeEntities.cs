@@ -16,6 +16,24 @@ public sealed class StoredFile
     public ApplicationUser User { get; set; } = null!;
 }
 
+public sealed class UploadIntentRecord
+{
+    public Guid Id { get; set; }
+    public Guid UserId { get; set; }
+    public string TokenHash { get; set; } = string.Empty;
+    public string StorageKey { get; set; } = string.Empty;
+    public string FileName { get; set; } = string.Empty;
+    public string ContentType { get; set; } = string.Empty;
+    public long ExpectedSize { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public int Version { get; set; }
+    public long? ActualSize { get; set; }
+    public string? Checksum { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+    public ApplicationUser User { get; set; } = null!;
+}
+
 public sealed class ResumeRecord
 {
     public Guid Id { get; set; }

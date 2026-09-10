@@ -410,19 +410,21 @@ Worker -> open object -> validate magic bytes/MIME -> extract
 
 Tasks:
 
-- [ ] Không tin extension/content-type do FE gửi.
-- [ ] Validate size.
-- [ ] Validate PDF/DOCX signature sau upload trước khi resume thành usable.
-- [ ] Upload intent có expiry.
-- [ ] Không dùng in-memory dictionary làm source of truth production.
-- [ ] Local provider vẫn chạy Development/Testing.
+- [x] Không tin extension/content-type do FE gửi: R2 finalize đọc object thật qua `IStorageProvider` và áp dụng validator signature/container.
+- [x] Validate size ở request, object metadata và stream thực tế; giới hạn mặc định 10 MiB.
+- [x] Validate PDF/DOCX signature/container sau upload trước khi resume thành usable; checksum được lưu để Worker kiểm tra integrity lần nữa.
+- [x] Upload intent có expiry và expiry được kiểm tra cả trước khi đọc object lẫn trong transaction finalize.
+- [x] Không dùng in-memory dictionary làm source of truth production: intent state nằm trong bảng `upload_intents`, token chỉ lưu dưới dạng SHA-256 hash.
+- [x] Local provider vẫn chạy Development/Testing; Production + `Storage:Provider=local` tiếp tục fail-closed.
+- [x] Durable upload intent token hash; finalize/replay/concurrent `POST /resumes` không tạo duplicate resume, stored file hoặc outbox. Presign creation itself is not idempotent-key based.
+- [x] R2 upload URL là signed HTTPS PUT ngắn hạn cho private object; không ghi URL/token/credentials vào log hoặc database.
 
 ### A3. R2 tests
 
 - [x] Unit test provider mapping/config validation.
 - [x] Test object key không cho path traversal.
 - [x] Test delete/open behavior.
-- [ ] Test signed-upload expiry/security.
+- [x] Test signed-upload expiry/security, owner isolation, actual object validation, idempotent replay và persistent intent state.
 - [x] Không dùng live paid R2 trong unit/integration gate.
 
 ---
@@ -1143,7 +1145,7 @@ Checkout
 | ID | Task | Priority | Dependency | Conflict risk |
 |---|---|---|---|---|
 | A1 | R2StorageProvider | P0 | none | Low |
-| A2 | Production upload/presign | P0 | A1 | Medium |
+| A2 | Production upload/presign (delivered locally; review pending) | P0 | A1 | Medium |
 | A4 | CV Analysis 2 modes | P0 | contract freeze | Low |
 | A5 | Free CV analysis entitlement | P0 | A4 | Medium |
 | A6 | Interview question model/parent relation | P0 | contract freeze | High DB — Bảo owns migration |
@@ -1412,8 +1414,8 @@ Mỗi task chỉ Done khi:
 2. A1 R2 provider
 3. B2 Email verification
 4. B3 Password recovery
-5. A2 Production R2 upload
-6. A4 CV Analysis modes
+5. A2 Production R2 upload (delivered locally; review pending)
+6. A4 CV Analysis modes (after A2 merge)
 7. A5 Free CV quota
 8. A6 Interview question model + migration
 9. A7 Free/paywall continuation

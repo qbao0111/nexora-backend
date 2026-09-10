@@ -20,7 +20,8 @@ public static class ProductionSafety
         var enabled = new List<string>();
         if (aiEnabled) enabled.Add("AI (DEC-01)");
         if (paymentEnabled) enabled.Add("non-production payment adapter (DEC-02)");
-        if (uploadEnabled) enabled.Add("development upload adapter (A2/DEC-04)");
+        if (uploadEnabled && normalizedStorageProvider != "r2")
+            enabled.Add("development upload adapter (A2/DEC-04)");
         if (enabled.Count == 0) return;
         throw new InvalidOperationException(
             $"Production cannot enable {string.Join(", ", enabled)} before the corresponding production decisions are resolved. Disable the affected Features settings.");

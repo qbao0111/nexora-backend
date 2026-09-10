@@ -171,9 +171,9 @@ adjustment (audited correction/credit; never history editing)
 
 ## 13. File/storage model
 
-Business/API code uses `IStorageProvider`. Development/testing uses `LocalStorageProvider`; production-like configuration uses `R2StorageProvider` with a private S3-compatible bucket. Local filesystem storage is not production-suitable, and A2 still owns presigned upload intents.
+Business/API code uses `IStorageProvider`. Development/testing uses `LocalStorageProvider`; production-like configuration uses `R2StorageProvider` with a private S3-compatible bucket. Local filesystem storage is not production-suitable. With `Storage:Provider=r2`, A2 provides durable database-backed upload intents, short-lived signed PUT URLs and the existing `POST /resumes` finalize boundary; `Storage:Provider=local` keeps the server-side upload path for Development/Testing.
 
-Production requires private objects, authorization before upload/download access, short-lived signed URLs where supported, stored keys rather than public URLs, and size/extension/detected MIME/signature checks. Malware scanning is an optional defence when available, never a claimed guarantee. See [storage ADR](docs/07-architecture-decisions.md) and [security](docs/06-security-privacy.md).
+Production requires private objects, authorization before upload/download access, short-lived signed URLs where supported, stored keys rather than public URLs, and size/extension/detected MIME/signature checks at both upload finalization and extraction integrity boundaries. Malware scanning is an optional defence when available, never a claimed guarantee. See [storage ADR](docs/07-architecture-decisions.md), [API/data contract](docs/03-api-data-contract.md) and [security](docs/06-security-privacy.md).
 
 ## 14. Background jobs
 
@@ -195,7 +195,7 @@ Standard error envelope:
 }
 ```
 
-Require `Idempotency-Key` when duplicate execution is unsafe: checkout/order creation, chargeable analysis/job creation, interview start, official-answer submission, interview completion/report trigger, applicable administrative mutations, and externally triggered processing without a stronger provider event identity. The same actor + operation + key + equivalent payload returns the original result; reuse with a different payload returns `409 IDEMPOTENCY_CONFLICT`. Do not require the key on reads.
+Require `Idempotency-Key` when duplicate execution is unsafe: checkout/order creation, chargeable analysis/job creation, interview start, official-answer submission, interview completion/report trigger, applicable administrative mutations, and externally triggered processing without a stronger provider event identity. The same actor + operation + key + equivalent payload returns the original result; reuse with a different payload returns `409 IDEMPOTENCY_CONFLICT`. Do not require the key on reads or upload-intent presign creation; upload finalize remains replay-safe through the persisted intent token.
 
 ## 16. Security/privacy invariants
 

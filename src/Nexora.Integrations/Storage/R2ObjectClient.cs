@@ -8,6 +8,10 @@ namespace Nexora.Integrations.Storage;
 
 internal interface IR2ObjectClient
 {
+    string CreatePresignedPutUrl(string bucket, string key, string contentType, DateTimeOffset expiresAt);
+
+    Task<R2ObjectMetadata> GetMetadataAsync(string bucket, string key, CancellationToken cancellationToken);
+
     Task<Stream> OpenReadAsync(string bucket, string key, CancellationToken cancellationToken);
 
     Task<long> PutObjectAsync(
@@ -19,6 +23,8 @@ internal interface IR2ObjectClient
 
     Task DeleteObjectAsync(string bucket, string key, CancellationToken cancellationToken);
 }
+
+internal sealed record R2ObjectMetadata(long Size, string? ContentType);
 
 internal sealed class R2ObjectClient : IR2ObjectClient, IDisposable
 {
@@ -47,6 +53,28 @@ internal sealed class R2ObjectClient : IR2ObjectClient, IDisposable
                 Key = key
             }, cancellationToken);
             return new R2ResponseStream(response.ResponseStream, response);
+        }
+        catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+        {
+            throw new FileNotFoundException("Storage object was not found.", key);
+        }
+    }
+
+    public string CreatePresignedPutUrl(string bucket, string key, string contentType, DateTimeOffset expiresAt)
+    {
+        return client.GetPreSignedURL(CreatePresignedPutRequest(bucket, key, contentType, expiresAt));
+    }
+
+    public async Task<R2ObjectMetadata> GetMetadataAsync(string bucket, string key, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await client.GetObjectMetadataAsync(new GetObjectMetadataRequest
+            {
+                BucketName = bucket,
+                Key = key
+            }, cancellationToken);
+            return new R2ObjectMetadata(response.ContentLength, response.Headers.ContentType);
         }
         catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound)
         {
@@ -105,6 +133,19 @@ internal sealed class R2ObjectClient : IR2ObjectClient, IDisposable
             AutoCloseStream = false,
             UseChunkEncoding = useChunkEncoding
             // CannedACL is deliberately unset: R2 objects remain private by default.
+        };
+
+    internal static GetPreSignedUrlRequest CreatePresignedPutRequest(
+        string bucket,
+        string key,
+        string contentType,
+        DateTimeOffset expiresAt) => new()
+        {
+            BucketName = bucket,
+            Key = key,
+            Verb = HttpVerb.PUT,
+            ContentType = contentType,
+            Expires = expiresAt.UtcDateTime
         };
 
     public void Dispose() => client.Dispose();

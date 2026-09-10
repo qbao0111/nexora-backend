@@ -23,6 +23,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
     public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>();
     public DbSet<StoredFile> StoredFiles => Set<StoredFile>();
+    public DbSet<UploadIntentRecord> UploadIntents => Set<UploadIntentRecord>();
     public DbSet<ResumeRecord> Resumes => Set<ResumeRecord>();
     public DbSet<JobDescription> JobDescriptions => Set<JobDescription>();
     public DbSet<ResumeAnalysis> ResumeAnalyses => Set<ResumeAnalysis>();
@@ -395,6 +396,21 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.Property(file => file.ContentType).HasMaxLength(120).IsRequired();
             entity.Property(file => file.Checksum).HasMaxLength(64).IsRequired();
             entity.HasOne(file => file.User).WithMany().HasForeignKey(file => file.UserId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<UploadIntentRecord>(entity =>
+        {
+            entity.ToTable("upload_intents");
+            entity.HasKey(intent => intent.Id);
+            entity.HasIndex(intent => intent.TokenHash).IsUnique();
+            entity.HasIndex(intent => intent.StorageKey).IsUnique();
+            entity.HasIndex(intent => new { intent.UserId, intent.ExpiresAt });
+            entity.Property(intent => intent.TokenHash).HasMaxLength(64).IsRequired();
+            entity.Property(intent => intent.StorageKey).HasMaxLength(512).IsRequired();
+            entity.Property(intent => intent.FileName).HasMaxLength(255).IsRequired();
+            entity.Property(intent => intent.ContentType).HasMaxLength(120).IsRequired();
+            entity.Property(intent => intent.Version).IsConcurrencyToken();
+            entity.Property(intent => intent.Checksum).HasMaxLength(64);
+            entity.HasOne(intent => intent.User).WithMany().HasForeignKey(intent => intent.UserId).OnDelete(DeleteBehavior.Cascade);
         });
         builder.Entity<ResumeRecord>(entity =>
         {

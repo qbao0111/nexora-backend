@@ -21,7 +21,7 @@ Browser -> Vercel static frontend -> ASP.NET Core Web API
 - Runtime/API: .NET 10 LTS, ASP.NET Core 10 Web API; dùng C# version từ .NET 10 SDK trừ khi project pin version được hỗ trợ khác.
 - Database: PostgreSQL + Entity Framework Core 10.
 - Identity: ASP.NET Core Identity với EF Core PostgreSQL store.
-- File: `IStorageProvider`; `Storage:Provider=local` dùng `LocalStorageProvider` cho development/testing, còn `Storage:Provider=r2` dùng `R2StorageProvider` với private S3-compatible objects. Signed upload/download flow và final production account/hosting choice vẫn thuộc A2/DEC-04.
+- File: `IStorageProvider`; `Storage:Provider=local` dùng `LocalStorageProvider` cho development/testing, còn `Storage:Provider=r2` dùng `R2StorageProvider` với private S3-compatible objects. A2 thêm durable upload intent + signed PUT/finalize; final production account/hosting choice vẫn thuộc DEC-04.
 - Jobs: .NET worker/background job mechanism với state bền vững, timeout và bounded retry; chọn package/queue cụ thể khi implementation cần, không biến nó thành microservice.
 - Observability: structured logs, metrics/traces và uptime/error monitoring; production vendor thuộc DEC-04.
 
