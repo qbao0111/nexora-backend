@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Nexora.Business.Billing;
 using Nexora.Data.Persistence;
 using Nexora.Data.Persistence.Migrations;
 
@@ -143,6 +144,30 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
         var db = afterScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Single(await db.Entitlements.Where(item => item.UserId == userId && item.PlanCodeSnapshot == "free").ToListAsync());
         Assert.Single(await db.Subscriptions.Where(item => item.UserId == userId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task VerifiedAccountReceivesOneSharedFreeCvAnalysisAllowance()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"free-cv-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<Nexora.Data.Identity.ApplicationUser>>();
+        var user = await userManager.FindByEmailAsync(email);
+        Assert.NotNull(user);
+
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var feature = await db.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(
+            item => item.Entitlement.UserId == user.Id
+                && item.Entitlement.PlanCodeSnapshot == "free"
+                && item.FeatureCode == FeatureValues.CvAnalysis);
+        Assert.True(feature.IsEnabled);
+        Assert.Equal(1, feature.Limit);
+        Assert.Equal(0, feature.Reserved);
+        Assert.Equal(0, feature.Consumed);
+        Assert.Equal(1, feature.Limit + feature.Adjustment - feature.Reserved - feature.Consumed);
     }
 
     [Fact]

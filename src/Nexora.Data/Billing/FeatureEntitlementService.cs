@@ -95,8 +95,7 @@ public sealed partial class FeatureEntitlementService(
         existing = await FindGenericByKeyAsync(userId, FeatureValues.Reserve, key, cancellationToken);
         if (existing is not null) return await MapGenericReservationAsync(existing, sourceId, cancellationToken);
         var entitlement = await FindActiveEntitlementForUpdateAsync(userId, cancellationToken) ?? throw FeatureUnavailable();
-        var ef = await dbContext.EntitlementFeatures.SingleOrDefaultAsync(
-            item => item.EntitlementId == entitlement.Id && item.FeatureCode == featureCode, cancellationToken);
+        var ef = await FindEntitlementFeatureForUpdateAsync(entitlement.Id, featureCode, cancellationToken);
         if (ef is null || !ef.IsEnabled) throw FeatureUnavailable();
         existing = await FindGenericByKeyAsync(userId, FeatureValues.Reserve, key, cancellationToken);
         if (existing is not null) return await MapGenericReservationAsync(existing, sourceId, cancellationToken);
@@ -266,6 +265,17 @@ public sealed partial class FeatureEntitlementService(
             return await dbContext.EntitlementFeatures.FromSqlInterpolated(
                 $"SELECT * FROM entitlement_features WHERE \"Id\" = {entitlementFeatureId} FOR UPDATE").SingleOrDefaultAsync(cancellationToken);
         return await dbContext.EntitlementFeatures.SingleOrDefaultAsync(item => item.Id == entitlementFeatureId, cancellationToken);
+    }
+
+    private async Task<EntitlementFeature?> FindEntitlementFeatureForUpdateAsync(
+        Guid entitlementId, string featureCode, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.IsNpgsql())
+            return await dbContext.EntitlementFeatures.FromSqlInterpolated(
+                $"SELECT * FROM entitlement_features WHERE \"EntitlementId\" = {entitlementId} AND \"FeatureCode\" = {featureCode} FOR UPDATE")
+                .SingleOrDefaultAsync(cancellationToken);
+        return await dbContext.EntitlementFeatures.SingleOrDefaultAsync(
+            item => item.EntitlementId == entitlementId && item.FeatureCode == featureCode, cancellationToken);
     }
 
     private async Task<IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
