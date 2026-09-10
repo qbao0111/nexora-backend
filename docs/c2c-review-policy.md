@@ -37,4 +37,15 @@ This repository uses the global C2C review policy plus the Nexora-specific rules
 - Run the relevant project tests plus `dotnet restore`, `dotnet build`, and `dotnet test` when those projects exist. Include `dotnet ef migrations has-pending-model-changes` for data-affecting work and `git diff --check` for every change.
 - Do not report implementation complete while relevant tests fail. Normal tests use deterministic fake providers and must not need live AI, payment, storage, Neon, or production secrets.
 - Update `project_log.md` in the same PR as completed work using the repository template: date, status, owner, branch, commit/PR, scope, traceability, files/modules, exact verification, dependencies, and remaining blockers. Record outcomes, never secrets or unverified claims.
-- The final handoff must state changed files, contract/decision impact, tests and remote evidence, remaining risks, rollback considerations, and whether the next dependency is ready. Human review owns the merge and production decision.
+- The final handoff must state changed files, contract/decision impact, tests and remote evidence, remaining risks, rollback considerations, and whether the next dependency is ready.
+
+## Conditional merge gate
+
+Nexora opts into conditional auto-merge, but only for a task that explicitly authorizes it. Codex may merge a pull request automatically only when all of the following are true:
+
+1. The current task explicitly permits auto-merge.
+2. Independent ChatGPT review returns exactly `STATE: DONE`, `VERDICT: READY_TO_MERGE`, the PR number, the approved exact `HEAD`, and `CI: GREEN`.
+3. Immediately before merging, Codex verifies that the PR is open, not draft and mergeable; the current remote head exactly matches the approved head; required hosted checks for that exact head are green; no commit appeared after review; the remote base/main has not changed in a meaningful unreviewed way; no unresolved blocker or review finding exists; and the PR scope still matches the task.
+4. The normal repository merge method succeeds without an admin or bypass override.
+
+If any evidence changes, do not merge. Refresh the remote evidence and obtain another independent ChatGPT remote review. This policy never authorizes production deployment, CI bypass, unsafe merges or a global auto-merge default; the human project owner may disable conditional auto-merge at any time.
