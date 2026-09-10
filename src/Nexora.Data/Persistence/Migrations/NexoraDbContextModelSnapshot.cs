@@ -1559,6 +1559,9 @@ namespace Nexora.Data.Persistence.Migrations
                     b.Property<DateTimeOffset?>("CompletedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("ContextJson")
+                        .HasColumnType("jsonb");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1566,16 +1569,36 @@ namespace Nexora.Data.Persistence.Migrations
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
 
-                    b.Property<Guid>("JobDescriptionId")
+                    b.Property<Guid?>("JobDescriptionId")
                         .HasColumnType("uuid");
 
-                    b.Property<int>("JobDescriptionVersion")
+                    b.Property<int?>("JobDescriptionVersion")
                         .HasColumnType("integer");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
 
                     b.Property<string>("ModelVersion")
                         .IsRequired()
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
+
+                    b.Property<string>("ProfileModelVersion")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("ProfilePromptVersion")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("ProfileSchemaVersion")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("ProfileSnapshot")
+                        .HasColumnType("jsonb");
 
                     b.Property<string>("PromptVersion")
                         .IsRequired()
@@ -1593,6 +1616,10 @@ namespace Nexora.Data.Persistence.Migrations
 
                     b.Property<string>("SchemaVersion")
                         .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("RubricVersion")
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
 
@@ -1618,7 +1645,11 @@ namespace Nexora.Data.Persistence.Migrations
 
                     b.HasIndex("UserId", "CreatedAt");
 
-                    b.ToTable("resume_analyses", (string)null);
+                    b.ToTable("resume_analyses", (string)null, t =>
+                        {
+                            t.HasCheckConstraint("CK_resume_analyses_mode", "\"Mode\" IN ('job_targeted', 'field_benchmark')");
+                            t.HasCheckConstraint("CK_resume_analyses_mode_job_description", "((\"Mode\" = 'job_targeted' AND \"JobDescriptionId\" IS NOT NULL AND \"JobDescriptionVersion\" IS NOT NULL) OR (\"Mode\" = 'field_benchmark' AND \"JobDescriptionId\" IS NULL AND \"JobDescriptionVersion\" IS NULL))");
+                        });
                 });
 
             modelBuilder.Entity("Nexora.Data.Practice.ResumeRecord", b =>
@@ -2500,8 +2531,7 @@ namespace Nexora.Data.Persistence.Migrations
                     b.HasOne("Nexora.Data.Practice.JobDescription", "JobDescription")
                         .WithMany()
                         .HasForeignKey("JobDescriptionId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Nexora.Data.Practice.ResumeRecord", "Resume")
                         .WithMany()

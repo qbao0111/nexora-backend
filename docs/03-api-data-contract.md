@@ -40,7 +40,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/uploads/presign` | Cấp signed URL upload CV/avatar. |
 | POST | `/resumes` | Ghi metadata file sau upload. |
 | GET | `/resumes/:id` | Đọc trạng thái xử lý CV và lỗi an toàn của owner. |
-| POST | `/resume-analyses` | Tạo job phân tích CV–JD. |
+| POST | `/resume-analyses` | Tạo job phân tích CV theo mode `job_targeted` hoặc `field_benchmark`. |
 | GET | `/resume-analyses/:id` | Trạng thái/kết quả phân tích. |
 | POST | `/interviews` | Tạo và bắt đầu phiên phỏng vấn. |
 | GET | `/interviews/:id` | Đọc session state/question hiện tại của owner. |
@@ -126,6 +126,34 @@ Upload giữ giới hạn mặc định 10 MiB và kiểm tra cả kích thướ
 ```
 
 `extractedText` và nội dung tài liệu không được trả qua API. Khi resume đã `ready`, `POST /resume-analyses` chỉ enqueue job; client poll `GET /resume-analyses/{id}` cho tới `completed` hoặc `failed`. `analysis.errorCode` chỉ là mã an toàn để hiển thị/xử lý retry, không chứa provider response.
+
+### Resume analysis v2
+
+`POST /api/v1/resume-analyses` requires an `Idempotency-Key` and an explicit mode. The server accepts only these two contexts; it never infers the mode from whether `jobDescriptionId` is present:
+
+```json
+{
+  "resumeId": "01J...",
+  "mode": "job_targeted",
+  "jobDescriptionId": "01J..."
+}
+```
+
+```json
+{
+  "resumeId": "01J...",
+  "mode": "field_benchmark",
+  "industry": "Fintech",
+  "targetRole": "Backend Engineer",
+  "seniority": "senior"
+}
+```
+
+`job_targeted` requires an owner-owned job description and rejects benchmark fields. `field_benchmark` rejects a job description and requires `industry`, `targetRole` and `seniority` after server-side trimming and length checks. Both modes require a `ready` resume; ownership, entitlement and quota remain server-authoritative.
+
+The `201` response contains the queued job's `mode`, context snapshot, resume/JD versions (the JD version is nullable for field benchmark), analysis model/prompt/schema/rubric versions and the cached profile's model/prompt/schema versions. Job-targeted results contain `matchScore` and the five required breakdown dimensions. Field-benchmark results contain `readinessScore` and the six required dimensions. Scores are integer 0-100 values; matched/missing skill arrays may be empty, while coaching and section-feedback arrays remain non-empty; mode mismatches, unknown dimensions and ungrounded content fail strict semantic validation after at most one repair attempt. `GET /resume-analyses/{id}` remains the authoritative status/result read.
+
+The idempotency fingerprint includes the resume, mode and every context field. Equivalent replays return the same analysis/outbox/reservation; reusing a key with another mode or context returns `409 IDEMPOTENCY_CONFLICT`. Worker retries reuse the cached profile and never create a second analysis or quota charge.
 
 Canonical StartInterview transactions:
 

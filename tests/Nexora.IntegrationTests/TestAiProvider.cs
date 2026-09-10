@@ -74,6 +74,53 @@ internal sealed class TestAiProvider : IAiProvider
             }
         }
 
+        if (typeof(T) == typeof(ResumeAnalysisOutput) &&
+            request.UntrustedInput.Contains("analysis-mode: job_targeted", StringComparison.OrdinalIgnoreCase))
+        {
+            object strictJobAnalysis = new ResumeAnalysisOutput(
+                ["Relevant C# experience"],
+                ["Distributed systems exposure is limited"],
+                ["Add a distributed systems project"],
+                MatchScore: 78,
+                Summary: "The profile has a grounded fit for the target role.",
+                MatchedKeywordsOrSkills: ["C#", "PostgreSQL"],
+                MissingKeywordsOrSkills: ["Distributed systems"],
+                SectionFeedback: ["Experience is relevant and clearly presented."],
+                Breakdown: new Dictionary<string, int>
+                {
+                    ["technicalSkillMatch"] = 80,
+                    ["experienceRelevance"] = 78,
+                    ["impactEvidence"] = 70,
+                    ["clarity"] = 82,
+                    ["structure"] = 80
+                },
+                Mode: ResumeAnalysisModes.JobTargeted);
+            return Task.FromResult((T)strictJobAnalysis);
+        }
+
+        if (typeof(T) == typeof(ResumeAnalysisOutput) &&
+            request.UntrustedInput.Contains("analysis-mode: field_benchmark", StringComparison.OrdinalIgnoreCase))
+        {
+            object strictFieldAnalysis = new ResumeAnalysisOutput(
+                ["Strong C# foundation"],
+                ["Limited evidence of architecture ownership"],
+                ["Add a measurable architecture project"],
+                ReadinessScore: 74,
+                Summary: "The profile has a solid foundation for the target field.",
+                SectionFeedback: ["Projects show relevant technical practice."],
+                Breakdown: new Dictionary<string, int>
+                {
+                    ["technicalFoundation"] = 82,
+                    ["projectEvidence"] = 72,
+                    ["experiencePresentation"] = 70,
+                    ["impactAchievements"] = 65,
+                    ["clarity"] = 80,
+                    ["roleAlignment"] = 76
+                },
+                Mode: ResumeAnalysisModes.FieldBenchmark);
+            return Task.FromResult((T)strictFieldAnalysis);
+        }
+
         var behavioral = request.UntrustedInput.Contains("interview-type: behavioral", StringComparison.OrdinalIgnoreCase);
         object result = typeof(T) switch
         {

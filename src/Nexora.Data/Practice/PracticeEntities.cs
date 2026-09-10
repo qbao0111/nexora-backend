@@ -69,13 +69,20 @@ public sealed class ResumeAnalysis
     public Guid Id { get; set; }
     public Guid UserId { get; set; }
     public Guid ResumeId { get; set; }
-    public Guid JobDescriptionId { get; set; }
+    public Guid? JobDescriptionId { get; set; }
     public int ResumeVersion { get; set; }
-    public int JobDescriptionVersion { get; set; }
+    public int? JobDescriptionVersion { get; set; }
+    public string Mode { get; set; } = string.Empty;
+    public string? ContextJson { get; set; }
     public string Status { get; set; } = string.Empty;
     public string ModelVersion { get; set; } = string.Empty;
     public string PromptVersion { get; set; } = string.Empty;
     public string SchemaVersion { get; set; } = string.Empty;
+    public string? RubricVersion { get; set; }
+    public string? ProfileSnapshot { get; set; }
+    public string? ProfileModelVersion { get; set; }
+    public string? ProfilePromptVersion { get; set; }
+    public string? ProfileSchemaVersion { get; set; }
     public string? Result { get; set; }
     public string? ErrorCode { get; set; }
     public Guid? UsageReservationId { get; set; }
@@ -84,7 +91,7 @@ public sealed class ResumeAnalysis
     public DateTimeOffset? CompletedAt { get; set; }
     public ApplicationUser User { get; set; } = null!;
     public ResumeRecord Resume { get; set; } = null!;
-    public JobDescription JobDescription { get; set; } = null!;
+    public JobDescription? JobDescription { get; set; }
 }
 
 public sealed class InterviewSession

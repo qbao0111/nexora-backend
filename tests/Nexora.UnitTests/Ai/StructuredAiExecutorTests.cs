@@ -119,13 +119,13 @@ public sealed class StructuredAiExecutorTests
             AiProviderFailureKind.InvalidResponse,
             "truncated",
             retryHint: AiProviderRetryHint.OutputTruncated));
-        fakeProvider.EnqueueResult(new ResumeAnalysisOutput(["Strength"], ["Gap"], ["Recommendation"]));
+        fakeProvider.EnqueueResult(ValidResumeAnalysis());
         var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
 
         var result = await executor.ExecuteAsync(
             AiOperations.ResumeAnalysis,
             "candidate input",
-            new AiOperationContext("resume-truncation"),
+            ResumeAnalysisContext("resume-truncation"),
             CancellationToken.None);
 
         Assert.Equal(2, result.Attempts);
@@ -153,7 +153,57 @@ public sealed class StructuredAiExecutorTests
         var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
             AiOperations.ResumeAnalysis,
             "candidate input",
-            new AiOperationContext("resume-truncation-terminal"),
+            ResumeAnalysisContext("resume-truncation-terminal"),
+            CancellationToken.None));
+
+        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Equal(4_096, fakeProvider.Requests[0].MaxOutputTokens);
+        Assert.Equal(8_192, fakeProvider.Requests[1].MaxOutputTokens);
+    }
+
+    [Fact]
+    public async Task FieldBenchmarkResumeAnalysisRetriesOutputTruncationAtLargerBudgetOnlyOnce()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "truncated",
+            retryHint: AiProviderRetryHint.OutputTruncated));
+        fakeProvider.EnqueueResult(ValidFieldBenchmarkAnalysis());
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.ResumeAnalysisFieldBenchmark,
+            "candidate input",
+            FieldBenchmarkResumeAnalysisContext("field-resume-truncation"),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.Attempts);
+        Assert.False(result.RepairUsed);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Equal(4_096, fakeProvider.Requests[0].MaxOutputTokens);
+        Assert.Equal(8_192, fakeProvider.Requests[1].MaxOutputTokens);
+    }
+
+    [Fact]
+    public async Task FieldBenchmarkResumeAnalysisStopsAfterTwoOutputTruncationsWithoutFabricatedResult()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "truncated 1",
+            retryHint: AiProviderRetryHint.OutputTruncated));
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "truncated 2",
+            retryHint: AiProviderRetryHint.OutputTruncated));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.ResumeAnalysisFieldBenchmark,
+            "candidate input",
+            FieldBenchmarkResumeAnalysisContext("field-resume-truncation-terminal"),
             CancellationToken.None));
 
         Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
@@ -166,14 +216,24 @@ public sealed class StructuredAiExecutorTests
     public async Task ResumeAnalysisSemanticRepairKeepsInitialBudget()
     {
         var fakeProvider = new MockAiProvider();
-        fakeProvider.EnqueueResult(new ResumeAnalysisOutput([], [], []));
-        fakeProvider.EnqueueResult(new ResumeAnalysisOutput(["Strength"], ["Gap"], ["Recommendation"]));
+        fakeProvider.EnqueueResult(new ResumeAnalysisOutput(
+            [],
+            [],
+            [],
+            MatchScore: 50,
+            Summary: "Grounded summary",
+            MatchedKeywordsOrSkills: [],
+            MissingKeywordsOrSkills: [],
+            SectionFeedback: ["Grounded section feedback."],
+            Breakdown: JobBreakdown(),
+            Mode: ResumeAnalysisModes.JobTargeted));
+        fakeProvider.EnqueueResult(ValidResumeAnalysis());
         var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
 
         var result = await executor.ExecuteAsync(
             AiOperations.ResumeAnalysis,
             "candidate input",
-            new AiOperationContext("resume-semantic-repair"),
+            ResumeAnalysisContext("resume-semantic-repair"),
             CancellationToken.None);
 
         Assert.True(result.RepairUsed);
@@ -312,6 +372,61 @@ public sealed class StructuredAiExecutorTests
         "Grounded feedback",
         null,
         scoreScale);
+
+    private static AiOperationContext ResumeAnalysisContext(string correlationId) => new(
+        correlationId,
+        Metadata: new Dictionary<string, string>
+        {
+            [ResumeAnalysisMetadata.Mode] = ResumeAnalysisModes.JobTargeted
+        });
+
+    private static AiOperationContext FieldBenchmarkResumeAnalysisContext(string correlationId) => new(
+        correlationId,
+        Metadata: new Dictionary<string, string>
+        {
+            [ResumeAnalysisMetadata.Mode] = ResumeAnalysisModes.FieldBenchmark
+        });
+
+    private static ResumeAnalysisOutput ValidResumeAnalysis() => new(
+        ["Strength"],
+        ["Gap"],
+        ["Recommendation"],
+        MatchScore: 75,
+        Summary: "Grounded summary",
+        MatchedKeywordsOrSkills: [],
+        MissingKeywordsOrSkills: [],
+        SectionFeedback: ["Grounded section feedback."],
+        Breakdown: JobBreakdown(),
+        Mode: ResumeAnalysisModes.JobTargeted);
+
+    private static Dictionary<string, int> JobBreakdown() => new()
+    {
+        ["technicalSkillMatch"] = 75,
+        ["experienceRelevance"] = 70,
+        ["impactEvidence"] = 65,
+        ["clarity"] = 80,
+        ["structure"] = 75
+    };
+
+    private static ResumeAnalysisOutput ValidFieldBenchmarkAnalysis() => new(
+        ["Strong foundation"],
+        ["Limited architecture ownership evidence"],
+        ["Add a measurable architecture project"],
+        ReadinessScore: 74,
+        Summary: "The profile has a solid foundation for the target field.",
+        SectionFeedback: ["Projects show relevant practice."],
+        Breakdown: FieldBenchmarkBreakdown(),
+        Mode: ResumeAnalysisModes.FieldBenchmark);
+
+    private static Dictionary<string, int> FieldBenchmarkBreakdown() => new()
+    {
+        ["technicalFoundation"] = 82,
+        ["projectEvidence"] = 72,
+        ["experiencePresentation"] = 70,
+        ["impactAchievements"] = 65,
+        ["clarity"] = 80,
+        ["roleAlignment"] = 76
+    };
 
     private sealed class MockAiProvider : IAiProvider
     {

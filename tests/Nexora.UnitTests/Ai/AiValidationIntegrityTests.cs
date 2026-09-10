@@ -5,7 +5,13 @@ namespace Nexora.UnitTests.Ai;
 
 public sealed class AiValidationIntegrityTests
 {
-    private static readonly AiOperationContext Context = new("validation-test", ExpectedStar: true);
+    private static readonly AiOperationContext Context = new(
+        "validation-test",
+        ExpectedStar: true,
+        Metadata: new Dictionary<string, string>
+        {
+            [ResumeAnalysisMetadata.Mode] = ResumeAnalysisModes.JobTargeted
+        });
 
     [Fact]
     public void ResumeProfileAcceptsUsefulSkillsWithoutSummary()
@@ -42,7 +48,21 @@ public sealed class AiValidationIntegrityTests
         var result = AiOperations.ResumeAnalysis.NormalizeAndValidate(new ResumeAnalysisOutput(
             missing == "strengths" ? [] : ["Grounded strength"],
             missing == "gaps" ? [] : ["Grounded gap"],
-            missing == "recommendations" ? [] : ["Grounded recommendation"]), Context);
+            missing == "recommendations" ? [] : ["Grounded recommendation"],
+            MatchScore: 70,
+            Summary: "Grounded summary",
+            MatchedKeywordsOrSkills: [],
+            MissingKeywordsOrSkills: [],
+            SectionFeedback: ["Grounded section feedback."],
+            Breakdown: new Dictionary<string, int>
+            {
+                ["technicalSkillMatch"] = 70,
+                ["experienceRelevance"] = 70,
+                ["impactEvidence"] = 70,
+                ["clarity"] = 70,
+                ["structure"] = 70
+            },
+            Mode: ResumeAnalysisModes.JobTargeted), Context);
 
         Assert.False(result.IsValid);
         Assert.True(result.Repairable);

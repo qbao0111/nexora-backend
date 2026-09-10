@@ -14,7 +14,16 @@ public sealed class ResumeAnalysesController(IPracticeService practiceService) :
     public async Task<ActionResult<ApiResponse<ResumeAnalysisView>>> Create(CreateResumeAnalysisRequest request, CancellationToken cancellationToken)
     {
         var analysis = await practiceService.StartResumeAnalysisAsync(
-            User.GetRequiredUserId(), request.ResumeId, request.JobDescriptionId, Request.Headers["Idempotency-Key"].ToString(), cancellationToken);
+            User.GetRequiredUserId(),
+            new StartResumeAnalysisCommand(
+                request.ResumeId,
+                request.Mode,
+                request.JobDescriptionId,
+                request.Industry,
+                request.TargetRole,
+                request.Seniority),
+            Request.Headers["Idempotency-Key"].ToString(),
+            cancellationToken);
         return StatusCode(201, new ApiResponse<ResumeAnalysisView>(analysis));
     }
 

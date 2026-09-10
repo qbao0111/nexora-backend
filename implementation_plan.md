@@ -553,11 +553,11 @@ breakdown:
 
 Tasks:
 
-- [ ] `ResumeAnalysisMode` explicit, không suy ra bằng `jobDescriptionId == null`.
-- [ ] Reuse cached `ResumeProfile`; không extract/profile lại cho mỗi mode.
-- [ ] Structured AI schema + validators server-authoritative.
-- [ ] Không làm yếu strict validator hiện tại.
-- [ ] History lưu context/mode/model/prompt/schema version.
+- [x] `ResumeAnalysisMode` explicit, không suy ra bằng `jobDescriptionId == null`.
+- [x] Reuse cached `ResumeProfile`; không extract/profile lại cho mỗi mode.
+- [x] Structured AI schema + validators server-authoritative.
+- [x] Không làm yếu strict validator hiện tại.
+- [x] History lưu context/mode/model/prompt/schema version.
 - [ ] Có thể compare các lần analysis về sau.
 
 ## A5. Free CV analysis quota [P0]

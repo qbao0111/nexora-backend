@@ -17,6 +17,58 @@ public static class PracticeValues
     public const string Completing = "completing";
 }
 
+public enum ResumeAnalysisMode
+{
+    JobTargeted,
+    FieldBenchmark
+}
+
+public static class ResumeAnalysisModes
+{
+    public const string JobTargeted = "job_targeted";
+    public const string FieldBenchmark = "field_benchmark";
+
+    public static bool TryParse(string? value, out ResumeAnalysisMode mode)
+    {
+        if (string.Equals(value?.Trim(), JobTargeted, StringComparison.OrdinalIgnoreCase))
+        {
+            mode = ResumeAnalysisMode.JobTargeted;
+            return true;
+        }
+
+        if (string.Equals(value?.Trim(), FieldBenchmark, StringComparison.OrdinalIgnoreCase))
+        {
+            mode = ResumeAnalysisMode.FieldBenchmark;
+            return true;
+        }
+
+        mode = default;
+        return false;
+    }
+
+    public static string ToWireValue(this ResumeAnalysisMode mode) => mode switch
+    {
+        ResumeAnalysisMode.JobTargeted => JobTargeted,
+        ResumeAnalysisMode.FieldBenchmark => FieldBenchmark,
+        _ => throw new ArgumentOutOfRangeException(nameof(mode))
+    };
+}
+
+public sealed record StartResumeAnalysisCommand(
+    Guid ResumeId,
+    string Mode,
+    Guid? JobDescriptionId,
+    string? Industry,
+    string? TargetRole,
+    string? Seniority);
+
+public sealed record ResumeAnalysisContext(
+    ResumeAnalysisMode Mode,
+    string? JobDescription,
+    string? Industry,
+    string? TargetRole,
+    string? Seniority);
+
 public sealed record UploadIntent(string Token, string UploadUrl, DateTimeOffset ExpiresAt);
 public sealed record PendingUpload(string Token, Guid UserId, string StorageKey, string FileName, string ContentType, long Size, string Checksum);
 
@@ -177,6 +229,7 @@ public interface IResumeContextBuilder
 {
     string BuildProfileExtractionContext(string rawExtractedText);
     string BuildResumeAnalysisContext(ResumeProfile profile, string jobDescription);
+    string BuildResumeAnalysisContext(ResumeProfile profile, ResumeAnalysisContext context);
     string BuildInterviewQuestionContext(string role, string seniority, string interviewType, string difficulty, string? jobDescription, ResumeProfile? profile);
     string BuildAnswerEvaluationContext(
         string role,
@@ -203,13 +256,30 @@ public sealed record ResumeView(
     string? ErrorCode = null,
     string? ErrorMessage = null);
 public sealed record JobDescriptionView(Guid Id, string Title, string Content, DateTimeOffset CreatedAt);
+public sealed record ResumeAnalysisContextView(
+    string Mode,
+    string? Industry,
+    string? TargetRole,
+    string? Seniority);
+
 public sealed record ResumeAnalysisView(
     Guid Id,
     string Status,
     object? Result,
     DateTimeOffset CreatedAt,
     DateTimeOffset? CompletedAt,
-    string? ErrorCode = null);
+    string? ErrorCode = null,
+    string? Mode = null,
+    ResumeAnalysisContextView? Context = null,
+    int ResumeVersion = 0,
+    int? JobDescriptionVersion = null,
+    string? ModelVersion = null,
+    string? PromptVersion = null,
+    string? SchemaVersion = null,
+    string? RubricVersion = null,
+    string? ProfileModelVersion = null,
+    string? ProfilePromptVersion = null,
+    string? ProfileSchemaVersion = null);
 public sealed record DevelopmentResumeAnalysisView(ResumeView Resume, JobDescriptionView JobDescription, ResumeAnalysisView Analysis);
 
 public sealed record StartInterviewCommand(
@@ -259,7 +329,7 @@ public interface IPracticeService
     Task<ResumeView> CreateResumeAsync(Guid userId, string uploadToken, CancellationToken cancellationToken);
     Task<ResumeView> GetResumeAsync(Guid userId, Guid resumeId, CancellationToken cancellationToken);
     Task<JobDescriptionView> CreateJobDescriptionAsync(Guid userId, string title, string content, CancellationToken cancellationToken, string? idempotencyKey = null);
-    Task<ResumeAnalysisView> StartResumeAnalysisAsync(Guid userId, Guid resumeId, Guid jobDescriptionId, string idempotencyKey, CancellationToken cancellationToken);
+    Task<ResumeAnalysisView> StartResumeAnalysisAsync(Guid userId, StartResumeAnalysisCommand command, string idempotencyKey, CancellationToken cancellationToken);
     Task<ResumeAnalysisView> GetResumeAnalysisAsync(Guid userId, Guid analysisId, CancellationToken cancellationToken);
     Task<InterviewView> StartInterviewAsync(Guid userId, StartInterviewCommand command, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> GetInterviewAsync(Guid userId, Guid interviewId, CancellationToken cancellationToken);

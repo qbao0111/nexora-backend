@@ -42,8 +42,13 @@ public sealed class ProductPlatformApiTests
         var now = DateTimeOffset.UtcNow;
         var jd = new Nexora.Data.Practice.JobDescription
         {
-            Id = Guid.NewGuid(), UserId = account.UserId, Title = "Secret JD", Content = "Secret JD body", Version = 1,
-            CreatedAt = now, UpdatedAt = now
+            Id = Guid.NewGuid(),
+            UserId = account.UserId,
+            Title = "Secret JD",
+            Content = "Secret JD body",
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now
         };
         db.JobDescriptions.Add(jd);
         await db.SaveChangesAsync();
@@ -123,9 +128,19 @@ public sealed class ProductPlatformApiTests
         var category = await db.ScenarioCategories.FirstAsync();
         db.Scenarios.Add(new Nexora.Data.Practice.Scenario
         {
-            Id = Guid.NewGuid(), Slug = $"secret-{Guid.NewGuid():N}", Title = "Secret scenario", Summary = "Not published",
-            CategoryId = category.Id, Difficulty = "medium", Competency = "problem", EstimatedMinutes = 10,
-            Content = "Secret body", SortOrder = 99, Status = "draft", CreatedAt = now, UpdatedAt = now
+            Id = Guid.NewGuid(),
+            Slug = $"secret-{Guid.NewGuid():N}",
+            Title = "Secret scenario",
+            Summary = "Not published",
+            CategoryId = category.Id,
+            Difficulty = "medium",
+            Competency = "problem",
+            EstimatedMinutes = 10,
+            Content = "Secret body",
+            SortOrder = 99,
+            Status = "draft",
+            CreatedAt = now,
+            UpdatedAt = now
         });
         await db.SaveChangesAsync();
 
@@ -451,30 +466,47 @@ public sealed class ProductPlatformApiTests
         var now = DateTimeOffset.UtcNow;
         var storedFile = new Nexora.Data.Practice.StoredFile
         {
-            Id = Guid.NewGuid(), UserId = account.UserId, StorageKey = "storage/key", FileName = "cv.pdf",
-            ContentType = "application/pdf", Size = 1024, Checksum = "chk123", CreatedAt = now
+            Id = Guid.NewGuid(),
+            UserId = account.UserId,
+            StorageKey = "storage/key",
+            FileName = "cv.pdf",
+            ContentType = "application/pdf",
+            Size = 1024,
+            Checksum = "chk123",
+            CreatedAt = now
         };
         var resume = new Nexora.Data.Practice.ResumeRecord
         {
-            Id = Guid.NewGuid(), UserId = account.UserId, StoredFileId = storedFile.Id, StoredFile = storedFile,
-            Status = PracticeValues.Ready, ExtractedText = "Experienced C# engineer with ASP.NET Core and PostgreSQL skills.",
+            Id = Guid.NewGuid(),
+            UserId = account.UserId,
+            StoredFileId = storedFile.Id,
+            StoredFile = storedFile,
+            Status = PracticeValues.Ready,
+            ExtractedText = "Experienced C# engineer with ASP.NET Core and PostgreSQL skills.",
             StructuredProfile = "{\"summary\":\"Experienced C# engineer\",\"skills\":[\"C#\",\"PostgreSQL\"],\"experiences\":[],\"education\":[],\"projects\":[],\"certifications\":[],\"languages\":[]}",
             ProfileModelVersion = "test-gemini-model",
-            ProfilePromptVersion = "resume-profile-v1",
-            ProfileSchemaVersion = "resume-profile-v1",
-            Version = 1, CreatedAt = now, UpdatedAt = now
+            ProfilePromptVersion = "resume-profile-v2",
+            ProfileSchemaVersion = "resume-profile-v2",
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now
         };
         var jd = new Nexora.Data.Practice.JobDescription
         {
-            Id = Guid.NewGuid(), UserId = account.UserId, Title = "Software Engineer", Content = "Requirements: C# and PostgreSQL",
-            Version = 1, CreatedAt = now, UpdatedAt = now
+            Id = Guid.NewGuid(),
+            UserId = account.UserId,
+            Title = "Software Engineer",
+            Content = "Requirements: C# and PostgreSQL",
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now
         };
         db.AddRange(storedFile, resume, jd);
         await db.SaveChangesAsync();
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
         {
-            Content = JsonContent.Create(new { resumeId = resume.Id, jobDescriptionId = jd.Id })
+            Content = JsonContent.Create(new { resumeId = resume.Id, mode = "job_targeted", jobDescriptionId = jd.Id })
         };
         request.Headers.Add("Idempotency-Key", "cv-analysis-success");
         using var response = await client.SendAsync(request);
@@ -498,10 +530,425 @@ public sealed class ProductPlatformApiTests
     }
 
     [Fact]
+    public async Task CvFieldBenchmarkReusesCachedProfileAndPersistsContextAndVersions()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedFeatureEntitlementAsync(factory, account.UserId, FeatureValues.CvAnalysis, 2);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        Guid resumeId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var now = DateTimeOffset.UtcNow;
+            var storedFile = new Nexora.Data.Practice.StoredFile
+            {
+                Id = Guid.NewGuid(),
+                UserId = account.UserId,
+                StorageKey = "storage/field-benchmark.pdf",
+                FileName = "cv.pdf",
+                ContentType = "application/pdf",
+                Size = 1024,
+                Checksum = "field-benchmark",
+                CreatedAt = now
+            };
+            var resume = new Nexora.Data.Practice.ResumeRecord
+            {
+                Id = Guid.NewGuid(),
+                UserId = account.UserId,
+                StoredFileId = storedFile.Id,
+                StoredFile = storedFile,
+                Status = PracticeValues.Ready,
+                ExtractedText = "C# and PostgreSQL skills.",
+                StructuredProfile = "{\"summary\":\"Experienced backend engineer\",\"skills\":[\"C#\",\"PostgreSQL\"],\"experiences\":[],\"education\":[],\"projects\":[],\"certifications\":[],\"languages\":[]}",
+                ProfileModelVersion = aiProvider.ModelVersion,
+                ProfilePromptVersion = "resume-profile-v1",
+                ProfileSchemaVersion = "resume-profile-v1",
+                Version = 2,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            db.AddRange(storedFile, resume);
+            await db.SaveChangesAsync();
+            resumeId = resume.Id;
+        }
+
+        using (var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new
+            {
+                resumeId,
+                mode = "field_benchmark",
+                industry = "Fintech",
+                targetRole = "Backend Engineer",
+                seniority = "senior"
+            })
+        })
+        {
+            request.Headers.Add("Idempotency-Key", "cv-analysis-field-benchmark");
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var data = document.RootElement.GetProperty("data");
+            Assert.Equal("field_benchmark", data.GetProperty("mode").GetString());
+            Assert.Equal(JsonValueKind.Null, data.GetProperty("jobDescriptionVersion").ValueKind);
+            Assert.Equal("Fintech", data.GetProperty("context").GetProperty("industry").GetString());
+        }
+
+        await ProcessJobsAsync(factory);
+
+        await using (var firstScope = factory.Services.CreateAsyncScope())
+        {
+            var firstDb = firstScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var fieldAnalysis = await firstDb.ResumeAnalyses.SingleAsync(item => item.UserId == account.UserId);
+            Assert.Equal(PracticeValues.Completed, fieldAnalysis.Status);
+            Assert.Equal("field_benchmark", fieldAnalysis.Mode);
+            Assert.Null(fieldAnalysis.JobDescriptionId);
+            Assert.Null(fieldAnalysis.JobDescriptionVersion);
+            Assert.Contains("Fintech", fieldAnalysis.ContextJson, StringComparison.Ordinal);
+            Assert.NotNull(fieldAnalysis.ProfileSnapshot);
+            Assert.Equal("test-gemini-model", fieldAnalysis.ProfileModelVersion);
+            Assert.Equal("resume-profile-v2", fieldAnalysis.ProfilePromptVersion);
+            Assert.Equal("resume-profile-v2", fieldAnalysis.ProfileSchemaVersion);
+            Assert.Equal("resume-analysis-field-benchmark-v2", fieldAnalysis.PromptVersion);
+            Assert.Equal("analysis-field-benchmark-v2", fieldAnalysis.RubricVersion);
+            Assert.Equal("resume-analysis-field-benchmark-v2", fieldAnalysis.SchemaVersion);
+            var readyResume = await firstDb.Resumes.SingleAsync(item => item.Id == resumeId);
+            Assert.Equal("resume-profile-v2", readyResume.ProfilePromptVersion);
+            Assert.Equal("resume-profile-v2", readyResume.ProfileSchemaVersion);
+        }
+
+        var jobDescriptionId = Guid.NewGuid();
+        await using (var jdScope = factory.Services.CreateAsyncScope())
+        {
+            var jdDb = jdScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var now = DateTimeOffset.UtcNow;
+            jdDb.JobDescriptions.Add(new Nexora.Data.Practice.JobDescription
+            {
+                Id = jobDescriptionId,
+                UserId = account.UserId,
+                Title = "Backend Engineer",
+                Content = "Requirements: C# and PostgreSQL",
+                Version = 1,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            await jdDb.SaveChangesAsync();
+        }
+
+        using (var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new { resumeId, mode = "job_targeted", jobDescriptionId })
+        })
+        {
+            request.Headers.Add("Idempotency-Key", "cv-analysis-job-after-field");
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        }
+
+        await ProcessJobsAsync(factory);
+
+        await using var finalScope = factory.Services.CreateAsyncScope();
+        var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var analyses = (await finalDb.ResumeAnalyses.Where(item => item.UserId == account.UserId).ToArrayAsync())
+            .OrderBy(item => item.CreatedAt)
+            .ToArray();
+        Assert.Equal(2, analyses.Length);
+        var finalFieldAnalysis = analyses.Single(item => item.Mode == "field_benchmark");
+        var finalJobAnalysis = analyses.Single(item => item.Mode == "job_targeted");
+        Assert.Equal(PracticeValues.Completed, finalFieldAnalysis.Status);
+        Assert.Equal(PracticeValues.Completed, finalJobAnalysis.Status);
+        Assert.Null(finalFieldAnalysis.JobDescriptionId);
+        Assert.Equal(jobDescriptionId, finalJobAnalysis.JobDescriptionId);
+        Assert.NotNull(finalFieldAnalysis.ProfileSnapshot);
+        Assert.NotNull(finalJobAnalysis.ProfileSnapshot);
+        Assert.All(analyses, item =>
+        {
+            Assert.Equal("test-gemini-model", item.ProfileModelVersion);
+            Assert.Equal("resume-profile-v2", item.ProfilePromptVersion);
+            Assert.Equal("resume-profile-v2", item.ProfileSchemaVersion);
+        });
+        var feature = await finalDb.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(
+            item => item.Entitlement.UserId == account.UserId
+                && item.Entitlement.PlanCodeSnapshot != "free"
+                && item.FeatureCode == FeatureValues.CvAnalysis);
+        Assert.Equal(0, feature.Reserved);
+        Assert.Equal(2, feature.Consumed);
+        Assert.Equal(2, await finalDb.FeatureUsageEvents.CountAsync(item =>
+            item.UserId == account.UserId
+                && item.FeatureCode == FeatureValues.CvAnalysis
+                && item.Action == FeatureValues.Consume));
+        using var result = JsonDocument.Parse(finalFieldAnalysis.Result!);
+        Assert.Equal(74, result.RootElement.GetProperty("readinessScore").GetInt32());
+        Assert.True(result.RootElement.GetProperty("breakdown").TryGetProperty("roleAlignment", out _));
+        Assert.Equal(1, aiProvider.GetCallCount(AiPurposes.ResumeProfile));
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.ResumeAnalysis));
+    }
+
+    [Fact]
+    public async Task CvAnalysisRejectsInvalidModeContextBeforeCreatingAJob()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new
+            {
+                resumeId = Guid.NewGuid(),
+                mode = "field_benchmark",
+                industry = "Fintech",
+                targetRole = "Backend Engineer"
+            })
+        };
+        request.Headers.Add("Idempotency-Key", "cv-analysis-invalid-context");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("RESUME_ANALYSIS_CONTEXT_INVALID", body.RootElement.GetProperty("error").GetProperty("code").GetString());
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Empty(await db.ResumeAnalyses.Where(item => item.UserId == account.UserId).ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task CvAnalysisRejectsMixedModeContextsWithoutSideEffects()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var requests = new (string Key, object Payload)[]
+        {
+            ("cv-analysis-mixed-field", new
+                {
+                    resumeId = Guid.NewGuid(),
+                    mode = "field_benchmark",
+                    jobDescriptionId = Guid.NewGuid(),
+                    industry = "Fintech",
+                    targetRole = "Backend Engineer",
+                    seniority = "senior"
+                }),
+            ("cv-analysis-mixed-job", new
+                {
+                    resumeId = Guid.NewGuid(),
+                    mode = "job_targeted",
+                    jobDescriptionId = Guid.NewGuid(),
+                    industry = "Fintech",
+                    targetRole = (string?)null,
+                    seniority = (string?)null
+                })
+        };
+
+        foreach (var item in requests)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+            {
+                Content = JsonContent.Create(item.Payload)
+            };
+            request.Headers.Add("Idempotency-Key", item.Key);
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("RESUME_ANALYSIS_CONTEXT_INVALID", body.RootElement.GetProperty("error").GetProperty("code").GetString());
+        }
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Empty(await db.ResumeAnalyses.Where(item => item.UserId == account.UserId).ToArrayAsync());
+        Assert.Empty(await db.OutboxEvents.Where(item => item.AggregateId != Guid.Empty).ToArrayAsync());
+        Assert.Empty(await db.FeatureUsageEvents.Where(item => item.UserId == account.UserId).ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task CvAnalysisIdempotencyScopesModeAndNormalizesContext()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedFeatureEntitlementAsync(factory, account.UserId, FeatureValues.CvAnalysis, 2);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var resumeId = Guid.NewGuid();
+        var jobDescriptionId = Guid.NewGuid();
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var now = DateTimeOffset.UtcNow;
+            var storedFile = new Nexora.Data.Practice.StoredFile
+            {
+                Id = Guid.NewGuid(),
+                UserId = account.UserId,
+                StorageKey = "storage/idempotency.pdf",
+                FileName = "cv.pdf",
+                ContentType = "application/pdf",
+                Size = 100,
+                Checksum = "idempotency",
+                CreatedAt = now
+            };
+            db.Add(new Nexora.Data.Practice.ResumeRecord
+            {
+                Id = resumeId,
+                UserId = account.UserId,
+                StoredFileId = storedFile.Id,
+                StoredFile = storedFile,
+                Status = PracticeValues.Ready,
+                ExtractedText = "C# backend engineer",
+                StructuredProfile = "{\"summary\":\"Backend engineer\",\"skills\":[\"C#\"],\"experiences\":[],\"education\":[],\"projects\":[],\"certifications\":[],\"languages\":[]}",
+                ProfileModelVersion = "test-gemini-model",
+                ProfilePromptVersion = "resume-profile-v2",
+                ProfileSchemaVersion = "resume-profile-v2",
+                Version = 1,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            db.Add(new Nexora.Data.Practice.JobDescription
+            {
+                Id = jobDescriptionId,
+                UserId = account.UserId,
+                Title = "Backend Engineer",
+                Content = "C# and PostgreSQL",
+                Version = 1,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using (var firstRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new
+            {
+                resumeId,
+                mode = "field_benchmark",
+                industry = "Fintech",
+                targetRole = "Backend Engineer",
+                seniority = "senior"
+            })
+        })
+        {
+            firstRequest.Headers.Add("Idempotency-Key", "analysis-mode-scope");
+            using var firstResponse = await client.SendAsync(firstRequest);
+            Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
+        }
+
+        using (var conflictingRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new { resumeId, mode = "job_targeted", jobDescriptionId })
+        })
+        {
+            conflictingRequest.Headers.Add("Idempotency-Key", "analysis-mode-scope");
+            using var conflictResponse = await client.SendAsync(conflictingRequest);
+            Assert.Equal(HttpStatusCode.Conflict, conflictResponse.StatusCode);
+            using var body = JsonDocument.Parse(await conflictResponse.Content.ReadAsStringAsync());
+            Assert.Equal("IDEMPOTENCY_CONFLICT", body.RootElement.GetProperty("error").GetProperty("code").GetString());
+        }
+
+        Guid replayedAnalysisId;
+        using (var normalizedRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new
+            {
+                resumeId,
+                mode = " field_benchmark ",
+                industry = "  Fintech  ",
+                targetRole = " Backend Engineer ",
+                seniority = " senior "
+            })
+        })
+        {
+            normalizedRequest.Headers.Add("Idempotency-Key", "analysis-normalized-replay");
+            using var normalizedResponse = await client.SendAsync(normalizedRequest);
+            Assert.Equal(HttpStatusCode.Created, normalizedResponse.StatusCode);
+            using var body = JsonDocument.Parse(await normalizedResponse.Content.ReadAsStringAsync());
+            replayedAnalysisId = body.RootElement.GetProperty("data").GetProperty("id").GetGuid();
+        }
+
+        using (var replayRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new
+            {
+                resumeId,
+                mode = "field_benchmark",
+                industry = "Fintech",
+                targetRole = "Backend Engineer",
+                seniority = "senior"
+            })
+        })
+        {
+            replayRequest.Headers.Add("Idempotency-Key", "analysis-normalized-replay");
+            using var replayResponse = await client.SendAsync(replayRequest);
+            Assert.Equal(HttpStatusCode.Created, replayResponse.StatusCode);
+            using var body = JsonDocument.Parse(await replayResponse.Content.ReadAsStringAsync());
+            Assert.Equal(replayedAnalysisId, body.RootElement.GetProperty("data").GetProperty("id").GetGuid());
+        }
+
+        await using var finalScope = factory.Services.CreateAsyncScope();
+        var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(2, await finalDb.ResumeAnalyses.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(2, await finalDb.OutboxEvents.CountAsync(item => item.Type == "ResumeAnalysisRequested"));
+        Assert.Equal(2, await finalDb.FeatureUsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == FeatureValues.Reserve));
+    }
+
+    [Fact]
+    public async Task CvAnalysisRejectsUnknownModeWithoutSideEffects()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new { resumeId = Guid.NewGuid(), mode = "unknown" })
+        };
+        request.Headers.Add("Idempotency-Key", "analysis-unknown-mode");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("RESUME_ANALYSIS_MODE_INVALID", body.RootElement.GetProperty("error").GetProperty("code").GetString());
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Empty(await db.ResumeAnalyses.Where(item => item.UserId == account.UserId).ToArrayAsync());
+        Assert.Empty(await db.OutboxEvents.Where(item => item.AggregateId != Guid.Empty).ToArrayAsync());
+        Assert.Empty(await db.FeatureUsageEvents.Where(item => item.UserId == account.UserId).ToArrayAsync());
+    }
+
+    [Fact]
     public async Task CvAnalysisSemanticInvalidTwiceFailsAndVoidsQuotaWithoutFabricatedResult()
     {
         var aiProvider = new TestAiProvider();
-        var invalid = new ResumeAnalysisOutput([], ["Grounded gap"], ["Grounded recommendation"]);
+        var invalid = new ResumeAnalysisOutput(
+            [],
+            ["Grounded gap"],
+            ["Grounded recommendation"],
+            MatchScore: 60,
+            Summary: "Grounded summary",
+            MatchedKeywordsOrSkills: [],
+            MissingKeywordsOrSkills: [],
+            SectionFeedback: ["Grounded section feedback."],
+            Breakdown: new Dictionary<string, int>
+            {
+                ["technicalSkillMatch"] = 60,
+                ["experienceRelevance"] = 60,
+                ["impactEvidence"] = 60,
+                ["clarity"] = 60,
+                ["structure"] = 60
+            },
+            Mode: ResumeAnalysisModes.JobTargeted);
         aiProvider.EnqueueResponse(AiPurposes.ResumeAnalysis, invalid);
         aiProvider.EnqueueResponse(AiPurposes.ResumeAnalysis, invalid);
         using var factory = new NexoraApiFactory(aiProvider);
@@ -519,23 +966,40 @@ public sealed class ProductPlatformApiTests
             var now = DateTimeOffset.UtcNow;
             var storedFile = new Nexora.Data.Practice.StoredFile
             {
-                Id = Guid.NewGuid(), UserId = account.UserId, StorageKey = "storage/semantic-invalid.pdf", FileName = "cv.pdf",
-                ContentType = "application/pdf", Size = 1024, Checksum = "semantic-invalid", CreatedAt = now
+                Id = Guid.NewGuid(),
+                UserId = account.UserId,
+                StorageKey = "storage/semantic-invalid.pdf",
+                FileName = "cv.pdf",
+                ContentType = "application/pdf",
+                Size = 1024,
+                Checksum = "semantic-invalid",
+                CreatedAt = now
             };
             var resume = new Nexora.Data.Practice.ResumeRecord
             {
-                Id = Guid.NewGuid(), UserId = account.UserId, StoredFileId = storedFile.Id, StoredFile = storedFile,
-                Status = PracticeValues.Ready, ExtractedText = "C# and PostgreSQL skills.",
+                Id = Guid.NewGuid(),
+                UserId = account.UserId,
+                StoredFileId = storedFile.Id,
+                StoredFile = storedFile,
+                Status = PracticeValues.Ready,
+                ExtractedText = "C# and PostgreSQL skills.",
                 StructuredProfile = "{\"summary\":null,\"skills\":[\"C#\"],\"experiences\":[],\"education\":[],\"projects\":[],\"certifications\":[],\"languages\":[]}",
                 ProfileModelVersion = aiProvider.ModelVersion,
-                ProfilePromptVersion = "resume-profile-v1",
-                ProfileSchemaVersion = "resume-profile-v1",
-                Version = 1, CreatedAt = now, UpdatedAt = now
+                ProfilePromptVersion = "resume-profile-v2",
+                ProfileSchemaVersion = "resume-profile-v2",
+                Version = 1,
+                CreatedAt = now,
+                UpdatedAt = now
             };
             var jobDescription = new Nexora.Data.Practice.JobDescription
             {
-                Id = Guid.NewGuid(), UserId = account.UserId, Title = "Backend Engineer", Content = "C# and PostgreSQL",
-                Version = 1, CreatedAt = now, UpdatedAt = now
+                Id = Guid.NewGuid(),
+                UserId = account.UserId,
+                Title = "Backend Engineer",
+                Content = "C# and PostgreSQL",
+                Version = 1,
+                CreatedAt = now,
+                UpdatedAt = now
             };
             db.AddRange(storedFile, resume, jobDescription);
             await db.SaveChangesAsync();
@@ -545,7 +1009,7 @@ public sealed class ProductPlatformApiTests
 
         using (var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
         {
-            Content = JsonContent.Create(new { resumeId, jobDescriptionId })
+            Content = JsonContent.Create(new { resumeId, mode = "job_targeted", jobDescriptionId })
         })
         {
             request.Headers.Add("Idempotency-Key", "cv-analysis-semantic-invalid");
@@ -604,9 +1068,20 @@ public sealed class ProductPlatformApiTests
         var price = new PlanPrice { Id = Guid.NewGuid(), PlanId = plan.Id, AmountMinor = 50000, Currency = "VND", DurationDays = 30, InterviewQuota = 5, IsActive = true, CreatedAt = now };
         var order = new Order
         {
-            Id = Guid.NewGuid(), UserId = account.UserId, PlanPriceId = price.Id, PlanCodeSnapshot = plan.Code,
-            AmountMinor = 50000, Currency = "VND", DurationDays = 30, InterviewQuota = 5, Status = BillingValues.Fulfilled,
-            PaymentProvider = "test", ProviderTransactionId = "tx-1", CheckoutUrl = "https://example.test", CreatedAt = now, UpdatedAt = now
+            Id = Guid.NewGuid(),
+            UserId = account.UserId,
+            PlanPriceId = price.Id,
+            PlanCodeSnapshot = plan.Code,
+            AmountMinor = 50000,
+            Currency = "VND",
+            DurationDays = 30,
+            InterviewQuota = 5,
+            Status = BillingValues.Fulfilled,
+            PaymentProvider = "test",
+            ProviderTransactionId = "tx-1",
+            CheckoutUrl = "https://example.test",
+            CreatedAt = now,
+            UpdatedAt = now
         };
         db.AddRange(plan, price, order);
         await db.SaveChangesAsync();
@@ -616,13 +1091,21 @@ public sealed class ProductPlatformApiTests
 
         using var changeAmountRes = await adminClient.PatchAsJsonAsync($"/api/v1/admin/plan-prices/{price.Id}", new
         {
-            amountMinor = 99000, currency = "VND", durationDays = 30, interviewQuota = 5, isActive = true
+            amountMinor = 99000,
+            currency = "VND",
+            durationDays = 30,
+            interviewQuota = 5,
+            isActive = true
         });
         Assert.Equal(HttpStatusCode.Conflict, changeAmountRes.StatusCode);
 
         using var deactivateRes = await adminClient.PatchAsJsonAsync($"/api/v1/admin/plan-prices/{price.Id}", new
         {
-            amountMinor = 50000, currency = "VND", durationDays = 30, interviewQuota = 5, isActive = false
+            amountMinor = 50000,
+            currency = "VND",
+            durationDays = 30,
+            interviewQuota = 5,
+            isActive = false
         });
         Assert.Equal(HttpStatusCode.OK, deactivateRes.StatusCode);
 
@@ -851,23 +1334,40 @@ public sealed class ProductPlatformApiTests
         var now = DateTimeOffset.UtcNow;
         var storedFile = new Nexora.Data.Practice.StoredFile
         {
-            Id = Guid.NewGuid(), UserId = account.UserId, StorageKey = "files/test.pdf", FileName = "test.pdf",
-            ContentType = "application/pdf", Size = 100, Checksum = "hash", CreatedAt = now
+            Id = Guid.NewGuid(),
+            UserId = account.UserId,
+            StorageKey = "files/test.pdf",
+            FileName = "test.pdf",
+            ContentType = "application/pdf",
+            Size = 100,
+            Checksum = "hash",
+            CreatedAt = now
         };
         var resume = new Nexora.Data.Practice.ResumeRecord
         {
-            Id = Guid.NewGuid(), UserId = account.UserId, StoredFileId = storedFile.Id, StoredFile = storedFile,
-            Status = PracticeValues.Ready, ExtractedText = "Experienced C# engineer with ASP.NET Core and PostgreSQL skills.",
+            Id = Guid.NewGuid(),
+            UserId = account.UserId,
+            StoredFileId = storedFile.Id,
+            StoredFile = storedFile,
+            Status = PracticeValues.Ready,
+            ExtractedText = "Experienced C# engineer with ASP.NET Core and PostgreSQL skills.",
             StructuredProfile = "{\"summary\":\"Experienced C# engineer\",\"skills\":[\"C#\",\"PostgreSQL\"],\"experiences\":[],\"education\":[],\"projects\":[],\"certifications\":[],\"languages\":[]}",
             ProfileModelVersion = "test-gemini-model",
-            ProfilePromptVersion = "resume-profile-v1",
-            ProfileSchemaVersion = "resume-profile-v1",
-            Version = 1, CreatedAt = now, UpdatedAt = now
+            ProfilePromptVersion = "resume-profile-v2",
+            ProfileSchemaVersion = "resume-profile-v2",
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now
         };
         var jd = new Nexora.Data.Practice.JobDescription
         {
-            Id = Guid.NewGuid(), UserId = account.UserId, Title = "Backend Dev", Content = "Requirements: C#, ASP.NET Core, PostgreSQL",
-            Version = 1, CreatedAt = now, UpdatedAt = now
+            Id = Guid.NewGuid(),
+            UserId = account.UserId,
+            Title = "Backend Dev",
+            Content = "Requirements: C#, ASP.NET Core, PostgreSQL",
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now
         };
         db.AddRange(storedFile, resume, jd);
         await db.SaveChangesAsync();
@@ -882,7 +1382,7 @@ public sealed class ProductPlatformApiTests
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
             {
-                Content = JsonContent.Create(new { resumeId = resume.Id, jobDescriptionId = jd.Id })
+                Content = JsonContent.Create(new { resumeId = resume.Id, mode = "job_targeted", jobDescriptionId = jd.Id })
             };
             req.Headers.Add("Idempotency-Key", key);
             return await client1.SendAsync(req);
@@ -892,7 +1392,7 @@ public sealed class ProductPlatformApiTests
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
             {
-                Content = JsonContent.Create(new { resumeId = resume.Id, jobDescriptionId = jd.Id })
+                Content = JsonContent.Create(new { resumeId = resume.Id, mode = "job_targeted", jobDescriptionId = jd.Id })
             };
             req.Headers.Add("Idempotency-Key", key);
             return await client2.SendAsync(req);
@@ -1016,10 +1516,20 @@ public sealed class ProductPlatformApiTests
         var category = await db.ScenarioCategories.FirstAsync();
         var scenario = new Nexora.Data.Practice.Scenario
         {
-            Id = Guid.NewGuid(), Slug = $"scenario-{Guid.NewGuid():N}", Title = "Scenario test", Summary = "Published scenario for tests",
-            CategoryId = category.Id, Difficulty = "medium", Competency = "problem_analysis", EstimatedMinutes = 15,
-            Content = "A rich scenario body describing a business problem to solve.", SortOrder = 1, Status = "published",
-            CreatedAt = now, UpdatedAt = now, PublishedAt = now
+            Id = Guid.NewGuid(),
+            Slug = $"scenario-{Guid.NewGuid():N}",
+            Title = "Scenario test",
+            Summary = "Published scenario for tests",
+            CategoryId = category.Id,
+            Difficulty = "medium",
+            Competency = "problem_analysis",
+            EstimatedMinutes = 15,
+            Content = "A rich scenario body describing a business problem to solve.",
+            SortOrder = 1,
+            Status = "published",
+            CreatedAt = now,
+            UpdatedAt = now,
+            PublishedAt = now
         };
         db.Scenarios.Add(scenario);
         await db.SaveChangesAsync();
@@ -1036,15 +1546,30 @@ public sealed class ProductPlatformApiTests
         var subscription = new Subscription { Id = Guid.NewGuid(), UserId = userId, Status = BillingValues.Active, StartsAt = now.AddMinutes(-1), EndsAt = now.AddDays(30), CreatedAt = now, UpdatedAt = now };
         var entitlement = new Entitlement
         {
-            Id = Guid.NewGuid(), UserId = userId, SubscriptionId = subscription.Id, PlanCodeSnapshot = plan.Code,
-            Status = BillingValues.Active, InterviewLimit = 1, StartsAt = subscription.StartsAt, EndsAt = subscription.EndsAt,
-            CreatedAt = now, UpdatedAt = now, ConcurrencyToken = Guid.NewGuid()
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            SubscriptionId = subscription.Id,
+            PlanCodeSnapshot = plan.Code,
+            Status = BillingValues.Active,
+            InterviewLimit = 1,
+            StartsAt = subscription.StartsAt,
+            EndsAt = subscription.EndsAt,
+            CreatedAt = now,
+            UpdatedAt = now,
+            ConcurrencyToken = Guid.NewGuid()
         };
         var featureDef = await db.FeatureDefinitions.SingleAsync(item => item.Code == featureCode);
         var ef = new EntitlementFeature
         {
-            Id = Guid.NewGuid(), EntitlementId = entitlement.Id, FeatureDefinitionId = featureDef.Id, FeatureCode = featureCode,
-            IsEnabled = true, Limit = limit, CreatedAt = now, UpdatedAt = now, ConcurrencyToken = Guid.NewGuid()
+            Id = Guid.NewGuid(),
+            EntitlementId = entitlement.Id,
+            FeatureDefinitionId = featureDef.Id,
+            FeatureCode = featureCode,
+            IsEnabled = true,
+            Limit = limit,
+            CreatedAt = now,
+            UpdatedAt = now,
+            ConcurrencyToken = Guid.NewGuid()
         };
         db.AddRange(plan, price, subscription, entitlement, ef);
         await db.SaveChangesAsync();

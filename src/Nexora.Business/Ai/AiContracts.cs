@@ -59,7 +59,28 @@ public sealed class AiProviderException(
 }
 
 public sealed record GeneratedQuestion(string Content);
-public sealed record ResumeAnalysisOutput(IReadOnlyCollection<string> Strengths, IReadOnlyCollection<string> Gaps, IReadOnlyCollection<string> Recommendations);
+/// <summary>
+/// Provider-neutral CV analysis result. The active shape is selected by the
+/// explicit <see cref="Nexora.Business.Practice.ResumeAnalysisMode"/> carried in the operation
+/// context; job-targeted results use <see cref="MatchScore"/>, while
+/// field-benchmark results use <see cref="ReadinessScore"/>.
+///
+/// The first three parameters remain in their historical order so deterministic
+/// test providers and previously compiled callers can continue to construct the
+/// common coaching collections while the v2 fields are introduced additively.
+/// </summary>
+public sealed record ResumeAnalysisOutput(
+    IReadOnlyCollection<string> Strengths,
+    IReadOnlyCollection<string> Gaps,
+    IReadOnlyCollection<string> Recommendations,
+    int? MatchScore = null,
+    int? ReadinessScore = null,
+    string? Summary = null,
+    IReadOnlyCollection<string>? MatchedKeywordsOrSkills = null,
+    IReadOnlyCollection<string>? MissingKeywordsOrSkills = null,
+    IReadOnlyCollection<string>? SectionFeedback = null,
+    IReadOnlyDictionary<string, int>? Breakdown = null,
+    string? Mode = null);
 public sealed record RubricScore(string Criterion, int Score, string Evidence);
 public sealed record StarComponentEvaluation(int Score, bool Detected, string Evidence, string Feedback);
 public sealed record StarEvaluation(

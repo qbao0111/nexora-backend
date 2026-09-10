@@ -33,8 +33,8 @@ public sealed partial class PracticeService(
     private const string JobDescriptionCreateOperation = "job-description.create";
     private const string PromptVersion = "phase3-v1";
     private const string SchemaVersion = "phase3-star-v2";
-    private const string ProfilePromptVersion = "resume-profile-v1";
-    private const string ProfileSchemaVersion = "resume-profile-v1";
+    private static string ProfilePromptVersion => AiOperations.ResumeProfile.PromptVersion;
+    private static string ProfileSchemaVersion => AiOperations.ResumeProfile.SchemaVersion;
     private const string RubricVersion = "interview-rubric-star-v2";
     private const string Disclaimer = "Điểm số chỉ là ước lượng phục vụ coaching, không phải đánh giá tuyển dụng.";
     private const string ResumeExtractionFailureMessage = "Không thể đọc nội dung CV. Vui lòng thử lại với file PDF hoặc DOCX rõ hơn.";
@@ -75,7 +75,17 @@ public sealed partial class PracticeService(
         var resume = await CreateResumeAsync(userId, intent.Token, cancellationToken);
         await WaitForResumeReadyAsync(resume.Id, cancellationToken);
         var jd = await CreateJobDescriptionAsync(userId, "Development debug JD", normalizedJobDescription, cancellationToken);
-        var analysis = await StartResumeAnalysisAsync(userId, resume.Id, jd.Id, $"development:{Guid.NewGuid():N}", cancellationToken);
+        var analysis = await StartResumeAnalysisAsync(
+            userId,
+            new StartResumeAnalysisCommand(
+                resume.Id,
+                ResumeAnalysisModes.JobTargeted,
+                jd.Id,
+                null,
+                null,
+                null),
+            $"development:{Guid.NewGuid():N}",
+            cancellationToken);
         dbContext.IdempotencyRecords.Add(Idempotency(userId, DevelopmentResumeAnalysisOperation, key, fingerprint, analysis.Id, timeProvider.GetUtcNow()));
         await dbContext.SaveChangesAsync(cancellationToken);
         return await GetDevelopmentResumeAnalysisAsync(userId, analysis.Id, cancellationToken);
@@ -169,7 +179,7 @@ public sealed partial class PracticeService(
             .Include(item => item.JobDescription)
             .SingleOrDefaultAsync(item => item.Id == analysisId && item.UserId == userId, cancellationToken)
             ?? throw NotFound();
-        return new(MapResume(analysis.Resume), MapJobDescription(analysis.JobDescription), MapAnalysis(analysis));
+        return new(MapResume(analysis.Resume), MapJobDescription(analysis.JobDescription ?? throw Validation("JobDescription is required for development analysis.", "RESUME_ANALYSIS_CONTEXT_INVALID")), MapAnalysis(analysis));
     }
 
     public async Task<JobDescriptionView> CreateJobDescriptionAsync(
@@ -235,17 +245,31 @@ public sealed partial class PracticeService(
     }
 
     public async Task<ResumeAnalysisView> StartResumeAnalysisAsync(
-        Guid userId, Guid resumeId, Guid jobDescriptionId, string idempotencyKey, CancellationToken cancellationToken)
+        Guid userId,
+        StartResumeAnalysisCommand command,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(command);
+        var normalized = NormalizeAnalysisCommand(command);
         var key = RequireKey(idempotencyKey);
-        var fingerprint = Fingerprint(resumeId, jobDescriptionId);
+        var fingerprint = Fingerprint(
+            command.ResumeId,
+            normalized.ModeWire,
+            normalized.JobDescriptionId,
+            normalized.Industry,
+            normalized.TargetRole,
+            normalized.Seniority);
         var prior = await FindIdempotentAsync(userId, "resume-analysis.create", key, fingerprint, cancellationToken);
         if (prior is not null) return await GetResumeAnalysisAsync(userId, prior.ResourceId, cancellationToken);
-        var resume = await dbContext.Resumes.AsNoTracking().SingleOrDefaultAsync(item => item.Id == resumeId && item.UserId == userId, cancellationToken)
+        var resume = await dbContext.Resumes.AsNoTracking().SingleOrDefaultAsync(item => item.Id == command.ResumeId && item.UserId == userId, cancellationToken)
             ?? throw NotFound();
         if (resume.Status != PracticeValues.Ready) throw Conflict("RESUME_NOT_READY", "CV chưa sẵn sàng để phân tích.");
-        var jd = await dbContext.JobDescriptions.AsNoTracking().SingleOrDefaultAsync(item => item.Id == jobDescriptionId && item.UserId == userId, cancellationToken)
-            ?? throw NotFound();
+        var jd = normalized.JobDescriptionId is null
+            ? null
+            : await dbContext.JobDescriptions.AsNoTracking().SingleOrDefaultAsync(
+                item => item.Id == normalized.JobDescriptionId && item.UserId == userId,
+                cancellationToken) ?? throw NotFound();
         await featureEntitlementService.RequireEnabledAsync(userId, FeatureValues.CvAnalysis, cancellationToken);
         var access = await featureEntitlementService.GetAsync(userId, FeatureValues.CvAnalysis, cancellationToken);
 
@@ -254,18 +278,31 @@ public sealed partial class PracticeService(
         if (prior is not null) return await GetResumeAnalysisAsync(userId, prior.ResourceId, cancellationToken);
 
         var now = timeProvider.GetUtcNow();
+        var operation = GetResumeAnalysisOperation(normalized.Mode);
         var analysis = new ResumeAnalysis
         {
             Id = Guid.NewGuid(),
             UserId = userId,
             ResumeId = resume.Id,
-            JobDescriptionId = jd.Id,
+            JobDescriptionId = jd?.Id,
             ResumeVersion = resume.Version,
-            JobDescriptionVersion = jd.Version,
+            JobDescriptionVersion = jd?.Version,
+            Mode = normalized.ModeWire,
+            ContextJson = JsonSerializer.Serialize(
+                new ResumeAnalysisContextView(
+                    normalized.ModeWire,
+                    normalized.Industry,
+                    normalized.TargetRole,
+                    normalized.Seniority),
+                JsonOptions),
             Status = PracticeValues.Queued,
             ModelVersion = CurrentModelVersion,
-            PromptVersion = PromptVersion,
-            SchemaVersion = SchemaVersion,
+            PromptVersion = operation.PromptVersion,
+            RubricVersion = operation.RubricVersion,
+            SchemaVersion = operation.SchemaVersion,
+            ProfileModelVersion = resume.ProfileModelVersion,
+            ProfilePromptVersion = resume.ProfilePromptVersion,
+            ProfileSchemaVersion = resume.ProfileSchemaVersion,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -764,9 +801,22 @@ public sealed partial class PracticeService(
         if (profile is not null)
         {
             resume.StructuredProfile = JsonSerializer.Serialize(profile, JsonOptions);
-            resume.ProfileModelVersion = CurrentModelVersion;
-            resume.ProfilePromptVersion = ProfilePromptVersion;
-            resume.ProfileSchemaVersion = ProfileSchemaVersion;
+            if (ocrFallbackUsed)
+            {
+                // OCR output is produced by a separate document-understanding
+                // provider and is not a text-profile execution of the current
+                // ResumeProfile operation. Force the canonical profile provider
+                // to regenerate it before any analysis uses the cache.
+                resume.ProfileModelVersion = null;
+                resume.ProfilePromptVersion = null;
+                resume.ProfileSchemaVersion = null;
+            }
+            else
+            {
+                resume.ProfileModelVersion = CurrentModelVersion;
+                resume.ProfilePromptVersion = ProfilePromptVersion;
+                resume.ProfileSchemaVersion = ProfileSchemaVersion;
+            }
         }
         resume.Status = PracticeValues.Ready;
         resume.UpdatedAt = timeProvider.GetUtcNow();
@@ -841,16 +891,41 @@ public sealed partial class PracticeService(
         analysis.UpdatedAt = timeProvider.GetUtcNow();
         await dbContext.SaveChangesAsync(cancellationToken);
         var profile = await EnsureResumeProfileAsync(analysis.Resume, analysis.Id, cancellationToken);
-        var input = resumeContextBuilder.BuildResumeAnalysisContext(profile, analysis.JobDescription.Content);
+        analysis.ProfileSnapshot = JsonSerializer.Serialize(profile, JsonOptions);
+        analysis.ProfileModelVersion = analysis.Resume.ProfileModelVersion;
+        analysis.ProfilePromptVersion = analysis.Resume.ProfilePromptVersion;
+        analysis.ProfileSchemaVersion = analysis.Resume.ProfileSchemaVersion;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var contextSnapshot = ReadAnalysisContext(analysis);
+        if (!ResumeAnalysisModes.TryParse(contextSnapshot.Mode, out var analysisMode))
+            throw Validation("Mode phân tích CV không hợp lệ.", "RESUME_ANALYSIS_MODE_INVALID");
+        var input = resumeContextBuilder.BuildResumeAnalysisContext(profile, new ResumeAnalysisContext(
+            analysisMode,
+            analysis.JobDescription?.Content,
+            contextSnapshot.Industry,
+            contextSnapshot.TargetRole,
+            contextSnapshot.Seniority));
+        var operation = GetResumeAnalysisOperation(analysisMode);
         var execResult = await structuredAiExecutor.ExecuteAsync(
-            AiOperations.ResumeAnalysis,
+            operation,
             input,
-            new AiOperationContext(analysis.Id.ToString("N"), analysis.UserId),
+            new AiOperationContext(
+                analysis.Id.ToString("N"),
+                analysis.UserId,
+                Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    [ResumeAnalysisMetadata.Mode] = analysisMode.ToWireValue()
+                }),
             cancellationToken);
         var result = execResult.Value;
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         analysis.Result = JsonSerializer.Serialize(result, JsonOptions);
+        analysis.ModelVersion = execResult.ModelVersion;
+        analysis.PromptVersion = execResult.PromptVersion;
+        analysis.RubricVersion = execResult.RubricVersion;
+        analysis.SchemaVersion = execResult.SchemaVersion;
         analysis.Status = PracticeValues.Completed;
         analysis.CompletedAt = analysis.UpdatedAt = timeProvider.GetUtcNow();
         EnqueueResourceChanged(analysis.UserId, "resumeAnalysis", analysis.Id, analysis.Status, analysis.UpdatedAt);
@@ -1386,7 +1461,18 @@ public sealed partial class PracticeService(
         ParseJson(analysis.Result),
         analysis.CreatedAt,
         analysis.CompletedAt,
-        analysis.ErrorCode);
+        analysis.ErrorCode,
+        analysis.Mode,
+        ParseAnalysisContext(analysis.ContextJson, analysis.Mode),
+        analysis.ResumeVersion,
+        analysis.JobDescriptionVersion,
+        analysis.ModelVersion,
+        analysis.PromptVersion,
+        analysis.SchemaVersion,
+        analysis.RubricVersion,
+        analysis.ProfileModelVersion,
+        analysis.ProfilePromptVersion,
+        analysis.ProfileSchemaVersion);
     private static InterviewView MapInterview(InterviewSession session, IEnumerable<InterviewQuestion> questions, IEnumerable<InterviewAnswer> answers) =>
         new(session.Id, session.Status, session.Role, session.Seniority, session.InterviewType, session.Difficulty, session.Version,
             questions.OrderBy(item => item.Sequence).Select(MapQuestion).ToArray(), answers.OrderBy(item => item.CreatedAt).Select(MapAnswer).ToArray(), session.CreatedAt, session.UpdatedAt);
@@ -1396,6 +1482,124 @@ public sealed partial class PracticeService(
         ParseJson(report.Rubric) ?? default(JsonElement), ParseJson(report.Strengths) ?? default(JsonElement), ParseJson(report.Gaps) ?? default(JsonElement),
         ParseJson(report.ActionPlan) ?? default(JsonElement), report.Disclaimer, report.CreatedAt, BuildStarSummary(questions, answers));
     private static JsonElement? ParseJson(string? value) => value is null ? null : JsonSerializer.Deserialize<JsonElement>(value);
+
+    private static ResumeAnalysisContextView? ParseAnalysisContext(string? value, string mode)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<ResumeAnalysisContextView>(value, JsonOptions);
+                if (parsed is not null) return parsed;
+            }
+            catch (JsonException)
+            {
+                // Legacy rows have no context snapshot. Keep their mode visible
+                // without exposing raw JSON or failing read-only retrieval.
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(mode)
+            ? null
+            : new ResumeAnalysisContextView(mode, null, null, null);
+    }
+
+    private static AiOperationDefinition<ResumeAnalysisOutput> GetResumeAnalysisOperation(ResumeAnalysisMode mode) => mode switch
+    {
+        ResumeAnalysisMode.JobTargeted => AiOperations.ResumeAnalysis,
+        ResumeAnalysisMode.FieldBenchmark => AiOperations.ResumeAnalysisFieldBenchmark,
+        _ => throw new ArgumentOutOfRangeException(nameof(mode))
+    };
+
+    private static ResumeAnalysisContextView ReadAnalysisContext(ResumeAnalysis analysis)
+    {
+        ResumeAnalysisContextView? context;
+        if (string.IsNullOrWhiteSpace(analysis.ContextJson))
+        {
+            // Rows created before CV Analysis v2 have no context snapshot. They
+            // are backfilled as job-targeted by the migration and can safely use
+            // their persisted job description below.
+            context = string.IsNullOrWhiteSpace(analysis.Mode)
+                ? null
+                : new ResumeAnalysisContextView(analysis.Mode, null, null, null);
+        }
+        else
+        {
+            try
+            {
+                context = JsonSerializer.Deserialize<ResumeAnalysisContextView>(analysis.ContextJson, JsonOptions);
+            }
+            catch (JsonException)
+            {
+                context = null;
+            }
+        }
+
+        if (context is null)
+            throw InvalidAiOutput();
+        if (!ResumeAnalysisModes.TryParse(context.Mode, out var mode))
+            throw Validation("Mode phân tích CV không hợp lệ.", "RESUME_ANALYSIS_MODE_INVALID");
+        if (!ResumeAnalysisModes.TryParse(analysis.Mode, out var persistedMode))
+            throw Validation("Invalid persisted analysis mode.", "RESUME_ANALYSIS_MODE_INVALID");
+        if (persistedMode != mode)
+            throw Validation("Persisted analysis context does not match its mode.", "RESUME_ANALYSIS_CONTEXT_INVALID");
+        if (mode == ResumeAnalysisMode.JobTargeted)
+        {
+            if (analysis.JobDescriptionId is null || analysis.JobDescriptionVersion is null || analysis.JobDescription is null ||
+                context.Industry is not null || context.TargetRole is not null || context.Seniority is not null)
+                throw Validation("Job-targeted analysis context is inconsistent.", "RESUME_ANALYSIS_CONTEXT_INVALID");
+        }
+        else if (analysis.JobDescriptionId is not null || analysis.JobDescriptionVersion is not null ||
+                 string.IsNullOrWhiteSpace(context.Industry) ||
+                 string.IsNullOrWhiteSpace(context.TargetRole) ||
+                 string.IsNullOrWhiteSpace(context.Seniority))
+        {
+            throw Validation("Field-benchmark analysis context is inconsistent.", "RESUME_ANALYSIS_CONTEXT_INVALID");
+        }
+        return context with { Mode = persistedMode.ToWireValue() };
+    }
+
+    private static NormalizedResumeAnalysisCommand NormalizeAnalysisCommand(StartResumeAnalysisCommand command)
+    {
+        if (command.ResumeId == Guid.Empty)
+            throw Validation("Resume không hợp lệ.", "RESUME_ANALYSIS_CONTEXT_INVALID");
+        if (!ResumeAnalysisModes.TryParse(command.Mode, out var mode))
+            throw Validation("Mode phân tích CV không hợp lệ.", "RESUME_ANALYSIS_MODE_INVALID");
+
+        var industry = NormalizeOptional(command.Industry, 160);
+        var targetRole = NormalizeOptional(command.TargetRole, 160);
+        var seniority = NormalizeOptional(command.Seniority, 80);
+        if (command.Industry is not null && industry is null ||
+            command.TargetRole is not null && targetRole is null ||
+            command.Seniority is not null && seniority is null)
+            throw Validation("Ngữ cảnh phân tích CV quá dài.", "RESUME_ANALYSIS_CONTEXT_INVALID");
+
+        if (mode == ResumeAnalysisMode.JobTargeted)
+        {
+            if (command.JobDescriptionId is null || industry is not null || targetRole is not null || seniority is not null)
+                throw Validation("Job-targeted analysis yêu cầu JobDescription và không nhận ngữ cảnh benchmark.", "RESUME_ANALYSIS_CONTEXT_INVALID");
+            return new(mode, mode.ToWireValue(), command.JobDescriptionId, null, null, null);
+        }
+
+        if (command.JobDescriptionId is not null || industry is null || targetRole is null || seniority is null)
+            throw Validation("Field-benchmark analysis yêu cầu industry, targetRole và seniority; không nhận JobDescription.", "RESUME_ANALYSIS_CONTEXT_INVALID");
+        return new(mode, mode.ToWireValue(), null, industry, targetRole, seniority);
+    }
+
+    private static string? NormalizeOptional(string? value, int maxLength)
+    {
+        if (value is null) return null;
+        var normalized = value.Trim();
+        return normalized.Length == 0 || normalized.Length > maxLength ? null : normalized;
+    }
+
+    private sealed record NormalizedResumeAnalysisCommand(
+        ResumeAnalysisMode Mode,
+        string ModeWire,
+        Guid? JobDescriptionId,
+        string? Industry,
+        string? TargetRole,
+        string? Seniority);
 
     private static BusinessException Validation(string message, string code = "VALIDATION_ERROR") => new(code, message, BusinessErrorKind.Validation);
     private static BusinessException NotFound() => new("NOT_FOUND", "Không tìm thấy tài nguyên.", BusinessErrorKind.NotFound);

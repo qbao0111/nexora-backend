@@ -5,7 +5,13 @@ namespace Nexora.Api.Contracts;
 public sealed record PresignUploadRequest(string FileName, string ContentType, long Size);
 public sealed record FinalizeResumeRequest(string UploadToken);
 public sealed record CreateJobDescriptionRequest(string Title, string Content);
-public sealed record CreateResumeAnalysisRequest(Guid ResumeId, Guid JobDescriptionId);
+public sealed record CreateResumeAnalysisRequest(
+    Guid ResumeId,
+    string Mode,
+    Guid? JobDescriptionId,
+    string? Industry,
+    string? TargetRole,
+    string? Seniority);
 public sealed class DevelopmentResumeAnalysisRequest
 {
     [Required(ErrorMessage = "File là bắt buộc.")]

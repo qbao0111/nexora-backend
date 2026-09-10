@@ -15,7 +15,24 @@ public static class PrivacyValues
 public sealed record ExportProfile(Guid Id, string Email, string? DisplayName, DateTimeOffset CreatedAt);
 public sealed record ExportResume(Guid Id, string FileName, string ContentType, long Size, string Status, DateTimeOffset CreatedAt);
 public sealed record ExportJobDescription(Guid Id, string Title, string Content, DateTimeOffset CreatedAt);
-public sealed record ExportAnalysis(Guid Id, Guid ResumeId, Guid JobDescriptionId, string Status, JsonElement? Result, DateTimeOffset CreatedAt);
+public sealed record ExportAnalysis(
+    Guid Id,
+    Guid ResumeId,
+    Guid? JobDescriptionId,
+    string Status,
+    JsonElement? Result,
+    DateTimeOffset CreatedAt,
+    string Mode,
+    ResumeAnalysisContextView? Context,
+    int ResumeVersion,
+    int? JobDescriptionVersion,
+    string ModelVersion,
+    string PromptVersion,
+    string SchemaVersion,
+    string? RubricVersion,
+    string? ProfileModelVersion,
+    string? ProfilePromptVersion,
+    string? ProfileSchemaVersion);
 public sealed record ExportInterview(InterviewView Interview, ReportView? Report);
 public sealed record CoreDataExport(
     DateTimeOffset GeneratedAt,

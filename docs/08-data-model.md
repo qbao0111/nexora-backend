@@ -38,6 +38,12 @@ ApplicationUser 1--N Subscription 1--N Entitlement 1--N UsageEvent
 
 All user-owned records: `id UUID/ULID`, `user_id`, `created_at timestamptz`, `updated_at timestamptz`; add `(user_id, created_at DESC)` index for user history. Soft-delete only where recovery/retention requires it; otherwise hard-delete file content after legal retention period.
 
+### Resume analysis v2 persistence
+
+`resume_analyses` stores the explicit `Mode` (`job_targeted` or `field_benchmark`) and a JSON `ContextJson` snapshot. `JobDescriptionId` and `JobDescriptionVersion` are nullable only for `field_benchmark`; existing rows are backfilled as `job_targeted` by the CV Analysis v2 migration and database check constraints enforce the legal mode/JD pairs. Each row also stores the resume version, analysis model/prompt/schema/rubric versions, and a private `ProfileSnapshot` with the profile model/prompt/schema provenance used for that run. The API exposes the safe version metadata but not the raw profile snapshot, including in privacy exports. No second profile extraction pipeline is created for a mode: a profile cache is reused only while its three profile versions match the current operation; OCR fallback profiles are deliberately unversioned until the canonical text profile operation regenerates them.
+
+The two result shapes are strict and provider-neutral. Job-targeted output contains `matchScore`, matched/missing skills and the five named breakdown dimensions; field-benchmark output contains `readinessScore` and its six named dimensions. Invalid mode/context combinations are rejected before enqueueing a job.
+
 ### Interview session state machine
 
 ```text
