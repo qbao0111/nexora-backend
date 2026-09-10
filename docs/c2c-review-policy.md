@@ -23,6 +23,23 @@ This repository uses the global C2C review policy plus the Nexora-specific rules
 - Keep Business/API contracts provider-neutral. Fake/development AI, payment, storage, and OCR adapters are allowed before production vendor selection. Never claim Gemini, DeepSeek, a fake provider, or local storage is the final production choice.
 - Do not change quota, billing, interview, CV, STAR, scenario, or ProductionSafety semantics while working on an unrelated capability.
 
+## C2C phase model
+
+The global C2C policy defines the mechanics; this section applies them to Nexora.
+Keep these concepts separate:
+
+- **Implementation iteration:** one substantive implementation or corrective change to product code, tests, configuration or task-owned documentation. Waiting, rereading unchanged files, capturing evidence and resuming a review do not consume an iteration.
+- **Semantic review:** an independent ChatGPT review of requirements, architecture, security, behavior, tests and scope. Run one local review after deterministic validation and one final remote review after hosted CI is green for the exact pushed `HEAD`.
+- **Evidence refresh:** a metadata-only read of the current branch/PR, base, diff and checks, or an execution-record update. Evidence refresh resumes the existing review and is not a new implementation iteration or semantic review. A changed `HEAD`/base/diff, adverse check, scope drift or new blocker invalidates the prior approval and requires fresh exact-head review.
+
+Codex owns deterministic and mechanical failures before asking ChatGPT for semantic review: compilation, tests, formatting, EF verification, vulnerability scans, CI syntax and repository hygiene. Escalate only when the failure exposes a genuine contract or architectural decision.
+
+The repository profile allows at most six genuine implementation/corrective iterations per task (`.c2c.json`). Fail closed for semantic corrections that exhaust the budget; never bypass review by relabelling an evidence refresh.
+
+Before local or remote semantic review, run the same applicable deterministic gates used by Backend CI, including the changed-file formatter. After hosted CI is green, gather one compact exact-head evidence record and request the final remote review. Do not repeat a semantic review for unchanged code merely because evidence was refreshed.
+
+`project_log.md` records durable implementation facts and verification outcomes. Do not create a metadata-only PR-head/CI churn loop: volatile exact SHAs, mergeability and review state belong in C2C execution records and remote evidence. An in-progress entry may use `pending` for a not-yet-created commit or PR; never invent either value.
+
 ## Invariants to protect
 
 - Backend authorization is authoritative. Enforce ownership for every user-owned object; never trust client `userId`, price, plan, quota, or score.
