@@ -23,7 +23,7 @@ Không commit `.env`, CV mẫu có dữ liệu thật hoặc webhook payload pro
 
 ## Pipeline phát hành
 
-1. Pull request: `dotnet restore`, `dotnet format --verify-no-changes`, `dotnet build`, `dotnet test` (unit/integration) và secret scan khi corresponding projects tồn tại.
+1. Pull request: `dotnet restore`, `dotnet format style --verify-no-changes`, `dotnet format analyzers --verify-no-changes`, `dotnet build`, `dotnet test` (unit/integration) và secret scan khi corresponding projects tồn tại. LF-vs-CRLF-only differences are not a correctness failure.
 2. Deploy preview: migration được kiểm thử trên staging, chạy smoke test login/upload/interview.
 3. Production: backup DB, chạy migration tương thích ngược, deploy API/frontend, smoke test và theo dõi lỗi 30 phút.
 4. Rollback: rollback application trước; migration phải có kế hoạch forward-fix hoặc migration rollback đã thử nghiệm.

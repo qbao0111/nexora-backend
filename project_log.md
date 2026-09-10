@@ -2,6 +2,17 @@
 
 This log records completed implementation milestones and verification evidence. It must never contain credentials or other secrets.
 
+## 2026-09-11 — Remove ENDOFLINE CI gate (completed)
+
+- Status: Completed
+- Owner: Codex / repository tooling
+- Branch: `chore/remove-endofline-gate`
+- Scope: Removed the global ordinary-source CRLF requirement and split CI format verification into style and analyzer checks so LF-versus-CRLF alone is not a required failure condition. No application behavior changed and no files were mass-normalized.
+- Files/modules: `.editorconfig`, `.github/workflows/backend-ci.yml`, `AGENTS.md`, `docs/04-production-runbook.md`, `implementation_plan.md`.
+- Verification: Workflow/config diff inspection and `git diff --check`; relevant formatter commands are validated separately for this change.
+- Dependencies: Build, tests, analyzer/style checks and security gates remain required.
+- Remaining blockers: none identified.
+
 ## 2026-09-11 — Retire automated review tooling (completed)
 
 - Status: Completed

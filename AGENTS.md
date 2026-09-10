@@ -106,5 +106,6 @@ Implementation is not complete while relevant tests fail.
 - Codex stops after implementation and validation and returns a compact handoff.
 - A human relays the result to ChatGPT for independent review and relays any correction back to Codex.
 - Merge requires explicit human instruction.
+- LF vs CRLF is not a correctness gate for ordinary source files; EOL-only differences do not justify a corrective cycle or normalization commit.
 
 DEC-01 through DEC-04 are deferred production choices, not engineering blockers. Use the documented fake/development adapters and never invent a final provider, budget, retention/legal policy, host, domain or infrastructure account.

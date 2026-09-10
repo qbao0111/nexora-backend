@@ -1337,7 +1337,7 @@ Mỗi task chỉ Done khi:
 - [ ] Build 0 error.
 - [ ] Tests liên quan pass.
 - [ ] Không làm fail full unit/integration suite.
-- [ ] `dotnet format --verify-no-changes` pass.
+- [ ] `dotnet format style --verify-no-changes` and `dotnet format analyzers --verify-no-changes` pass.
 - [ ] `git diff --check` pass.
 - [ ] Không có secret trong diff/log/test fixture.
 - [ ] API contract được document nếu thay đổi.
