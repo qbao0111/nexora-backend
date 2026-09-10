@@ -10,6 +10,7 @@ using Nexora.Business.Practice;
 using Nexora.Business.Privacy;
 using Nexora.Business.Storage;
 using Nexora.Data.Identity;
+using Nexora.Data.Learning;
 using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Privacy;
@@ -36,6 +37,10 @@ public sealed partial class PrivacyService(
             .ToArrayAsync(cancellationToken);
         var careerGoals = await dbContext.CareerGoals.AsNoTracking().Where(item => item.UserId == userId)
             .ToArrayAsync(cancellationToken);
+        var learningPaths = await dbContext.LearningPaths.AsNoTracking()
+            .Include(item => item.Milestones).ThenInclude(item => item.Activities)
+            .Where(item => item.UserId == userId)
+            .ToArrayAsync(cancellationToken);
         var analyses = await dbContext.ResumeAnalyses.AsNoTracking().Where(item => item.UserId == userId)
             .ToArrayAsync(cancellationToken);
         var sessions = await dbContext.InterviewSessions.AsNoTracking()
@@ -52,6 +57,32 @@ public sealed partial class PrivacyService(
             careerGoals.OrderByDescending(item => item.Active).ThenBy(item => item.CreatedAt)
                 .Select(item => new ExportCareerGoal(item.Id, item.TargetRole, item.Seniority, item.Industry, item.TargetCompany,
                     item.TargetJobDescriptionId, item.TargetDate, item.Active, item.CreatedAt, item.UpdatedAt)).ToArray(),
+            learningPaths.OrderBy(item => item.CreatedAt).Select(item => new ExportLearningPath(
+                item.Id,
+                item.CareerGoalId,
+                item.Status,
+                item.CreatedAt,
+                item.UpdatedAt,
+                item.Milestones.OrderBy(milestone => milestone.SortOrder).ThenBy(milestone => milestone.Id)
+                    .Select(milestone => new ExportLearningPathMilestone(
+                        milestone.Id,
+                        milestone.Code,
+                        milestone.Title,
+                        milestone.SortOrder,
+                        milestone.Status,
+                        milestone.Activities.OrderBy(activity => activity.SortOrder).ThenBy(activity => activity.Id)
+                            .Select(activity => new ExportLearningPathActivity(
+                                activity.Id,
+                                activity.Type,
+                                activity.Title,
+                                activity.Description,
+                                activity.CompetencyCode,
+                                activity.ResourceId,
+                                activity.ExternalUrl,
+                                activity.Priority,
+                                activity.Status,
+                                activity.SortOrder,
+                                activity.CompletedAt)).ToArray())).ToArray())).ToArray(),
             analyses.OrderBy(item => item.CreatedAt).Select(item => new ExportAnalysis(
                 item.Id,
                 item.ResumeId,
@@ -203,6 +234,8 @@ public sealed partial class PrivacyService(
             .Select(item => item.Id).ToArrayAsync(cancellationToken);
         var analysisIds = await dbContext.ResumeAnalyses.Where(item => item.UserId == request.UserId)
             .Select(item => item.Id).ToArrayAsync(cancellationToken);
+        var learningPathIds = await dbContext.LearningPaths.Where(item => item.UserId == request.UserId)
+            .Select(item => item.Id).ToArrayAsync(cancellationToken);
         var personalAggregateIds = sessionIds.Concat(resumeIds).Concat(jdIds).Concat(analysisIds).ToHashSet();
 
         var reservationSourceIds = sessions.Select(item => item.ReservationEventId.ToString("N")).ToArray();
@@ -240,6 +273,9 @@ public sealed partial class PrivacyService(
         dbContext.InterviewQuestions.RemoveRange(dbContext.InterviewQuestions.Where(item => sessionIds.Contains(item.InterviewSessionId)));
         dbContext.InterviewSessions.RemoveRange(sessions);
         dbContext.ResumeAnalyses.RemoveRange(dbContext.ResumeAnalyses.Where(item => item.UserId == request.UserId));
+        dbContext.LearningPathActivities.RemoveRange(dbContext.LearningPathActivities.Where(item => learningPathIds.Contains(item.LearningPathId)));
+        dbContext.LearningPathMilestones.RemoveRange(dbContext.LearningPathMilestones.Where(item => learningPathIds.Contains(item.LearningPathId)));
+        dbContext.LearningPaths.RemoveRange(dbContext.LearningPaths.Where(item => item.UserId == request.UserId));
         dbContext.CareerGoals.RemoveRange(dbContext.CareerGoals.Where(item => item.UserId == request.UserId));
         dbContext.Resumes.RemoveRange(dbContext.Resumes.Where(item => item.UserId == request.UserId));
         dbContext.JobDescriptions.RemoveRange(dbContext.JobDescriptions.Where(item => item.UserId == request.UserId));
