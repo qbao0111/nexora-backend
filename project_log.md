@@ -654,3 +654,11 @@ This log records completed implementation milestones and verification evidence. 
 - Finding closed: the verified checkout/webhook path now exercises a finite paid `interview_question_limit` through Q4/Q5, asserts terminal `max_questions_reached` plus `isComplete=true`, and verifies an over-cap continuation returns `INTERVIEW_MAX_QUESTIONS_REACHED` without another AI call, question, interview reserve or consume event.
 - Verification after the new regression: Release build passed with 0 warnings/errors; 306 unit and 165 integration tests passed (20 PracticeApiTests); EF remains at no pending model changes; changed-C# format and `git diff --check` are clean. Existing vulnerability-audit evidence remains valid because no dependency changed.
 - Next: send exactly one iteration-3 `STATE: EXECUTED` handoff for the same task and request the bounded local semantic review; no A8/A9 work has started.
+
+## 2026-09-10 - A7 corrective iteration 4 (mechanical CI formatting)
+
+- Status: Mechanical CI correction complete; no behavior or semantic changes
+- Task/checkpoint: `c2c_a7b3`, corrective iteration `4`; hosted run `34502852688` failed only on `ENDOFLINE` for six changed C# files because their committed blobs were LF while `.editorconfig` requires CRLF.
+- Correction: normalized only the six reported C# files to CRLF, preserving their content and all A7 behavior; no new review finding was introduced.
+- Verification: exact changed-file formatter now passes; staged diff is line-ending-only; `git diff --check` passes. Previous Release build, unit/integration, EF, and vulnerability gates remain valid because this correction changes no source semantics or dependencies.
+- Next: commit and push the mechanical correction, then wait for hosted CI on the new exact head before remote review; no A8/A9 work has started.
