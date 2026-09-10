@@ -26,7 +26,10 @@ public sealed class AiOperationCatalogTests
                 MissingElements: [],
                 Strengths: ["Good"],
                 CoachingTips: ["Keep going"]),
-            ScoreScale: AiOperations.ScoreScale);
+            ScoreScale: AiOperations.ScoreScale,
+            Strengths: ["Clear explanation of the answer"],
+            Improvements: ["Add one concrete example if available"],
+            ImprovedAnswer: "Overall good answer with a clear explanation.");
 
         // Non-behavioral question
         var context = new AiOperationContext("test-corr", ExpectedStar: false);
@@ -121,7 +124,10 @@ public sealed class AiOperationCatalogTests
                 MissingElements: [],
                 Strengths: ["Good"],
                 CoachingTips: ["Keep going"]),
-            ScoreScale: AiOperations.ScoreScale);
+            ScoreScale: AiOperations.ScoreScale,
+            Strengths: ["Good answer"],
+            Improvements: ["Add one concrete example if available"],
+            ImprovedAnswer: "Overall good answer with clear evidence.");
 
         var context = new AiOperationContext("test-corr", ExpectedStar: true);
 
@@ -306,5 +312,261 @@ public sealed class AiOperationCatalogTests
         Assert.Contains("IMPORTANT STAR CORRECTION INSTRUCTION", repairInstructions);
         Assert.Contains("star.component_detected_without_evidence", repairInstructions);
         Assert.Contains("question focus does not restrict STAR extraction", repairInstructions, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void InterviewEvaluateNormalizesGroundedActionableCoaching()
+    {
+        var raw = new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "The API debugging approach is described."),
+                new RubricScore("structure", 80, "The answer is ordered."),
+                new RubricScore("completeness", 80, "The API issue is covered."),
+                new RubricScore("clarity", 80, "The answer is clear.")
+            ],
+            "Good answer.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            ["The API debugging is clear."],
+            ["Add a concrete result if available."],
+            "I debugged the API and can add a concrete result if available.");
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            raw,
+            new AiOperationContext("coaching-valid", ExpectedStar: false, CandidateAnswer: "I debugged the API."));
+
+        Assert.True(result.IsValid);
+        Assert.Equal(["The API debugging is clear."], result.NormalizedValue!.Strengths);
+        Assert.Equal(["Add a concrete result if available."], result.NormalizedValue.Improvements);
+        Assert.Contains("debugged the API", result.NormalizedValue.ImprovedAnswer);
+    }
+
+    [Fact]
+    public void InterviewEvaluateRejectsFabricatedImprovedAnswerFacts()
+    {
+        var raw = new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "Grounded."),
+                new RubricScore("structure", 80, "Grounded."),
+                new RubricScore("completeness", 80, "Grounded."),
+                new RubricScore("clarity", 80, "Grounded.")
+            ],
+            "Good answer.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            ["The API explanation is clear."],
+            ["Add a concrete result if available."],
+            "I debugged the API and reduced latency by 99% using Kubernetes.");
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            raw,
+            new AiOperationContext("coaching-fabricated", ExpectedStar: false, CandidateAnswer: "I debugged the API."));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("interview.improved_answer_fabricated", result.FailureReason);
+        Assert.True(result.Repairable);
+    }
+
+    [Fact]
+    public void InterviewEvaluateRejectsFabricatedStrengthFacts()
+    {
+        var raw = new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "Grounded."),
+                new RubricScore("structure", 80, "Grounded."),
+                new RubricScore("completeness", 80, "Grounded."),
+                new RubricScore("clarity", 80, "Grounded.")
+            ],
+            "Good answer.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            ["Clear response reduced latency by 99%."],
+            ["Add a concrete result if available."],
+            "I debugged the API and add a concrete result if available.");
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            raw,
+            new AiOperationContext("coaching-strength-fabricated", ExpectedStar: false, CandidateAnswer: "I debugged the API."));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("interview.strengths_ungrounded", result.FailureReason);
+        Assert.True(result.Repairable);
+    }
+
+    [Fact]
+    public void InterviewEvaluateRejectsGenericStrengthWithoutAnswerEvidence()
+    {
+        var raw = new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "Grounded."),
+                new RubricScore("structure", 80, "Grounded."),
+                new RubricScore("completeness", 80, "Grounded."),
+                new RubricScore("clarity", 80, "Grounded.")
+            ],
+            "Good answer.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            ["Clear leadership under pressure."],
+            ["Add one concrete result if available."],
+            "I debugged the API and add a concrete result if available.");
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            raw,
+            new AiOperationContext("coaching-generic-strength", ExpectedStar: false, CandidateAnswer: "I debugged the API."));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("interview.strengths_ungrounded", result.FailureReason);
+        Assert.True(result.Repairable);
+    }
+
+    [Fact]
+    public void InterviewEvaluateRejectsNovelStrengthClaimWithAnswerOverlap()
+    {
+        var raw = new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "Grounded."),
+                new RubricScore("structure", 80, "Grounded."),
+                new RubricScore("completeness", 80, "Grounded."),
+                new RubricScore("clarity", 80, "Grounded.")
+            ],
+            "Good answer.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            ["Strong API leadership under pressure."],
+            ["Add one concrete result if available."],
+            "I debugged the API.");
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            raw,
+            new AiOperationContext("coaching-strength-claim", ExpectedStar: false, CandidateAnswer: "I debugged the API."));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("interview.strengths_ungrounded", result.FailureReason);
+        Assert.True(result.Repairable);
+    }
+
+    [Fact]
+    public void InterviewEvaluateAcceptsFaithfulImprovedAnswerParaphrase()
+    {
+        var raw = new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "Grounded."),
+                new RubricScore("structure", 80, "Grounded."),
+                new RubricScore("completeness", 80, "Grounded."),
+                new RubricScore("clarity", 80, "Grounded.")
+            ],
+            "Good answer.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            ["The API response is clear."],
+            ["Add one concrete result if available."],
+            "I resolved the API issue.");
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            raw,
+            new AiOperationContext("coaching-paraphrase", ExpectedStar: false, CandidateAnswer: "I fixed the API bug."));
+
+        Assert.True(result.IsValid, result.FailureReason);
+        Assert.Equal("I resolved the API issue.", result.NormalizedValue!.ImprovedAnswer);
+    }
+
+    [Fact]
+    public void InterviewEvaluateRejectsUnlistedAchievementAndTechnologyInImprovedAnswer()
+    {
+        var raw = new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "Grounded."),
+                new RubricScore("structure", 80, "Grounded."),
+                new RubricScore("completeness", 80, "Grounded."),
+                new RubricScore("clarity", 80, "Grounded.")
+            ],
+            "Good answer.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            ["The API debugging is clear."],
+            ["Add one concrete result if available."],
+            "I debugged the API and mentored the team through a RabbitMQ migration.");
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            raw,
+            new AiOperationContext("coaching-unlisted-facts", ExpectedStar: false, CandidateAnswer: "I debugged the API."));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("interview.improved_answer_fabricated", result.FailureReason);
+        Assert.True(result.Repairable);
+    }
+
+    [Fact]
+    public void InterviewEvaluateRejectsNovelTechnologyIdentifierInImprovedAnswer()
+    {
+        var raw = new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "Grounded."),
+                new RubricScore("structure", 80, "Grounded."),
+                new RubricScore("completeness", 80, "Grounded."),
+                new RubricScore("clarity", 80, "Grounded.")
+            ],
+            "Good answer.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            ["The API response is clear."],
+            ["Add one concrete result if available."],
+            "elasticsearch improved the API issue.");
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            raw,
+            new AiOperationContext("coaching-open-technology", ExpectedStar: false, CandidateAnswer: "I debugged the API."));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("interview.improved_answer_fabricated", result.FailureReason);
+        Assert.True(result.Repairable);
+    }
+
+    [Fact]
+    public void InterviewEvaluateAcceptsGroundedShortVietnameseAnswer()
+    {
+        var raw = new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "Grounded."),
+                new RubricScore("structure", 80, "Grounded."),
+                new RubricScore("completeness", 80, "Grounded."),
+                new RubricScore("clarity", 80, "Grounded.")
+            ],
+            "Tốt.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            ["Phần trả lời phù hợp với vai trò."],
+            ["Bổ sung một ví dụ cụ thể nếu có."],
+            "Tôi phù hợp với vai trò.");
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            raw,
+            new AiOperationContext("coaching-short-vietnamese", ExpectedStar: false, CandidateAnswer: "Tôi phù hợp với vai trò."));
+
+        Assert.True(result.IsValid, result.FailureReason);
+    }
+
+    [Fact]
+    public void InterviewEvaluateRejectsMissingCoachingFields()
+    {
+        var raw = new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "Grounded."),
+                new RubricScore("structure", 80, "Grounded."),
+                new RubricScore("completeness", 80, "Grounded."),
+                new RubricScore("clarity", 80, "Grounded.")
+            ],
+            "Good answer.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            [],
+            ["More detail"],
+            "I debugged the API.");
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(raw, new AiOperationContext("coaching-missing", ExpectedStar: false));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("interview.strengths_invalid", result.FailureReason);
+        Assert.True(result.Repairable);
     }
 }

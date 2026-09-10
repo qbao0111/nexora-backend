@@ -149,7 +149,7 @@ does not consume another interview reservation.
   - Non-behavioral questions: `star.applicable` is server-normalized to `false` without failing evaluation; STAR component details are suppressed.
   - Behavioral questions: If model omits STAR or returns `applicable = false`, the executor marks the issue repairable and attempts repair once.
   - Standalone `star.evaluate` (Scenario/STAR feature): strictly requires `applicable = true`.
-  - **Canonical STAR Instructions (`StarSemantics.CanonicalInstructions`)**: Unified single source of truth embedded in both `interview.answer.evaluate` (`interview-eval-v4`) and `star.evaluate` (`star-eval-v3`). Defines clear technical examples for Situation (system state/incident), Task (candidate's specific duty/ownership), Action (investigation/profiling/indexing/caching/code changes), and Result (latency reduction, recovery, metrics, lessons).
+  - **Canonical STAR Instructions (`StarSemantics.CanonicalInstructions`)**: Unified single source of truth embedded in both `interview.answer.evaluate` (`interview-eval-v5`) and `star.evaluate` (`star-eval-v3`). Defines clear technical examples for Situation (system state/incident), Task (candidate's specific duty/ownership), Action (investigation/profiling/indexing/caching/code changes), and Result (latency reduction, recovery, metrics, lessons).
   - **Question-Focus Detachment**: Evaluator must scan the entire answer for all four components. Phrasing of the interview question must not constrain component detection.
   - **Evidence-First Extraction**: For every component:
     - If concrete evidence exists: `detected = true`, `evidence = "<exact quote>"`, `score = 1..100`.
@@ -168,7 +168,11 @@ does not consume another interview reservation.
   - For each Situation/Task/Action/Result component, only valid `detected = true` evaluations with nonblank evidence contribute. The merged component keeps the highest grounded score across the chain; if none is available it is `score = 0`, `detected = false`. A follow-up can strengthen a component but cannot lower unrelated primary-story evidence.
   - `componentAverages` keeps its existing API name but contains the four merged story component scores. `applicableAnswers` remains the count of valid applicable answer evaluations contributing to the summary (not the number of independent stories). The story `averageScore` is recomputed server-side with the canonical 20/20/35/25 STAR weights; persisted per-answer `overallScore` values are not averaged.
   - `recurringIssues` is recomputed from the merged components (`detected = false` or `score < 60`); raw per-answer `missingElements` are never unioned, so a follow-up can resolve an earlier missing component. Coaching priorities use feedback attached to the selected merged/weak component evidence, in deterministic weakness order, distinct and capped at three; historical `coachingTips` are not concatenated.
-- **Context Budgeting**:
+  - **Per-answer coaching (`interview.evaluate`)**:
+    - The same structured call returns rubric scores, feedback, STAR (when applicable), `strengths`, `improvements` and `improvedAnswer`; no second rewrite call is made.
+    - `strengths` and `improvements` contain 1–3 nonblank items (maximum 500 characters each); improvements must be actionable. `improvedAnswer` is nonblank and capped at 4,000 characters.
+    - When the original answer is available to Business validation, strengths and the improved answer must retain meaningful evidence from it. New numeric values, technologies, achievements or experience are rejected; missing evidence is described as a suggestion to add it, never fabricated. The normalized coaching is persisted with the answer evaluation and remains provider-neutral.
+  - **Context Budgeting**:
   - `ResumeContextBuilder` prioritizes candidate answer text, question text, and metadata above background context.
   - Target JD and resume profile summaries are compacted to ensure the candidate's answer is never crowded out or truncated.
 - **Preserve candidate facts**: If a metric/result is absent, suggest how to quantify it; never fabricate achievements.

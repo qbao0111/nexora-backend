@@ -691,6 +691,63 @@ This log records completed implementation milestones and verification evidence. 
 - FE impact: No frontend code changed. The existing contract docs describe the endpoints, active-goal ordering and explicit-null PATCH behavior for future UI integration.
 - Remaining blockers: Latest `origin/main` at `ffc7d570d11f4ec2da2d45bf2ad15a474f35d3cb` includes A7 and was verified not to contain B8 Star Story entities or migrations; the old B8 branch was not used and no B8 assumptions were added to B9. B9 is self-contained; clarify B8 main ancestry before dependent B10 work. Independent review remains required.
 
+## 2026-09-11 - A8 Per-answer coaching
+
+- Status: Implementation complete; deterministic verification and independent review pending
+- Owner: Backend workstream A
+- Branch: `feat/a8-per-answer-coaching`
+- Base: `6150717f15c563241cce24314bea7cf2cc2f7d23` (`origin/main`, after A7 and C2C policy merge)
+- Scope: Extended the provider-neutral `interview.evaluate` contract with grounded `strengths`, actionable `improvements` and a safe `improvedAnswer` in the same AI call. Added bounded schema/semantic validation, answer-fact grounding checks and server persistence through the existing evaluation payload; no second rewrite call, quota change or migration.
+- Contracts/traceability: `docs/03-api-data-contract.md`, `docs/09-ai-integration-spec.md`, and the A8 checklist in `implementation_plan.md` define the response fields, limits and no-fabrication rules. Prompt/schema provenance is `interview-eval-v5`.
+- Files/modules: `AiContracts`, `AiOperationCatalog`, `PracticeService`, deterministic AI test provider, AI catalog/provider reliability tests and interview API regression fixtures.
+- Verification: Focused AI unit coverage passed (81 tests), Practice API regression coverage passed (20 tests), and focused AI integration coverage passed (7 tests); Release build passed with 0 warnings/errors; complete Release suites passed (317 unit, 169 integration); EF reports no pending model changes; changed-C# format verification, vulnerability audit and `git diff --check` are clean. Tests use deterministic providers/SQLite; no live AI/provider calls.
+- Migration impact: none; existing interview answer JSON storage is reused and historical STAR parsing remains compatible.
+- Dependencies: A8 review/merge is required before A9 report production. No frontend changes and no A9 implementation was started.
+
+## 2026-09-11 - A8 corrective iteration 2
+
+- Status: Corrective implementation complete; awaiting the same-task semantic re-review
+- Task/checkpoint: `c2c_a8d4`, corrective implementation iteration 2 (actual code/test changes responding to the two local-review findings)
+- Correction: tightened candidate grounding so unlisted meaningful fact tokens and generic ungrounded strengths are rejected; added deterministic API coverage for persisted coaching replay, one semantic repair, and terminal failure without persisting fabricated output.
+- Verification: Release build passed with 0 warnings/errors; Release unit tests passed (319) and integration tests passed (172); EF reports no pending model changes; changed-C# format verification, vulnerability audit and `git diff --check` are clean.
+- Scope guard: no migration, quota/billing/provider change, frontend change or A9 implementation; existing A8 contract and single-call evaluation semantics remain provider-neutral.
+- Next: same-task semantic re-review, then one A8 commit/PR/CI cycle.
+
+## 2026-09-11 - A8 corrective iteration 3
+
+- Status: Corrective implementation complete; awaiting the same-task semantic re-review
+- Task/checkpoint: `c2c_a8d4`, corrective implementation iteration 3 (actual code/test changes responding to the second grounding review)
+- Correction: strengths now reject novel non-generic claim vocabulary even when one answer token overlaps, while improved answers retain a narrower candidate-fact guard so faithful paraphrases remain valid; regressions cover an overlapping unsupported strength and a faithful paraphrase.
+- Verification: Release build passed with 0 warnings/errors; Release unit tests passed (322) and integration tests passed (172); EF reports no pending model changes; changed-C# format verification, vulnerability audit and `git diff --check` are clean.
+- Scope guard: no migration, quota/billing/provider change, frontend change or A9 implementation; no additional AI call or provider-specific behavior was introduced.
+- Next: same-task semantic re-review, then one A8 commit/PR/CI cycle.
+
+## 2026-09-11 - A8 corrective iteration 6
+
+- Status: Corrective implementation complete; awaiting the same-task semantic re-review
+- Task/checkpoint: `c2c_a8d4`, corrective implementation iteration 6 (actual code/test changes responding to the casing/position technology bypass)
+- Correction: technology/entity grounding now evaluates normalized tokens regardless of casing or sentence position, recognizes technology-like suffixes and explicit integration context, and keeps faithful paraphrases outside those candidate-fact signals; the regression uses unseen lowercase `elasticsearch` without adding it to the blacklist.
+- Verification: Release build passed with 0 warnings/errors; Release unit tests passed (322) and integration tests passed (172); EF reports no pending model changes; changed-C# format verification and vulnerability audit are clean.
+- Scope guard: no migration, quota/billing/provider change, frontend change or A9 implementation; no additional AI call or provider-specific behavior was introduced.
+- Next: same-task semantic re-review, then one A8 commit/PR/CI cycle; iteration budget is now exhausted for further corrective implementation.
+
+## 2026-09-11 - A8 corrective iteration 5
+
+- Status: Corrective implementation complete; awaiting the same-task semantic re-review
+- Task/checkpoint: `c2c_a8d4`, corrective implementation iteration 5 (actual code/test changes responding to the sentence-start technology bypass)
+- Correction: technology/entity detection now uses provider-neutral structural signals (CamelCase/acronym and technical suffix patterns) without relying on an exhaustive vendor blacklist; sentence-start technology identifiers are covered while normal prose/paraphrase remains accepted.
+- Verification: Release build passed with 0 warnings/errors; Release unit tests passed (322) and integration tests passed (172); EF reports no pending model changes; changed-C# format verification and vulnerability audit are clean.
+- Scope guard: no migration, quota/billing/provider change, frontend change or A9 implementation; no additional AI call or provider-specific behavior was introduced.
+- Next: same-task semantic re-review, then one A8 commit/PR/CI cycle.
+
+## 2026-09-11 - A8 corrective iteration 4
+
+- Status: Corrective implementation complete; awaiting the same-task semantic re-review
+- Task/checkpoint: `c2c_a8d4`, corrective implementation iteration 4 (actual code/test changes responding to the open-set technology finding)
+- Correction: added provider-neutral detection for novel capitalized technology-like identifiers (while ignoring normal sentence/prose terms), retained candidate-specific claim protection, and added an Elasticsearch regression alongside the existing RabbitMQ and faithful-paraphrase cases.
+- Verification: Release build passed with 0 warnings/errors; Release unit tests passed (322) and integration tests passed (172); EF reports no pending model changes; changed-C# format verification, vulnerability audit and `git diff --check` are clean.
+- Scope guard: no migration, quota/billing/provider change, frontend change or A9 implementation; no additional AI call or provider-specific behavior was introduced.
+- Next: same-task semantic re-review, then one A8 commit/PR/CI cycle.
 ## 2026-09-11 — B10 Skill Profile
 
 - Status: Implementation complete / Ready for independent review

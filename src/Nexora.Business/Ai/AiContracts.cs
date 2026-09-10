@@ -103,11 +103,18 @@ public sealed record StarReportSummary(
     string WeakestComponent,
     IReadOnlyCollection<string> RecurringIssues,
     IReadOnlyCollection<string> CoachingPriorities);
+public sealed record AnswerCoachingOutput(
+    IReadOnlyCollection<string> Strengths,
+    IReadOnlyCollection<string> Improvements,
+    string ImprovedAnswer);
 public sealed record AnswerEvaluation(
     IReadOnlyCollection<RubricScore> Scores,
     string Feedback,
     StarEvaluation? Star = null,
-    string? ScoreScale = null);
+    string? ScoreScale = null,
+    IReadOnlyCollection<string>? Strengths = null,
+    IReadOnlyCollection<string>? Improvements = null,
+    string? ImprovedAnswer = null);
 public sealed record InterviewReportOutput(
     IReadOnlyCollection<RubricScore> Scores,
     IReadOnlyCollection<string> Strengths,
@@ -137,7 +144,8 @@ public sealed record AiOperationContext(
     bool? ExpectedStar = null,
     string? InterviewType = null,
     int? TargetQuestionCount = null,
-    IReadOnlyDictionary<string, string>? Metadata = null);
+    IReadOnlyDictionary<string, string>? Metadata = null,
+    string? CandidateAnswer = null);
 
 public sealed record AiExecutionResult<T>(
     T Value,

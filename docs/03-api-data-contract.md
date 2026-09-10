@@ -291,14 +291,21 @@ khi evaluation STAR của câu hỏi behavioral trả phí cho thấy thiếu th
 và luôn kế thừa topic/parent rõ ràng. Retry cùng key trả cùng session/question;
 key khác payload trả `409 IDEMPOTENCY_CONFLICT`.
 
-`answer.evaluation` giữ các field generic hiện có và có thêm `star` để frontend render STAR coaching khi phù hợp:
+`answer.evaluation` giữ các field generic hiện có và có thêm coaching theo từng câu trả lời. Các field `strengths`, `improvements` và `improvedAnswer` được tạo trong cùng một `interview.evaluate` call với rubric/STAR; server chỉ lưu output sau khi schema và semantic validation thành công:
 
 ```json
 {
   "scores": [
-    { "criterion": "structure", "score": 70, "evidence": "..." }
+    { "criterion": "structure", "score": 70, "evidence": "..." },
+    { "criterion": "correctness", "score": 75, "evidence": "..." },
+    { "criterion": "completeness", "score": 60, "evidence": "..." },
+    { "criterion": "clarity", "score": 80, "evidence": "..." }
   ],
   "feedback": "...",
+  "scoreScale": "0-100",
+  "strengths": ["Điểm mạnh có bằng chứng trong câu trả lời"],
+  "improvements": ["Bổ sung một ví dụ hoặc kết quả cụ thể nếu có"],
+  "improvedAnswer": "Phiên bản trả lời được diễn đạt rõ hơn nhưng chỉ dùng facts ứng viên đã nêu.",
   "star": {
     "applicable": true,
     "overallScore": 72,
@@ -312,6 +319,14 @@ key khác payload trả `409 IDEMPOTENCY_CONFLICT`.
   }
 }
 ```
+
+`strengths` và `improvements` có 1–3 phần tử, mỗi phần tử không rỗng và tối đa
+500 ký tự; `improvedAnswer` không rỗng và tối đa 4.000 ký tự. Improvements phải
+actionable. Khi có answer gốc, validator yêu cầu coaching có overlap có ý nghĩa
+với answer, giữ nguyên mọi số liệu/công nghệ/thành tích đã có và từ chối facts
+mới (bao gồm số chưa xuất hiện trong answer). Khi thiếu bằng chứng, AI phải
+khuyến nghị ứng viên bổ sung dữ liệu nếu có thay vì tự tạo dữ liệu. Đây là
+coaching trong cùng một AI call, không có rewrite call thứ hai.
 
 Nếu câu hỏi không phù hợp STAR, `star.applicable=false` và các component có thể là `null`/empty. Frontend không parse prose để suy ra điểm STAR.
 

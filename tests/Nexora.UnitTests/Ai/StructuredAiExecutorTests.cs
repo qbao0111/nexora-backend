@@ -371,7 +371,10 @@ public sealed class StructuredAiExecutorTests
         ],
         "Grounded feedback",
         null,
-        scoreScale);
+        scoreScale,
+        ["Grounded answer"],
+        ["Add one concrete example if available"],
+        "Grounded answer with evidence");
 
     private static AiOperationContext ResumeAnalysisContext(string correlationId) => new(
         correlationId,

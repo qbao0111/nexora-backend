@@ -667,12 +667,12 @@ scoreScale
 
 Rules:
 
-- [ ] `strengths` grounded vào answer thật.
-- [ ] `improvements` cụ thể/actionable.
-- [ ] `improvedAnswer` không được tự bịa metric/thành tích/công nghệ mà user chưa cung cấp.
-- [ ] Có thể dùng placeholder coaching khi thiếu evidence: “hãy bổ sung số liệu cụ thể nếu có”.
-- [ ] Không thêm AI call thứ 2 chỉ để rewrite answer.
-- [ ] Structured validators kiểm tra nonblank, max length, grounded constraints hợp lý.
+- [x] `strengths` grounded vào answer thật.
+- [x] `improvements` cụ thể/actionable.
+- [x] `improvedAnswer` không được tự bịa metric/thành tích/công nghệ mà user chưa cung cấp.
+- [x] Có thể dùng placeholder coaching khi thiếu evidence: “hãy bổ sung số liệu cụ thể nếu có”.
+- [x] Không thêm AI call thứ 2 chỉ để rewrite answer.
+- [x] Structured validators kiểm tra nonblank, max length, grounded constraints hợp lý.
 
 ## A9. Interview report production [P0]
 

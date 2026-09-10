@@ -568,7 +568,10 @@ public sealed class DeepSeekAiProviderTests
         ],
         "Grounded feedback.",
         new StarEvaluation(false, null, null, null, null, null, [], [], [], AiOperations.ScoreScale),
-        AiOperations.ScoreScale));
+        AiOperations.ScoreScale,
+        Strengths: ["Clear explanation in the answer"],
+        Improvements: ["Add one concrete example if available"],
+        ImprovedAnswer: "Grounded answer with a clear explanation."));
 
     private static string ValidResumeAnalysisContent() => JsonSerializer.Serialize(new ResumeAnalysisOutput(
         ["Strength"],
