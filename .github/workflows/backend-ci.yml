@@ -75,7 +75,7 @@ jobs:
 
           echo "No known vulnerable NuGet packages detected."
 
-      - name: Verify formatting for changed C# files
+      - name: Verify style and analyzers for changed C# files
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -113,7 +113,8 @@ jobs:
           fi
 
           printf 'Checking format: %s\n' "${changed_files[@]}"
-          dotnet format Nexora.slnx --verify-no-changes --no-restore --include "${changed_files[@]}"
+          dotnet format Nexora.slnx style --verify-no-changes --no-restore --include "${changed_files[@]}"
+          dotnet format Nexora.slnx analyzers --verify-no-changes --no-restore --include "${changed_files[@]}"
 
       - name: Verify tracked repository cleanliness
         shell: bash
