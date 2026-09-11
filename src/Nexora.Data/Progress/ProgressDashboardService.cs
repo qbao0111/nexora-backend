@@ -40,20 +40,33 @@ public sealed class ProgressDashboardService(
         DateTimeOffset windowEnd,
         CancellationToken cancellationToken)
     {
+        if (string.Equals(
+                dbContext.Database.ProviderName,
+                "Microsoft.EntityFrameworkCore.Sqlite",
+                StringComparison.Ordinal))
+        {
+            return await GetWeeklyActivitiesFromSqliteAsync(userId, windowStart, windowEnd, cancellationToken);
+        }
+
         var resumeAnalyses = await dbContext.ResumeAnalyses.AsNoTracking()
             .CountAsync(item => item.UserId == userId && item.Status == PracticeValues.Completed &&
+                                item.CompletedAt != null &&
                                 item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd, cancellationToken);
         var interviews = await dbContext.InterviewSessions.AsNoTracking()
             .CountAsync(item => item.UserId == userId && item.Status == PracticeValues.Completed &&
+                                item.CompletedAt != null &&
                                 item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd, cancellationToken);
         var scenarios = await dbContext.ScenarioAttempts.AsNoTracking()
             .CountAsync(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed &&
+                                item.CompletedAt != null &&
                                 item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd, cancellationToken);
         var starAttempts = await dbContext.StarAttempts.AsNoTracking()
             .CountAsync(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed &&
+                                item.CompletedAt != null &&
                                 item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd, cancellationToken);
         var learningPathActivities = await dbContext.LearningPathActivities.AsNoTracking()
             .CountAsync(item => item.LearningPath.UserId == userId && item.Status == LearningPathValues.Completed &&
+                                item.CompletedAt != null &&
                                 item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd, cancellationToken);
 
         return new ProgressDashboardWeeklyActivitiesView(
@@ -65,6 +78,70 @@ public sealed class ProgressDashboardService(
             scenarios,
             starAttempts,
             learningPathActivities);
+    }
+
+    private async Task<ProgressDashboardWeeklyActivitiesView> GetWeeklyActivitiesFromSqliteAsync(
+        Guid userId,
+        DateTimeOffset windowStart,
+        DateTimeOffset windowEnd,
+        CancellationToken cancellationToken)
+    {
+        var resumeAnalyses = await CountSqliteCompletionsAsync(
+            dbContext.ResumeAnalyses.AsNoTracking()
+                .Where(item => item.UserId == userId && item.Status == PracticeValues.Completed && item.CompletedAt != null)
+                .Select(item => item.CompletedAt),
+            windowStart,
+            windowEnd,
+            cancellationToken);
+        var interviews = await CountSqliteCompletionsAsync(
+            dbContext.InterviewSessions.AsNoTracking()
+                .Where(item => item.UserId == userId && item.Status == PracticeValues.Completed && item.CompletedAt != null)
+                .Select(item => item.CompletedAt),
+            windowStart,
+            windowEnd,
+            cancellationToken);
+        var scenarios = await CountSqliteCompletionsAsync(
+            dbContext.ScenarioAttempts.AsNoTracking()
+                .Where(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed && item.CompletedAt != null)
+                .Select(item => item.CompletedAt),
+            windowStart,
+            windowEnd,
+            cancellationToken);
+        var starAttempts = await CountSqliteCompletionsAsync(
+            dbContext.StarAttempts.AsNoTracking()
+                .Where(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed && item.CompletedAt != null)
+                .Select(item => item.CompletedAt),
+            windowStart,
+            windowEnd,
+            cancellationToken);
+        var learningPathActivities = await CountSqliteCompletionsAsync(
+            dbContext.LearningPathActivities.AsNoTracking()
+                .Where(item => item.LearningPath.UserId == userId && item.Status == LearningPathValues.Completed && item.CompletedAt != null)
+                .Select(item => item.CompletedAt),
+            windowStart,
+            windowEnd,
+            cancellationToken);
+
+        return new ProgressDashboardWeeklyActivitiesView(
+            windowStart,
+            windowEnd,
+            resumeAnalyses + interviews + scenarios + starAttempts + learningPathActivities,
+            resumeAnalyses,
+            interviews,
+            scenarios,
+            starAttempts,
+            learningPathActivities);
+    }
+
+    private static async Task<int> CountSqliteCompletionsAsync(
+        IQueryable<DateTimeOffset?> completionTimes,
+        DateTimeOffset windowStart,
+        DateTimeOffset windowEnd,
+        CancellationToken cancellationToken)
+    {
+        var completedAtValues = await completionTimes.ToListAsync(cancellationToken);
+        return completedAtValues.Count(completedAt =>
+            completedAt is not null && completedAt.Value >= windowStart && completedAt.Value <= windowEnd);
     }
 
     private async Task<NextPracticeRecommendationView?> GetNextRecommendationAsync(

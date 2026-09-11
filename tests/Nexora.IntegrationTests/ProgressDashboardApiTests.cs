@@ -149,6 +149,7 @@ public sealed class ProgressDashboardApiTests
         await SeedLearningPathActivityAsync(factory, owner.UserId, LearningPathValues.Completed, capturedNow);
         await SeedScenarioAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Completed, expectedWeekStart.AddDays(-1));
         await SeedScenarioAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Failed, capturedNow);
+        await SeedScenarioAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Completed, null);
         await SeedScenarioAttemptAsync(factory, other.UserId, PracticeFeatureValues.Completed, capturedNow);
 
         using var response = await ownerClient.GetAsync("/api/v1/progress/dashboard");
