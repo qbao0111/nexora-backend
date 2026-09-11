@@ -551,9 +551,12 @@ public sealed partial class ScenarioStarService(
 
         var completedInterviews = await dbContext.InterviewSessions.AsNoTracking()
             .CountAsync(item => item.UserId == userId && item.Status == PracticeValues.Completed, cancellationToken);
-        var recentScores = await dbContext.InterviewReports.AsNoTracking()
-            .Where(item => item.UserId == userId).OrderByDescending(item => item.CreatedAt).Take(10)
-            .Select(item => new RecentInterviewScore(item.InterviewSessionId, item.OverallScore, item.CreatedAt)).ToArrayAsync(cancellationToken);
+        var recentScoresQuery = dbContext.InterviewReports.AsNoTracking()
+            .Where(item => item.UserId == userId)
+            .Select(item => new RecentInterviewScore(item.InterviewSessionId, item.OverallScore, item.CreatedAt));
+        var recentScores = !dbContext.Database.IsNpgsql()
+            ? (await recentScoresQuery.ToArrayAsync(cancellationToken)).OrderByDescending(item => item.CompletedAt).Take(10).ToArray()
+            : await recentScoresQuery.OrderByDescending(item => item.CompletedAt).Take(10).ToArrayAsync(cancellationToken);
         var avgScore = recentScores.Length > 0 ? (double?)recentScores.Average(item => item.Score) : null;
 
         var starAnswers = await dbContext.InterviewAnswers.AsNoTracking()
@@ -593,14 +596,20 @@ public sealed partial class ScenarioStarService(
         var completedStarAttempts = await dbContext.StarAttempts.CountAsync(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed, cancellationToken);
 
         var recentActivity = new List<RecentActivity>();
-        var recentInterviews = await dbContext.InterviewSessions.AsNoTracking()
-            .Where(item => item.UserId == userId).OrderByDescending(item => item.UpdatedAt).Take(5).ToArrayAsync(cancellationToken);
+        var recentInterviewsQuery = dbContext.InterviewSessions.AsNoTracking().Where(item => item.UserId == userId);
+        var recentInterviews = !dbContext.Database.IsNpgsql()
+            ? (await recentInterviewsQuery.ToArrayAsync(cancellationToken)).OrderByDescending(item => item.UpdatedAt).Take(5).ToArray()
+            : await recentInterviewsQuery.OrderByDescending(item => item.UpdatedAt).Take(5).ToArrayAsync(cancellationToken);
         foreach (var i in recentInterviews) recentActivity.Add(new RecentActivity("interview", i.Id, i.UpdatedAt));
-        var recentScenarioAttempts = await dbContext.ScenarioAttempts.AsNoTracking()
-            .Where(item => item.UserId == userId).OrderByDescending(item => item.UpdatedAt).Take(5).ToArrayAsync(cancellationToken);
+        var recentScenarioAttemptsQuery = dbContext.ScenarioAttempts.AsNoTracking().Where(item => item.UserId == userId);
+        var recentScenarioAttempts = !dbContext.Database.IsNpgsql()
+            ? (await recentScenarioAttemptsQuery.ToArrayAsync(cancellationToken)).OrderByDescending(item => item.UpdatedAt).Take(5).ToArray()
+            : await recentScenarioAttemptsQuery.OrderByDescending(item => item.UpdatedAt).Take(5).ToArrayAsync(cancellationToken);
         foreach (var s in recentScenarioAttempts) recentActivity.Add(new RecentActivity("scenario", s.Id, s.UpdatedAt));
-        var recentStars = await dbContext.StarAttempts.AsNoTracking()
-            .Where(item => item.UserId == userId).OrderByDescending(item => item.UpdatedAt).Take(5).ToArrayAsync(cancellationToken);
+        var recentStarsQuery = dbContext.StarAttempts.AsNoTracking().Where(item => item.UserId == userId);
+        var recentStars = !dbContext.Database.IsNpgsql()
+            ? (await recentStarsQuery.ToArrayAsync(cancellationToken)).OrderByDescending(item => item.UpdatedAt).Take(5).ToArray()
+            : await recentStarsQuery.OrderByDescending(item => item.UpdatedAt).Take(5).ToArrayAsync(cancellationToken);
         foreach (var st in recentStars) recentActivity.Add(new RecentActivity("star", st.Id, st.UpdatedAt));
         recentActivity = recentActivity.OrderByDescending(item => item.At).Take(10).ToList();
 
