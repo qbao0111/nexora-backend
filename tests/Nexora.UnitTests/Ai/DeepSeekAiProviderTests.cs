@@ -321,20 +321,23 @@ public sealed class DeepSeekAiProviderTests
         Assert.Equal("high", RequestBody(handler, 1).RootElement.GetProperty("reasoning_effort").GetString());
     }
 
-    [Fact]
-    public async Task LengthFinishReasonWithUsableJsonIsRejectedBeforeDeserialization()
+    [Theory]
+    [InlineData(AiPurposes.ResumeAnalysis, 4_096)]
+    [InlineData(AiPurposes.ScenarioEvaluate, 4_000)]
+    public async Task LengthFinishReasonWithUsableJsonIsRejectedBeforeDeserialization(string purpose, int maxOutputTokens)
     {
-        var handler = new RecordingHandler(_ => LengthResponse("{\"content\":\"ok\"}", 4_096));
+        var handler = new RecordingHandler(_ => LengthResponse("{\"content\":\"ok\"}", maxOutputTokens));
         using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
         var provider = CreateProvider(handler);
 
         var exception = await Assert.ThrowsAsync<AiProviderException>(() => provider.GenerateStructuredAsync<GeneratedQuestion>(
-            Request(AiPurposes.ResumeAnalysis, schema, maxOutputTokens: 4_096),
+            Request(purpose, schema, maxOutputTokens: maxOutputTokens),
             CancellationToken.None));
 
         Assert.Equal(AiProviderFailureKind.InvalidResponse, exception.Kind);
         Assert.Equal(AiProviderRetryHint.OutputTruncated, exception.RetryHint);
         Assert.Equal(1, handler.Calls);
+        Assert.Equal(maxOutputTokens, RequestBody(handler, 0).RootElement.GetProperty("max_tokens").GetInt32());
     }
 
     [Fact]

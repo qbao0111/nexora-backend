@@ -239,6 +239,76 @@ public sealed class StructuredAiExecutorTests
     }
 
     [Fact]
+    public async Task ScenarioEvaluationRetriesTruncatedFirstAttemptWithinTwoCallBudget()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "truncated",
+            retryHint: AiProviderRetryHint.OutputTruncated));
+        fakeProvider.EnqueueResult(ValidScenarioEvaluation());
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.ScenarioEvaluate,
+            "scenario answer",
+            new AiOperationContext("scenario-truncation-retry"),
+            CancellationToken.None);
+
+        Assert.Equal(72, result.Value.OverallScore);
+        Assert.False(result.RepairUsed);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.All(fakeProvider.Requests, request => Assert.Equal(4_000, request.MaxOutputTokens));
+        Assert.All(fakeProvider.Requests, request => Assert.Null(request.ReasoningEffortOverride));
+    }
+
+    [Fact]
+    public async Task ScenarioEvaluationStopsAfterTwoOutputTruncationsWithoutFabricatedResult()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "truncated 1",
+            retryHint: AiProviderRetryHint.OutputTruncated));
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "truncated 2",
+            retryHint: AiProviderRetryHint.OutputTruncated));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.ScenarioEvaluate,
+            "scenario answer",
+            new AiOperationContext("scenario-truncation-terminal"),
+            CancellationToken.None));
+
+        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.All(fakeProvider.Requests, request => Assert.Equal(4_000, request.MaxOutputTokens));
+    }
+
+    [Fact]
+    public async Task ScenarioEvaluationCompletesNormallyWithinConfiguredBudget()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(ValidScenarioEvaluation());
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.ScenarioEvaluate,
+            "scenario answer",
+            new AiOperationContext("scenario-normal-completion"),
+            CancellationToken.None);
+
+        Assert.Equal(72, result.Value.OverallScore);
+        Assert.Equal(1, result.Attempts);
+        Assert.False(result.RepairUsed);
+        Assert.Equal(1, fakeProvider.CallCount);
+        Assert.Equal(4_000, fakeProvider.Requests[0].MaxOutputTokens);
+    }
+
+    [Fact]
     public async Task FieldBenchmarkResumeAnalysisRetriesOutputTruncationAtLargerBudgetOnlyOnce()
     {
         var fakeProvider = new MockAiProvider();
@@ -512,6 +582,18 @@ public sealed class StructuredAiExecutorTests
         ["Grounded answer"],
         ["Add one concrete example if available"],
         "Grounded answer with evidence");
+
+    private static ScenarioEvaluationResult ValidScenarioEvaluation() => new(
+        72,
+        [
+            new ScenarioDimensionEvaluation("problem_analysis", 80, "Identifies the root cause.", "Structure the diagnosis in explicit steps."),
+            new ScenarioDimensionEvaluation("communication", 70, "Explains the decision clearly.", "State the trade-off before the recommendation.")
+        ],
+        ["The response is grounded in the scenario."],
+        ["The fallback plan is not explicit."],
+        ["Add a measurable fallback and owner."],
+        "The response is clear but should make the fallback measurable.",
+        AiOperations.ScoreScale);
 
     private static AiOperationContext ResumeAnalysisContext(string correlationId) => new(
         correlationId,
