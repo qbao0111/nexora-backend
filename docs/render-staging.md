@@ -66,6 +66,10 @@ The frontend team and stakeholders accept the following constraints of Render Fr
 | **Local Storage Path** | `/tmp/nexora-storage` |
 | **EF Core Migrations** | Pre-run bundle `/app/nexora-migrate` via `scripts/render-entrypoint.sh` |
 
+### Current runtime source of truth
+
+On 2026-09-11, the Render dashboard verified that `nexora-staging` is connected to `main` and live on commit `e25d4022955ad4a097632926ab725044c829cde0`. The dashboard configuration is authoritative for the running service; the branch value in `render.yaml` is only repository reference/configuration and does not prove the deployed commit.
+
 ---
 
 ## Environment & Secrets Configuration

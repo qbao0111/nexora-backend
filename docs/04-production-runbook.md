@@ -5,6 +5,8 @@
 
 This runbook targets .NET 10 LTS / ASP.NET Core 10 / EF Core 10. DEC-01–04 do not block development or integration testing; they must be resolved only before enabling/deploying the affected real production capability.
 
+> **Course MVP scope (2026-09-11):** This runbook remains a future-production reference. Sentry operational monitoring, Sentry release/alert setup and UptimeRobot are intentionally out of scope for the current course MVP. Current troubleshooting uses Render/backend logs, request IDs, API errors, health endpoints, browser devtools and manual E2E tests.
+
 ## Môi trường và secrets
 
 Tạo `development`, `staging`, `production` tách biệt: database, bucket, OAuth redirect URL và payment keys riêng. Chỉ khai báo secret trong dashboard deploy/secret manager:
