@@ -1,8 +1,12 @@
+using Nexora.Api.Observability;
 using Nexora.Business.Common;
 
 namespace Nexora.Api.Infrastructure;
 
-public sealed partial class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
+public sealed partial class ExceptionHandlingMiddleware(
+    RequestDelegate next,
+    ILogger<ExceptionHandlingMiddleware> logger,
+    IApiSentryReporter sentryReporter)
 {
     public async Task InvokeAsync(HttpContext context)
     {
@@ -19,6 +23,15 @@ public sealed partial class ExceptionHandlingMiddleware(RequestDelegate next, IL
                 BusinessErrorKind.Conflict => 409,
                 _ => 503
             };
+            if (exception.Kind == BusinessErrorKind.ExternalFailure)
+            {
+                sentryReporter.Capture(
+                    exception,
+                    context.TraceIdentifier,
+                    context.Request.Method,
+                    context.Request.Path.Value ?? "/",
+                    status);
+            }
             await ApiErrorWriter.WriteAsync(context, status, exception.Code, exception.Message);
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
@@ -28,6 +41,12 @@ public sealed partial class ExceptionHandlingMiddleware(RequestDelegate next, IL
         catch (Exception exception)
         {
             UnhandledFailure(logger, exception, context.TraceIdentifier);
+            sentryReporter.Capture(
+                exception,
+                context.TraceIdentifier,
+                context.Request.Method,
+                context.Request.Path.Value ?? "/",
+                StatusCodes.Status500InternalServerError);
             await ApiErrorWriter.WriteAsync(context, 500, "INTERNAL_ERROR", "Đã xảy ra lỗi. Vui lòng thử lại sau.");
         }
     }

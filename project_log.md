@@ -848,3 +848,25 @@ This log records completed implementation milestones and verification evidence. 
 - Migration impact: None. No EF entity, DbSet, snapshot, or migration changed.
 - FE impact: No frontend code changed. FE may use browser STT but must submit the same confirmed text contract as typed input.
 - Dependencies and deferred decisions: No live AI/STT/audio provider calls. Backend STT abstraction, audio upload/retention, recording consent text, and any provider selection remain deferred; A11 was not started.
+
+## 2026-09-11 — A11 Sentry Observability
+
+- Status: Implementation complete; deterministic verification passed; external alert setup and independent review remain pending
+- Task/branch: `A11` / `feat/a11-sentry-observability`
+- Base: `2a8638cff554eea6be7cd8b35001732e656695a9` (`origin/main`, after A10)
+- API scope: Official `Sentry.AspNetCore` integration captures one explicit event for exceptions that the existing `ExceptionHandlingMiddleware` converts to a safe 500 response; BusinessException 4xx and request-aborted cancellation remain non-issues. The canonical sanitized `TraceIdentifier` is attached as `request_id`, with `service=api` and safe method/path/status tags.
+- Worker scope: Official Sentry logging integration is configured conservatively and `PracticeWorker` explicitly captures one unexpected polling-loop exception per worker cycle while preserving existing logging, reset and backoff behavior; shutdown cancellation is not captured. The safe worker cycle ID is attached as `worker_cycle_id`.
+- Sensitive-data controls: `SendDefaultPii=false`, request bodies/query strings/user context are excluded, request paths are stripped to bounded paths, expected logs/breadcrumbs are disabled, and the before-send sanitizer removes provider/auth/payment/CV/JD/answer/transcript/prompt/response/secret values while retaining exception type/stack and safe operational tags.
+- Environment/release contract: `Sentry:Dsn` and `Sentry:Release` are server-side configuration for both hosts; environment is derived from `Development`/`Staging`/`Production`. Empty DSN remains valid for local tests and does not create a network dependency.
+- Configuration keys: `Sentry__Dsn`, `Sentry__Release` (no real DSN committed).
+- Verification: `dotnet tool restore`; `dotnet restore Nexora.slnx --nologo`; Release solution build passed with 0 warnings/errors; full Release tests passed (353 unit, 221 integration); focused observability tests passed (4 unit, 5 integration); EF reported `No changes have been made to the model since the last migration.`; changed-file format/analyzer verification, NuGet vulnerability audit and `git diff --check` passed.
+- Migration/FE impact: None; no EF entity, DbSet, snapshot or migration changed, and `nexora-fe` was untouched.
+- External alert status: Not configured or verified against a real Sentry project; runbook documents staging/production alert setup for API 5xx and Worker failure spikes.
+- Dependencies: A12 UptimeRobot and A13 broader production configuration hardening remain out of scope.
+
+## 2026-09-11 — A11 review correction
+
+- ExternalFailure handling: API business failures now keep their safe 503 envelope and are captured exactly once with canonical request metadata; expected 4xx failures and request cancellation remain non-events.
+- Host attribution: API and Worker Sentry options now carry default `service=api` / `service=worker` tags, while explicit reporter tags and privacy sanitization remain intact.
+- Release truthfulness: `Sentry:Release` remains an optional server-side release hook for a build/deploy identifier; current staging/production SHA wiring, real Sentry alert delivery, UptimeRobot and A13 hardening are still deferred.
+- Verification scope: deterministic observability regression coverage includes the five expected 4xx kinds, ExternalFailure capture/envelope behavior, host default tags and explicit reporter tags; focused observability tests passed (6 unit, 11 integration) and the full Release suites passed (355 unit, 227 integration). No migration, frontend change, live Sentry call or real DSN was used.

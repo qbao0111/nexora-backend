@@ -2,8 +2,16 @@ using Nexora.Business;
 using Nexora.Data;
 using Nexora.Integrations;
 using Nexora.Worker;
+using Nexora.Worker.Observability;
+using Sentry.Extensions.Logging;
+using Sentry.Extensions.Logging.Extensions.DependencyInjection;
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Services.AddOptions<SentryLoggingOptions>()
+    .Configure<IConfiguration, IHostEnvironment>((options, configuration, environment) =>
+        SentryObservability.Configure(options, environment, configuration));
+builder.Services.AddSentry<SentryLoggingOptions>();
+builder.Services.AddSingleton<IWorkerSentryReporter, WorkerSentryReporter>();
 ProductionSafety.ValidateDevelopmentAdapters(
     builder.Environment.IsProduction(),
     builder.Configuration.GetValue("Features:Ai", true),

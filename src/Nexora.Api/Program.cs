@@ -12,6 +12,7 @@ using Nexora.Api.Authorization;
 using Nexora.Api.Contracts;
 using Nexora.Api.Health;
 using Nexora.Api.Infrastructure;
+using Nexora.Api.Observability;
 using Nexora.Api.Realtime;
 using Nexora.Business;
 using Nexora.Business.Authorization;
@@ -21,6 +22,8 @@ using Nexora.Data.Identity;
 using Nexora.Integrations;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.UseSentry((context, options) =>
+    SentryObservability.Configure(options, context.HostingEnvironment, context.Configuration));
 // Hosting request-start logs include query strings; browser SignalR transports use access_token.
 builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting", LogLevel.Warning);
 builder.Logging.AddFilter("Microsoft.AspNetCore.Http.Connections", LogLevel.Warning);
@@ -33,6 +36,7 @@ builder.Services.AddOptions<RealtimeOptions>().Bind(builder.Configuration.GetSec
     .ValidateOnStart();
 builder.Services.AddHostedService<RealtimeNotificationBroadcaster>();
 builder.Services.AddBusiness();
+builder.Services.AddSingleton<IApiSentryReporter, ApiSentryReporter>();
 builder.Services.AddData(builder.Configuration);
 ProductionSafety.ValidateDevelopmentAdapters(
     builder.Environment.IsProduction(),

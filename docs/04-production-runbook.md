@@ -16,7 +16,8 @@ GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
 AI_PROVIDER_API_KEY
 PAYMENT_PROVIDER_SECRET / PAYMENT_WEBHOOK_SECRET
 STORAGE_* 
-OBSERVABILITY_DSN
+Sentry__Dsn
+Sentry__Release
 ```
 
 Không commit `.env`, CV mẫu có dữ liệu thật hoặc webhook payload production.
@@ -40,11 +41,22 @@ Không commit `.env`, CV mẫu có dữ liệu thật hoặc webhook payload pro
 
 - Mỗi request/job/event có `requestId`/`correlationId`.
 - Ghi structured logs: actor, resource, event, duration, error code; không ghi CV, token hoặc nội dung nhạy cảm nguyên văn.
+- API và Worker dùng Sentry .NET integration với cùng bộ biến `Sentry__Dsn` và `Sentry__Release` (secret manager/deploy environment, không commit). `Development`/`Staging`/`Production` được lấy từ host environment; `service` là `api` hoặc `worker`.
+- `SendDefaultPii` luôn bị ép `false`. Request body, query string, Authorization/Cookie, provider payload, CV/JD, answer/transcript, prompt/response và user context bị loại khỏi Sentry. Khi điều tra API, tìm event bằng tag `request_id` và route/method an toàn.
+- Không có DSN vẫn là cấu hình hợp lệ cho Development/Testing; SDK tắt và không tạo network dependency. Sentry không thay thế log/health hiện có.
 - Alert: API 5xx > 2%, queue lag, AI failure, webhook verify fail, payment pending bất thường, quota transaction fail.
 - Dashboard theo dõi: latency, error rate, AI cost/job, payment conversion, job success rate.
 - Poll `/api/v1/health/operations`; trạng thái `Degraded` nghĩa là ít nhất một ngưỡng `OperationsHealth` bị vượt: queue lag, payment pending hoặc recent job/deletion failure. Route chỉ trả trạng thái tổng quát, không lộ count/ID ra response mặc định.
 - Log hoàn tất request gồm request ID, actor ID, method, path, status và duration; job/payment log chỉ chứa correlation/resource IDs, outcome, duration và exception type, không chứa body, CV/JD/transcript, token hoặc raw provider error.
 - Alert delivery/dashboard backend cụ thể được cấu hình cùng hạ tầng đã duyệt theo DEC-04; source hiện cung cấp vendor-neutral structured signals và health state.
+
+### Thiết lập và kiểm tra alert Sentry (staging/production)
+
+1. Tạo project Sentry cho backend .NET trong tổ chức đã được phê duyệt; lấy DSN bằng secret manager và đặt cùng `Sentry__Dsn` cho API/Worker.
+2. Đặt `Sentry__Release` là cùng một build/deploy identifier cho hai process. Không đặt environment từ client; host environment tự tạo `Development`, `Staging` hoặc `Production`.
+3. Tạo issue alert lọc tag `service:api` cho unhandled error/HTTP 5xx và tag `service:worker` cho worker failure spike. Chọn ngưỡng theo traffic thực tế, không dùng ngưỡng giả trong code.
+4. Gây một lỗi có kiểm soát ở staging, kiểm tra event có `service`, `environment`, `release`, `request_id` (API), đồng thời xác nhận không có body, query, header, cookie hay nội dung CV/answer/secret. Chỉ đánh dấu alert đã cấu hình sau khi người vận hành xác nhận delivery.
+5. Nếu Sentry không truy cập được, dùng `request_id` với structured host logs, `/api/v1/health/operations`, database/job status và dashboard provider để điều tra; không bật log raw payload để bù thiếu.
 
 ## Performance baseline để test staging
 
