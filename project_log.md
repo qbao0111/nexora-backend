@@ -2,6 +2,22 @@
 
 This log records completed implementation milestones and verification evidence. It must never contain credentials or other secrets.
 
+## 2026-09-11 — Course MVP scope normalization
+
+- Status: Scope decision recorded; documentation normalized for review
+- Owner: Codex / backend planning
+- Branch: `docs/normalize-course-mvp-scope`
+- Current backend main: `e25d4022955ad4a097632926ab725044c829cde0`
+- Decision: A11 Sentry operational monitoring and A12 uptime monitoring are intentionally dropped from the university course MVP. This is a scope decision, not a delivery failure: expected user volume is small, the product is focused on demo/staging, and operational setup, release management, alert routing and on-call workflows cost more than they add at this stage.
+- Current troubleshooting baseline: Render logs, backend structured logs, `requestId`, API error code/message, health endpoints, browser devtools/network and manual E2E tests are sufficient. No enterprise-grade observability claim is made.
+- A11 reality: A11 code is already merged into `main` and may remain because it is safe with no DSN. Operational configuration, release wiring and external Sentry verification are stopped; no new Sentry work or controlled test endpoint is planned.
+- A12 reality: UptimeRobot, external monitors, alert thresholds, notification routing and status pages are cancelled. Existing `/health/live` and `/api/v1/health` endpoints remain useful for Render/staging.
+- A13 reality: A13 is reduced to minimal staging/deployment configuration: CORS, safe-enough JWT settings, database connectivity, R2/Resend where required, FE-to-BE connectivity, successful staging startup, health checks, secret hygiene and documentation that matches the actual runtime. Sentry DSN/release and uptime monitoring are not A13 requirements.
+- Temporary Sentry verification: cancelled before deployment. The unmerged `test/sentry-staging-verification` branch (Commit A `f6d5cac87f9070069cf9dba7f827910ed6e4aa16`) and `/api/v1/internal/sentry-test` were deleted; no temporary endpoint reached `main` or the verified staging runtime.
+- Render runtime truth: The Render dashboard verified service `nexora-staging` is connected to `main` and live on `e25d402`. The repository `render.yaml` branch value was not used as runtime evidence and was not changed in this update.
+- PR #63: Still open at `01a0ef6814b1613d1a643fb9c403a7a12bf9e336`; do not merge automatically. Recommend closing/superseding it if most production hardening is now unnecessary, or later rewriting it into a small minimal staging-config PR.
+- Next engineering focus: (1) finish frontend A6–A10 integration; (2) integrate remaining user-facing B workstream features; (3) run full E2E; (4) fix integration bugs; (5) complete minimal staging configuration; (6) demo readiness.
+
 ## 2026-09-11 — Remove ENDOFLINE CI gate (completed)
 
 - Status: Completed
