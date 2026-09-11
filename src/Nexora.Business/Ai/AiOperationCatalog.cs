@@ -1184,7 +1184,6 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
     public override string SchemaVersion => "interview-report-v2";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 6_000;
-    public override int MaxAttempts => 1;
 
     public override JsonDocument OutputSchema { get; } = JsonDocument.Parse("""
         {

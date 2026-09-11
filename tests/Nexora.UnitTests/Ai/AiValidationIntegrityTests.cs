@@ -124,9 +124,9 @@ public sealed class AiValidationIntegrityTests
     }
 
     [Fact]
-    public void InterviewReportUsesOneProviderAttempt()
+    public void InterviewReportUsesExecutorOwnedRetryBudget()
     {
-        Assert.Equal(1, AiOperations.InterviewReport.MaxAttempts);
+        Assert.Equal(2, AiOperations.InterviewReport.MaxAttempts);
     }
 
     [Fact]

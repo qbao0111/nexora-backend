@@ -1053,7 +1053,7 @@ public sealed class PracticeApiTests
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        Assert.Equal(1, aiProvider.GetCallCount(AiPurposes.InterviewReport));
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewReport));
         Assert.Equal(PracticeValues.Completing, (await db.InterviewSessions.SingleAsync(item => item.Id == interviewId)).Status);
         Assert.Equal(0, await db.InterviewReports.CountAsync(item => item.InterviewSessionId == interviewId));
     }
