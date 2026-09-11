@@ -41,6 +41,10 @@ public sealed class PracticeApiTests
 
         var answer1 = await AnswerAsync(client, interviewId, q1.GetProperty("id").GetGuid(), "Tôi giới thiệu kinh nghiệm của mình.", "a7-free-a1");
         var q2 = answer1.GetProperty("nextQuestion");
+        var afterFirstContinuation = answer1.GetProperty("continuation");
+        Assert.Equal(InterviewContinuationValues.InProgress, afterFirstContinuation.GetProperty("state").GetString());
+        Assert.False(afterFirstContinuation.GetProperty("canFinishNow").GetBoolean());
+        Assert.False(afterFirstContinuation.GetProperty("canUpgradeAndContinue").GetBoolean());
         Assert.Equal(InterviewQuestionValues.Primary, q2.GetProperty("kind").GetString());
         Assert.Equal(InterviewQuestionValues.BehavioralStar, q2.GetProperty("topic").GetString());
         Assert.Equal(JsonValueKind.Null, q2.GetProperty("parentQuestionId").ValueKind);
@@ -53,6 +57,7 @@ public sealed class PracticeApiTests
         Assert.Equal(JsonValueKind.Null, q3.GetProperty("parentQuestionId").ValueKind);
         Assert.False(answer2.GetProperty("isComplete").GetBoolean());
         Assert.Equal(InterviewContinuationValues.InProgress, answer2.GetProperty("continuation").GetProperty("state").GetString());
+        Assert.True(answer2.GetProperty("continuation").GetProperty("canFinishNow").GetBoolean());
         Assert.False(answer2.GetProperty("continuation").GetProperty("canUpgradeAndContinue").GetBoolean());
         Assert.Contains("[motivation_role_fit]", q3.GetProperty("content").GetString(), StringComparison.Ordinal);
 
@@ -513,6 +518,11 @@ public sealed class PracticeApiTests
         Assert.NotEmpty(report.GetProperty("strengths").EnumerateArray());
         Assert.NotEmpty(report.GetProperty("gaps").EnumerateArray());
         Assert.NotEmpty(report.GetProperty("actionPlan").EnumerateArray());
+        var sample = report.GetProperty("sample");
+        Assert.Equal(3, sample.GetProperty("answeredQuestions").GetInt32());
+        Assert.Equal(3, sample.GetProperty("issuedQuestions").GetInt32());
+        Assert.True(sample.GetProperty("isPartial").GetBoolean());
+        Assert.Contains("partial sample", report.GetProperty("disclaimer").GetString(), StringComparison.OrdinalIgnoreCase);
         var starSummary = report.GetProperty("starSummary");
         Assert.Equal(1, starSummary.GetProperty("applicableAnswers").GetInt32());
         Assert.Equal("result", starSummary.GetProperty("weakestComponent").GetString());
@@ -539,12 +549,118 @@ public sealed class PracticeApiTests
     }
 
     [Fact]
+    public async Task PartialReportUsesAnsweredTranscriptAndPersistedAnswerCoaching()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "partial-report-start");
+        await ProcessJobsAsync(factory);
+
+        var active = await GetInterviewAsync(client, interviewId);
+        var firstQuestion = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        var firstResult = await AnswerAsync(client, interviewId, firstQuestion, "First grounded answer.", "partial-report-answer-one");
+        var secondQuestion = firstResult.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        var secondResult = await AnswerAsync(client, interviewId, secondQuestion, "Second grounded answer.", "partial-report-answer-two");
+        Assert.Equal(InterviewContinuationValues.InProgress, secondResult.GetProperty("continuation").GetProperty("state").GetString());
+        Assert.True(secondResult.GetProperty("continuation").GetProperty("canFinishNow").GetBoolean());
+        Assert.False(secondResult.GetProperty("continuation").GetProperty("canUpgradeAndContinue").GetBoolean());
+
+        await CompleteAsync(client, interviewId, "partial-report-complete");
+        await ProcessJobsAsync(factory);
+
+        using var reportResponse = await client.GetAsync($"/api/v1/interviews/{interviewId}/report");
+        Assert.Equal(HttpStatusCode.OK, reportResponse.StatusCode);
+        var report = await DataAsync(reportResponse);
+        var sample = report.GetProperty("sample");
+        Assert.Equal(2, sample.GetProperty("answeredQuestions").GetInt32());
+        Assert.Equal(3, sample.GetProperty("issuedQuestions").GetInt32());
+        Assert.True(sample.GetProperty("isPartial").GetBoolean());
+        Assert.Contains("partial sample", report.GetProperty("disclaimer").GetString(), StringComparison.OrdinalIgnoreCase);
+
+        var reviews = report.GetProperty("questionReviews").EnumerateArray().ToArray();
+        Assert.Equal(2, reviews.Length);
+        Assert.All(reviews, review =>
+        {
+            Assert.Equal(JsonValueKind.Null, review.GetProperty("parentQuestionId").ValueKind);
+            Assert.NotEmpty(review.GetProperty("rubric").EnumerateArray());
+            Assert.NotEmpty(review.GetProperty("strengths").EnumerateArray());
+            Assert.NotEmpty(review.GetProperty("improvements").EnumerateArray());
+            Assert.False(string.IsNullOrWhiteSpace(review.GetProperty("suggestedImprovedAnswer").GetString()));
+        });
+        Assert.Equal(2, report.GetProperty("suggestedImprovedAnswers").GetArrayLength());
+
+        Assert.Equal(1, aiProvider.GetCallCount(AiPurposes.InterviewReport));
+        var reportInvocation = aiProvider.Invocations.Single(item => item.Purpose == AiPurposes.InterviewReport);
+        Assert.DoesNotContain("A: \n", reportInvocation.UntrustedInput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DuplicateReportDeliveryLeavesOneReportAndOneCompletionEvent()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "duplicate-report-start");
+        await ProcessJobsAsync(factory);
+
+        var active = await GetInterviewAsync(client, interviewId);
+        var first = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        var firstResult = await AnswerAsync(client, interviewId, first, "First grounded answer.", "duplicate-report-answer-one");
+        var second = firstResult.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        var secondResult = await AnswerAsync(client, interviewId, second, "Second grounded answer.", "duplicate-report-answer-two");
+        var third = secondResult.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        await AnswerAsync(client, interviewId, third, "Third grounded answer.", "duplicate-report-answer-three");
+        await CompleteAsync(client, interviewId, "duplicate-report-complete");
+        await ProcessJobsAsync(factory);
+
+        var reportCalls = aiProvider.GetCallCount(AiPurposes.InterviewReport);
+        var duplicateJobId = Guid.NewGuid();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            db.OutboxEvents.Add(new OutboxEvent
+            {
+                Id = duplicateJobId,
+                Type = "InterviewReportRequested",
+                AggregateType = "interview",
+                AggregateId = interviewId,
+                Payload = JsonSerializer.Serialize(new { aggregateId = interviewId }, JsonOptions),
+                Status = BillingValues.Pending,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await ProcessJobsAsync(factory);
+
+        using var finalScope = factory.Services.CreateScope();
+        var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(reportCalls, aiProvider.GetCallCount(AiPurposes.InterviewReport));
+        Assert.Equal(1, await finalDb.InterviewReports.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(1, await finalDb.RealtimeNotifications.CountAsync(item => item.ResourceId == interviewId && item.Status == PracticeValues.Completed));
+        Assert.Equal(BillingValues.Processed, (await finalDb.OutboxEvents.SingleAsync(item => item.Id == duplicateJobId)).Status);
+    }
+
+    [Fact]
     public async Task ReportStarSummaryMergesPrimaryAndFollowUpEvidenceAtStoryLevel()
     {
         var report = await RunScriptedStarInterviewV2Async(
             Star(90, 85, 70, 95),
             Star(20, 10, 96, 30),
             "star-story-strongest-evidence");
+        var sample = report.GetProperty("sample");
+        Assert.Equal(4, sample.GetProperty("answeredQuestions").GetInt32());
+        Assert.Equal(4, sample.GetProperty("issuedQuestions").GetInt32());
+        Assert.False(sample.GetProperty("isPartial").GetBoolean());
+        Assert.Equal(4, report.GetProperty("questionReviews").GetArrayLength());
         var summary = report.GetProperty("starSummary");
         var averages = summary.GetProperty("componentAverages");
 
@@ -857,6 +973,13 @@ public sealed class PracticeApiTests
         var thirdQuestion = afterSecondAnswer.GetProperty("questions").EnumerateArray().Last().GetProperty("id").GetGuid();
         await AnswerAsync(client, interviewId, thirdQuestion, "Third primary answer.", "report-answer-three");
         await CompleteAsync(client, interviewId, "report-complete-one");
+        using (var processingResponse = await client.GetAsync($"/api/v1/interviews/{interviewId}/report"))
+        {
+            var processingBody = await processingResponse.Content.ReadAsStringAsync();
+            Assert.True(processingResponse.StatusCode == HttpStatusCode.Conflict, processingBody);
+            using var processingDocument = JsonDocument.Parse(processingBody);
+            Assert.Equal("INTERVIEW_REPORT_PROCESSING", processingDocument.RootElement.GetProperty("error").GetProperty("code").GetString());
+        }
         await ProcessJobsAsync(factory);
 
         using (var scope = factory.Services.CreateScope())
@@ -870,7 +993,16 @@ public sealed class PracticeApiTests
             Assert.Equal("active", (await db.RealtimeNotifications.SingleAsync(item => item.ResourceId == interviewId)).Status);
         }
 
-        await CompleteAsync(client, interviewId, "report-complete-retry");
+        using (var failedResponse = await client.GetAsync($"/api/v1/interviews/{interviewId}/report"))
+        {
+            var failedBody = await failedResponse.Content.ReadAsStringAsync();
+            Assert.True(failedResponse.StatusCode == HttpStatusCode.Conflict, failedBody);
+            using var failedDocument = JsonDocument.Parse(failedBody);
+            Assert.Equal("INTERVIEW_REPORT_FAILED", failedDocument.RootElement.GetProperty("error").GetProperty("code").GetString());
+        }
+
+        await RetryReportAsync(client, interviewId, "report-retry-one");
+        await RetryReportAsync(client, interviewId, "report-retry-one");
         ai.FailReport = false;
         await ProcessJobsAsync(factory);
         var completed = await GetInterviewAsync(client, interviewId);
@@ -936,6 +1068,14 @@ public sealed class PracticeApiTests
         using var response = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         return (await DataAsync(response)).GetProperty("id").GetGuid();
+    }
+
+    private static async Task RetryReportAsync(HttpClient client, Guid interviewId, string key)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/report/retry");
+        request.Headers.Add("Idempotency-Key", key);
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
     }
 
     private static async Task<JsonElement> AnswerAsync(HttpClient client, Guid interviewId, Guid questionId, string content, string key)

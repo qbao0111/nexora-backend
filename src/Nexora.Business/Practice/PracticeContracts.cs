@@ -407,6 +407,28 @@ public sealed record InterviewContinuationView(
     string State,
     bool CanFinishNow,
     bool CanUpgradeAndContinue);
+public sealed record InterviewQuestionReviewView(
+    Guid QuestionId,
+    int Sequence,
+    string Kind,
+    string Topic,
+    Guid? ParentQuestionId,
+    string Question,
+    string Answer,
+    IReadOnlyCollection<RubricScore> Rubric,
+    string Feedback,
+    StarEvaluation? Star,
+    IReadOnlyCollection<string> Strengths,
+    IReadOnlyCollection<string> Improvements,
+    string? SuggestedImprovedAnswer);
+public sealed record SuggestedImprovedAnswerView(
+    Guid QuestionId,
+    int Sequence,
+    string Answer);
+public sealed record ReportSampleView(
+    int AnsweredQuestions,
+    int IssuedQuestions,
+    bool IsPartial);
 public sealed record ReportView(
     Guid Id,
     Guid InterviewId,
@@ -417,7 +439,10 @@ public sealed record ReportView(
     object ActionPlan,
     string Disclaimer,
     DateTimeOffset CreatedAt,
-    object? StarSummary = null);
+    object? StarSummary = null,
+    IReadOnlyCollection<InterviewQuestionReviewView>? QuestionReviews = null,
+    IReadOnlyCollection<SuggestedImprovedAnswerView>? SuggestedImprovedAnswers = null,
+    ReportSampleView? Sample = null);
 public sealed record DashboardView(object? Billing, IReadOnlyCollection<InterviewSummary> Interviews, IReadOnlyCollection<ReportSummary> Reports);
 public sealed record InterviewSummary(Guid Id, string Role, string Status, DateTimeOffset UpdatedAt);
 public sealed record ReportSummary(Guid Id, Guid InterviewId, int OverallScore, DateTimeOffset CreatedAt);
@@ -437,6 +462,7 @@ public interface IPracticeService
     Task<AnswerResult> SubmitAnswerAsync(Guid userId, Guid interviewId, Guid questionId, string content, int? durationSeconds, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> ContinueInterviewAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> CompleteInterviewAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
+    Task<InterviewView> RetryReportAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
     Task<ReportView> GetReportAsync(Guid userId, Guid interviewId, CancellationToken cancellationToken);
     Task<DashboardView> GetDashboardAsync(Guid userId, CancellationToken cancellationToken);
 }

@@ -49,7 +49,7 @@ public sealed class OpenApiTests
         Assert.False(paths.GetProperty("/api/v1/plans").GetProperty("get").TryGetProperty("security", out _));
         foreach (var path in new[] { "/api/v1/checkout-sessions", "/api/v1/resume-analyses", "/api/v1/interviews",
                      "/api/v1/interviews/{id}/answers", "/api/v1/interviews/{id}/complete", "/api/v1/me/deletion-requests",
-                     "/api/v1/dev/resume-analysis" })
+                     "/api/v1/interviews/{id}/report/retry", "/api/v1/dev/resume-analysis" })
         {
             var header = Assert.Single(paths.GetProperty(path).GetProperty("post").GetProperty("parameters").EnumerateArray(),
                 parameter => parameter.GetProperty("name").GetString() == "Idempotency-Key");

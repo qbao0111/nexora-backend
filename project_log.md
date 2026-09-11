@@ -788,6 +788,20 @@ This log records completed implementation milestones and verification evidence. 
 - Dependencies/blockers: No hosted CI or Pull Request was created. Independent review remains required; B11 was not started.
 - No live AI, R2, Resend, payment, production database or production service calls were made.
 
+## 2026-09-11 - A9 Production Interview Report
+
+- Status: Implementation complete; deterministic verification green; manual ChatGPT review pending
+- Owner: Backend workstream A
+- Task/branch: `A9` / `feat/a9-interview-report-production`
+- Base: `00d34e5657b63439d494d353e4a593802891081a` (`main` after A8)
+- Scope: Durable interview reports for two-answer partial sessions, three-answer free sessions, and longer paid sessions. Reports synthesize only answered interview questions, expose sample metadata and a partial-session disclaimer, and provide per-question reviews plus suggested improved answers projected from persisted A8 coaching.
+- Failure/retry: Report processing failures leave the interview in `completing`; GET distinguishes processing, failed/retryable, and unavailable states. `POST /api/v1/interviews/{id}/report/retry` is owner-scoped, free, idempotent, and queues at most one pending report job without another interview/quota reservation.
+- Durability/concurrency: The existing unique report-per-interview constraint is reused. Session row locking, short finalization transactions, pending-job checks, and duplicate-delivery handling ensure one durable report and one completed realtime transition; `completed` is persisted only with a valid report.
+- AI contract: `interview.report` uses strict canonical rubric/section validation, one provider attempt, bounded output, and versioned provenance. It does not add a nested retry or a second coaching/rewrite call; persisted `interview.evaluate` coaching is reused for question-level report data.
+- Files/modules: `PracticeService`, `PracticeContracts`, `InterviewsController`, OpenAPI idempotency metadata, `AiOperationCatalog`, `StructuredAiExecutor`, focused interview/report and AI validation tests, API contract documentation, and the A9 implementation checklist.
+- Verification: Release build passed with 0 warnings/errors; 332 unit tests and 191 integration tests passed; focused report/AI/OpenAPI regressions passed; EF reported no pending model changes; changed-file style and analyzer verification passed; NuGet vulnerability audit reported no vulnerable packages; `git diff --check` passed. Tests use deterministic providers/SQLite and no live AI or production provider calls.
+- Migration impact: None; existing interview/report persistence and migration chain are unchanged.
+- Dependencies and risks: Frontend is untouched and must consume the new optional report projections. Manual independent review remains required for report grounding, transaction boundaries, duplicate-worker behavior, and failure/retry semantics; A10 was not started.
 ## 2026-09-11 — B11 Learning Path
 
 - Status: Implementation complete / Ready for independent review

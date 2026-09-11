@@ -27,6 +27,82 @@ public sealed class StructuredAiExecutorTests
     }
 
     [Fact]
+    public async Task InterviewReportRepairsRepairableSemanticFailureOnSecondAttempt()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(InvalidInterviewReport());
+        fakeProvider.EnqueueResult(ValidInterviewReport());
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewReport,
+            "official interview transcript",
+            InterviewReportContext("I debugged the API."),
+            CancellationToken.None);
+
+        Assert.True(result.RepairUsed);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Contains("report.strengths_invalid", fakeProvider.Requests[1].Instructions);
+    }
+
+    [Fact]
+    public async Task InterviewReportStopsAfterTwoInvalidAttemptsWithoutThirdCall()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(InvalidInterviewReport());
+        fakeProvider.EnqueueResult(InvalidInterviewReport());
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.InterviewReport,
+            "official interview transcript",
+            InterviewReportContext("I debugged the API."),
+            CancellationToken.None));
+
+        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
+        Assert.Equal(2, fakeProvider.CallCount);
+    }
+
+    [Fact]
+    public async Task InterviewReportValidFirstAttemptUsesOneProviderCall()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(ValidInterviewReport());
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewReport,
+            "official interview transcript",
+            InterviewReportContext("I debugged the API."),
+            CancellationToken.None);
+
+        Assert.False(result.RepairUsed);
+        Assert.Equal(1, result.Attempts);
+        Assert.Equal(1, fakeProvider.CallCount);
+    }
+
+    [Fact]
+    public async Task InterviewReportRepairsGroundingFailureOnSecondAttempt()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(ValidInterviewReport("I migrated Kubernetes workloads."));
+        fakeProvider.EnqueueResult(ValidInterviewReport());
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewReport,
+            "official interview transcript",
+            InterviewReportContext("I debugged the API."),
+            CancellationToken.None);
+
+        Assert.True(result.RepairUsed);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Contains("report.rubric_evidence_ungrounded", fakeProvider.Requests[1].Instructions);
+    }
+
+    [Fact]
     public async Task ExecuteAsyncRepairsSemanticFailureOnSecondAttempt()
     {
         var fakeProvider = new MockAiProvider();
@@ -361,6 +437,33 @@ public sealed class StructuredAiExecutorTests
         Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
         Assert.Equal(2, fakeProvider.CallCount);
     }
+
+    private static InterviewReportOutput ValidInterviewReport(string evidence = "I debugged the API.") => new(
+        [
+            new RubricScore("correctness", 80, evidence),
+            new RubricScore("structure", 80, evidence),
+            new RubricScore("completeness", 80, evidence),
+            new RubricScore("clarity", 80, evidence)
+        ],
+        ["I debugged the API."],
+        ["Add concrete evidence if available."],
+        ["Add concrete evidence if available."],
+        AiOperations.ScoreScale);
+
+    private static InterviewReportOutput InvalidInterviewReport() => new(
+        [
+            new RubricScore("correctness", 80, "I debugged the API."),
+            new RubricScore("structure", 80, "I debugged the API."),
+            new RubricScore("completeness", 80, "I debugged the API."),
+            new RubricScore("clarity", 80, "I debugged the API.")
+        ],
+        [],
+        ["Add concrete evidence if available."],
+        ["Add concrete evidence if available."],
+        AiOperations.ScoreScale);
+
+    private static AiOperationContext InterviewReportContext(string transcript) =>
+        new("interview-report-retry", GroundingTranscript: transcript);
 
     private static AnswerEvaluation TechnicalEvaluation(string? scoreScale) => new(
         [
