@@ -703,11 +703,14 @@ P0 có thể để FE/browser speech xử lý nếu ổn.
 
 Backend:
 
-- [ ] Canonical answer luôn là **text user đã xác nhận**.
-- [ ] Không chấm raw transcript nếu user đã edit.
-- [ ] Không lưu audio mặc định.
+- [x] Canonical answer luôn là **text user đã xác nhận**.
+- [x] Không chấm raw transcript nếu user đã edit.
+- [x] Không lưu audio mặc định.
 - [ ] Nếu sau này thêm STT backend: tạo `ISpeechToTextProvider`, không coupling interview service vào provider cụ thể.
 - [ ] Audio upload nếu có phải opt-in + retention rõ.
+
+The backend contract is text-only and browser STT is an input aid; backend STT,
+audio upload, and audio retention remain deferred until separately approved.
 
 ---
 

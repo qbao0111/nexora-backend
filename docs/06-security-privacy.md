@@ -1,7 +1,7 @@
 # Security and Privacy Specification — Nexora
 
 **Status:** Approved security baseline; retention/legal decision deferred  
-**Last updated:** 2026-08-21
+**Last updated:** 2026-09-11
 
 ## 1. Dữ liệu và mức nhạy cảm
 
@@ -12,6 +12,12 @@
 | Audio/video | Highly sensitive | Disabled by default; explicit consent, lifecycle policy, no public URL. |
 | Payment references | Financial metadata | Không lưu card data; chỉ provider IDs/status; webhook verify. |
 | Secret/token | Critical | Secret manager only, never log/client/source. |
+
+A10 keeps voice input browser-side: microphone audio and an unconfirmed/raw STT
+transcript are not sent to or stored by the backend. Only the user-confirmed
+text is submitted as the ordinary interview answer. Any future backend STT or
+audio retention requires a separate provider, consent, lifecycle, and retention
+decision.
 
 ## 2. Threat model và mitigation
 
