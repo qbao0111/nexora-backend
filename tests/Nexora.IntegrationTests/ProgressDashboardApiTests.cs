@@ -67,6 +67,8 @@ public sealed class ProgressDashboardApiTests
         using var response = await client.GetAsync("/api/v1/progress/dashboard");
         var data = await DataAsync(response);
         var readiness = data.GetProperty("readiness");
+        using var legacy = await client.GetAsync("/api/v1/progress");
+        var legacyData = await DataAsync(legacy);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(JsonValueKind.Null, readiness.GetProperty("score").ValueKind);
@@ -78,6 +80,7 @@ public sealed class ProgressDashboardApiTests
         Assert.Equal(0, data.GetProperty("weeklyCompletedActivities").GetProperty("total").GetInt32());
         Assert.Null(data.GetProperty("nextRecommendedPractice").GetString());
         Assert.Equal(0, data.GetProperty("historicalStats").GetProperty("completedInterviews").GetInt32());
+        Assert.Equal(0, legacyData.GetProperty("completedInterviews").GetInt32());
     }
 
     [Fact]
@@ -201,12 +204,13 @@ public sealed class ProgressDashboardApiTests
     [Fact]
     public async Task RepeatedDashboardReadsDoNotMutateLearningPathRows()
     {
-        using var factory = NewFakeFactory(Profile(), Historical(), new FixedRecommendationService(null));
+        var now = DateTimeOffset.UtcNow;
+        using var factory = NewFakeFactory(Profile(), Historical(), new FixedRecommendationService(null), new FixedTimeProvider(now));
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
         var account = await RegisterAsync(client);
         Authorize(client, account);
-        await SeedLearningPathActivityAsync(factory, account.UserId, LearningPathValues.Completed, DateTimeOffset.UtcNow);
+        await SeedLearningPathActivityAsync(factory, account.UserId, LearningPathValues.Completed, now);
 
         using var first = await client.GetAsync("/api/v1/progress/dashboard");
         using var second = await client.GetAsync("/api/v1/progress/dashboard");
@@ -224,7 +228,8 @@ public sealed class ProgressDashboardApiTests
     private static NexoraApiFactory NewFakeFactory(
         SkillProfileView profile,
         ProgressView historical,
-        INextPracticeRecommendationService? recommendation = null) =>
+        INextPracticeRecommendationService? recommendation = null,
+        TimeProvider? timeProvider = null) =>
         new(new Dictionary<string, string?>(), services =>
         {
             services.RemoveAll<IProgressService>();
@@ -235,6 +240,11 @@ public sealed class ProgressDashboardApiTests
             {
                 services.RemoveAll<INextPracticeRecommendationService>();
                 services.AddSingleton<INextPracticeRecommendationService>(recommendation);
+            }
+            if (timeProvider is not null)
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton(timeProvider);
             }
         });
 
@@ -472,6 +482,11 @@ public sealed class ProgressDashboardApiTests
     private sealed class FixedRecommendationService(NextPracticeRecommendationView? view) : INextPracticeRecommendationService
     {
         public Task<NextPracticeRecommendationView?> GetAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult(view);
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
 }

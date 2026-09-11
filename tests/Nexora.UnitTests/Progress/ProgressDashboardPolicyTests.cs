@@ -143,12 +143,17 @@ public sealed class ProgressDashboardPolicyTests
     }
 
     [Fact]
-    public void UtcWeekStartsOnMondayAtMidnight()
+    public void UtcWeekStartHandlesMondaySundayAndOffsets()
     {
-        var weekStart = ProgressDashboardPolicy.GetUtcWeekStart(
-            new DateTimeOffset(2026, 9, 16, 10, 0, 0, TimeSpan.FromHours(7)));
+        var cases = new[]
+        {
+            (new DateTimeOffset(2026, 9, 14, 0, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 9, 14, 0, 0, 0, TimeSpan.Zero)),
+            (new DateTimeOffset(2026, 9, 20, 23, 59, 59, TimeSpan.FromHours(7)), new DateTimeOffset(2026, 9, 14, 0, 0, 0, TimeSpan.Zero)),
+            (new DateTimeOffset(2026, 9, 16, 10, 0, 0, TimeSpan.FromHours(7)), new DateTimeOffset(2026, 9, 14, 0, 0, 0, TimeSpan.Zero))
+        };
 
-        Assert.Equal(new DateTimeOffset(2026, 9, 14, 0, 0, 0, TimeSpan.Zero), weekStart);
+        foreach (var (input, expected) in cases)
+            Assert.Equal(expected, ProgressDashboardPolicy.GetUtcWeekStart(input));
     }
 
     private static SkillProfileCompetency Competency(
