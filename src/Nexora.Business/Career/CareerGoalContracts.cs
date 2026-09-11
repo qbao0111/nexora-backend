@@ -98,4 +98,5 @@ public interface ICareerGoalService
     Task<IReadOnlyCollection<CareerGoalView>> GetManyAsync(Guid userId, CancellationToken cancellationToken);
     Task<CareerGoalView> GetAsync(Guid userId, Guid careerGoalId, CancellationToken cancellationToken);
     Task<CareerGoalView> UpdateAsync(Guid userId, Guid careerGoalId, UpdateCareerGoalCommand command, CancellationToken cancellationToken);
+    Task DeleteAsync(Guid userId, Guid careerGoalId, string idempotencyKey, CancellationToken cancellationToken);
 }

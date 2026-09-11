@@ -14,6 +14,7 @@ public sealed class CareerGoal
     public Guid? TargetJobDescriptionId { get; set; }
     public DateOnly? TargetDate { get; set; }
     public bool Active { get; set; }
+    public DateTimeOffset? DeletedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public ApplicationUser User { get; set; } = null!;

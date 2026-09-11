@@ -53,6 +53,19 @@ internal static class OpenApiConfiguration
                 });
             }
 
+            if (context.Description.HttpMethod == "DELETE" && path == "api/v1/career-goals/{id}")
+            {
+                operation.Parameters ??= [];
+                operation.Parameters.Add(new OpenApiParameter
+                {
+                    Name = "Idempotency-Key",
+                    In = ParameterLocation.Header,
+                    Required = true,
+                    Description = "One unique key per action. Reuse the same key for retries only.",
+                    Schema = new OpenApiSchema { Type = JsonSchemaType.String }
+                });
+            }
+
             // This endpoint reads raw Request.Body, not JSON or multipart/form-data.
             if (context.Description.HttpMethod == "PUT" && path == "api/v1/uploads/{token}")
                 operation.RequestBody = new OpenApiRequestBody

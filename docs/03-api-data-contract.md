@@ -46,6 +46,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | GET | `/career-goals` | Liệt kê Career Goal của owner, active goal đứng trước. |
 | GET | `/career-goals/:id` | Đọc một Career Goal của owner. |
 | PATCH | `/career-goals/:id` | Cập nhật Career Goal của owner; hỗ trợ đổi active goal. |
+| DELETE | `/career-goals/:id` | Soft-delete Career Goal của owner; yêu cầu `Idempotency-Key`. |
 | GET | `/skill-profile` | Skill Profile read model của owner, tổng hợp từ evidence hợp lệ. |
 | GET | `/learning-path` | Đọc learning path hiện tại của active Career Goal; không tạo dữ liệu. |
 | POST | `/learning-path` | Tạo learning path ban đầu cho active Career Goal; lặp lại là idempotent. |
@@ -98,7 +99,7 @@ Frontend gửi `userId`, `token` và `newPassword` tới `POST /api/v1/auth/rese
 
 ### Career Goal / Target Role
 
-Career Goal là resource riêng của user và không có delete/archive endpoint trong B9. Tất cả endpoint chỉ query theo authenticated user; một ID thuộc user khác trả `404 CAREER_GOAL_NOT_FOUND`.
+Career Goal là resource riêng của user. Tất cả endpoint chỉ query theo authenticated user; một ID thuộc user khác trả `404 CAREER_GOAL_NOT_FOUND`. `DELETE /api/v1/career-goals/{id}` là soft-delete: server đặt `active: false`, ghi `deletedAt` nội bộ và không xoá row, nên Learning Path/history vẫn giữ foreign key hợp lệ. Goal đã xoá không xuất hiện trong các query Career Goal thông thường, không thể `GET`, `PATCH` hoặc reactivate; privacy export vẫn bao gồm dữ liệu owner trước khi account deletion workflow xoá dữ liệu.
 
 `POST /api/v1/career-goals` nhận:
 
@@ -117,7 +118,9 @@ Career Goal là resource riêng của user và không có delete/archive endpoin
 
 Goal mới luôn `active: true` và transaction sẽ chuyển goal active trước đó của cùng user thành inactive. Database cũng có partial unique index để chỉ cho phép một active goal trên mỗi user. Nếu `targetJobDescriptionId` được gửi, JD phải tồn tại và thuộc authenticated user; nếu không, API trả `404 JOB_DESCRIPTION_NOT_FOUND`.
 
-`GET /api/v1/career-goals` trả toàn bộ goal của owner, sắp xếp active trước rồi tới mới nhất. `PATCH /api/v1/career-goals/{id}` nhận các field editable: `targetRole`, `seniority`, `industry`, `targetCompany`, `targetJobDescriptionId`, `targetDate`, `active`. Field bị bỏ qua giữ nguyên; nullable field gửi `null` để clear; `active: true` áp dụng cùng invariant một-goal-active. Response thành công dùng envelope `{ "data": { ... } }` và gồm `id`, target fields, `active`, `createdAt`, `updatedAt`.
+`GET /api/v1/career-goals` trả các goal chưa xoá của owner, sắp xếp active trước rồi tới mới nhất. `PATCH /api/v1/career-goals/{id}` nhận các field editable: `targetRole`, `seniority`, `industry`, `targetCompany`, `targetJobDescriptionId`, `targetDate`, `active`. Field bị bỏ qua giữ nguyên; nullable field gửi `null` để clear; `active: true` áp dụng cùng invariant một-goal-active. Response thành công dùng envelope `{ "data": { ... } }` và gồm `id`, target fields, `active`, `createdAt`, `updatedAt`.
+
+`DELETE /api/v1/career-goals/{id}` yêu cầu header `Idempotency-Key` hợp lệ và trả `204 No Content`. Cùng authenticated user, operation và key được retry an toàn; dùng lại key cho goal khác trả `409 IDEMPOTENCY_CONFLICT`. Goal không tồn tại, đã bị ẩn do soft-delete hoặc thuộc user khác trả `404 CAREER_GOAL_NOT_FOUND`. `DELETE` không phải thao tác archive/reversible: API không cung cấp đường reactivation cho goal đã bị xoá.
 
 ### Skill Profile
 
