@@ -1,17 +1,20 @@
 using Nexora.Business.Practice;
 using Nexora.Business.Privacy;
+using Nexora.Worker.Observability;
 
 namespace Nexora.Worker;
 
 public sealed partial class PracticeWorker(
     IServiceScopeFactory scopeFactory,
     AdaptivePollingBackoff pollingBackoff,
-    ILogger<PracticeWorker> logger) : BackgroundService
+    ILogger<PracticeWorker> logger,
+    IWorkerSentryReporter sentryReporter) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            var workerCycleId = Guid.NewGuid().ToString("N");
             try
             {
                 using var scope = scopeFactory.CreateScope();
@@ -32,6 +35,7 @@ public sealed partial class PracticeWorker(
             catch (Exception exception)
             {
                 PollingFailed(logger, exception);
+                sentryReporter.Capture(exception, workerCycleId);
                 pollingBackoff.Reset();
                 await AdaptivePollingBackoff.DelayAsync(pollingBackoff.FailureDelay, stoppingToken);
             }

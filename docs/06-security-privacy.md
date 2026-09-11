@@ -38,6 +38,12 @@ decision.
 - Chỉ gửi amount dữ liệu cần thiết tới AI provider; không đính kèm dữ liệu account/payment không liên quan.
 - Log chỉ chứa IDs/correlation IDs, không chứa CV/transcript nguyên văn trừ khi có secure debug exception đã phê duyệt.
 
+### Sentry telemetry boundary (A11)
+
+- Sentry chỉ nhận exception đã được capture ở API/Worker cùng metadata vận hành an toàn (`service`, environment, release, `request_id` hoặc worker cycle ID).
+- `SendDefaultPii` luôn là `false`; không gắn user/email/name. Body, query string, Authorization/Cookie, access token, provider secrets/payloads, CV/JD, answer/transcript, prompt/response và uploaded document đều bị loại khỏi event.
+- Business 4xx và client cancellation không tạo issue. Sentry là kênh bổ sung; structured logs, health checks và trạng thái job vẫn là nguồn fallback khi DSN trống hoặc Sentry không khả dụng.
+
 ## 4. Vietnam compliance checkpoint
 
 Nexora xử lý thông tin nhận diện, CV, lịch sử nghề nghiệp và có thể cả recording. Trước go-live tại Việt Nam, Product Owner phải yêu cầu legal review về [Nghị định 13/2023/NĐ-CP](https://vanban.chinhphu.vn/default.aspx?docid=207759&pageid=27160), có hiệu lực từ 01/07/2023. Đây không phải tư vấn pháp lý. Theo DEC-03, final retention periods và approved legal/privacy text còn deferred: điều này không block development bằng configurable policies/synthetic data nhưng block production processing khi disclosure/approval tương ứng chưa hoàn tất.

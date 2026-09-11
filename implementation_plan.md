@@ -802,14 +802,14 @@ API + Worker đều phải có Sentry.
 
 Tasks:
 
-- [ ] Add Sentry ASP.NET Core integration.
-- [ ] Worker exception capture.
-- [ ] Environment: Development/Staging/Production.
-- [ ] Release/version tag từ commit SHA/deploy version.
-- [ ] Correlation/request ID attach vào event.
+- [x] Add Sentry ASP.NET Core integration.
+- [x] Worker exception capture.
+- [x] Environment: Development/Staging/Production.
+- [x] Release/version tag từ commit SHA/deploy version.
+- [x] Correlation/request ID attach vào event.
 - [ ] Background job aggregate ID có thể attach dạng safe tag.
-- [ ] `SendDefaultPii = false`.
-- [ ] Không gửi:
+- [x] `SendDefaultPii = false`.
+- [x] Không gửi:
   - JWT/Authorization;
   - refresh token;
   - DeepSeek/Gemini key;
@@ -817,7 +817,7 @@ Tasks:
   - answer/transcript;
   - AI prompt/response;
   - payment secret.
-- [ ] Filter expected 4xx/business validation để tránh noise.
+- [x] Filter expected 4xx/business validation để tránh noise.
 - [ ] Alert cho unhandled 5xx/job failure spike.
 
 ## A12. UptimeRobot [P0]
@@ -1087,7 +1087,7 @@ Trong phase này **feature freeze**. Chỉ bugfix/hardening.
 - [ ] Signed upload expire đúng.
 - [ ] Delete account xoá/queue xoá R2 object liên quan.
 - [ ] Rate limit auth/email endpoints.
-- [ ] Sentry PII scrubbing test.
+- [x] Sentry PII scrubbing test.
 
 ## 11.4 Billing/Freemium
 
@@ -1136,8 +1136,8 @@ Checkout
 
 - [ ] UptimeRobot nhận `/health/live` 200.
 - [ ] Test intentionally captured exception xuất hiện ở Sentry staging.
-- [ ] Sentry event không có Authorization/CV/answer/secret.
-- [ ] Worker failure có event + correlation safe.
+- [x] Sentry event không có Authorization/CV/answer/secret.
+- [x] Worker failure có event + correlation safe.
 - [ ] Alert test được gửi tới team.
 
 ## 11.6 Performance
@@ -1324,7 +1324,7 @@ Email__FromName=Nexora
 Frontend__PublicUrl=https://...
 
 Sentry__Dsn=
-Sentry__Environment=production
+Sentry__Release=
 
 Authentication__Google__ClientId=        # optional
 ```
