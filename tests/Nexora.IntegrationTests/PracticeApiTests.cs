@@ -78,6 +78,55 @@ public sealed class PracticeApiTests
     }
 
     [Fact]
+    public async Task ConfirmedVoiceTextUsesTheCanonicalAnswerPathAndIsIdempotent()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "a10-confirmed-text-start");
+        await ProcessJobsAsync(factory);
+
+        var active = await GetInterviewAsync(client, interviewId);
+        var firstQuestion = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        const string rawTranscript = "I used Redis and reduced latency by 70 percent.";
+        const string confirmedText = "I used PostgreSQL and improved reliability.";
+
+        var firstResult = await AnswerAsync(client, interviewId, firstQuestion, $"  {confirmedText}  ", "a10-confirmed-text-answer");
+        var savedAnswer = firstResult.GetProperty("answer");
+        var answerId = savedAnswer.GetProperty("id").GetGuid();
+        Assert.Equal(confirmedText, savedAnswer.GetProperty("content").GetString());
+
+        var evaluationInvocation = aiProvider.Invocations
+            .Single(item => item.Purpose == AiPurposes.InterviewEvaluate);
+        Assert.Contains(confirmedText, evaluationInvocation.UntrustedInput, StringComparison.Ordinal);
+        Assert.DoesNotContain(rawTranscript, evaluationInvocation.UntrustedInput, StringComparison.Ordinal);
+        Assert.Equal(1, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+
+        var replay = await AnswerAsync(client, interviewId, firstQuestion, $"  {confirmedText}  ", "a10-confirmed-text-answer");
+        Assert.Equal(answerId, replay.GetProperty("answer").GetProperty("id").GetGuid());
+        Assert.Equal(1, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+
+        var secondQuestion = firstResult.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        await AnswerAsync(client, interviewId, secondQuestion, "I documented the rollout and monitored the result.", "a10-confirmed-text-answer-two");
+        await CompleteAsync(client, interviewId, "a10-confirmed-text-complete");
+        await ProcessJobsAsync(factory);
+
+        var reportInvocation = aiProvider.Invocations
+            .Single(item => item.Purpose == AiPurposes.InterviewReport);
+        Assert.Contains(confirmedText, reportInvocation.UntrustedInput, StringComparison.Ordinal);
+        Assert.DoesNotContain(rawTranscript, reportInvocation.UntrustedInput, StringComparison.Ordinal);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var persisted = await db.InterviewAnswers.SingleAsync(item => item.Id == answerId);
+        Assert.Equal(confirmedText, persisted.Content);
+        Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.InterviewSessionId == interviewId && item.QuestionId == firstQuestion));
+    }
+
+    [Fact]
     public async Task PaidContinuationUsesSameSessionAndIdempotentQuestion()
     {
         var aiProvider = new TestAiProvider();

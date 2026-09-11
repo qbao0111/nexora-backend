@@ -63,6 +63,19 @@ public sealed class OpenApiTests
         Assert.True(content.TryGetProperty("application/vnd.openxmlformats-officedocument.wordprocessingml.document", out _));
         Assert.False(content.TryGetProperty("multipart/form-data", out _));
 
+        var answerSchemaReference = paths.GetProperty("/api/v1/interviews/{id}/answers")
+            .GetProperty("post").GetProperty("requestBody").GetProperty("content")
+            .GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString();
+        Assert.NotNull(answerSchemaReference);
+        var answerSchemaName = answerSchemaReference!.Split('/').Last();
+        var answerProperties = root.GetProperty("components").GetProperty("schemas")
+            .GetProperty(answerSchemaName).GetProperty("properties");
+        Assert.True(answerProperties.TryGetProperty("content", out _));
+        Assert.True(answerProperties.TryGetProperty("questionId", out _));
+        Assert.True(answerProperties.TryGetProperty("durationSeconds", out _));
+        Assert.False(answerProperties.TryGetProperty("rawTranscript", out _));
+        Assert.False(answerProperties.TryGetProperty("audio", out _));
+
         var shortcut = paths.GetProperty("/api/v1/dev/resume-analysis").GetProperty("post");
         var shortcutBody = shortcut.GetProperty("requestBody").GetProperty("content").GetProperty("multipart/form-data");
         var shortcutProperties = shortcutBody.GetProperty("schema").GetProperty("properties");

@@ -834,3 +834,17 @@ This log records completed implementation milestones and verification evidence. 
 - FE impact: No frontend code changed. Clients should render `external_learning` without inventing a URL and retain completed activity IDs/completion timestamps across refresh responses.
 - Remaining blockers: Independent re-review remains required; B12/B13 were not started.
 - No live AI, R2, Resend, payment, production database or production service calls were made.
+
+## 2026-09-11 — A10 Voice Input / STT Contract
+
+- Status: Implementation complete / Ready for independent review
+- Owner: Backend workstream A
+- Task/branch: `A10` / `feat/a10-voice-input-contract`
+- Base main: `bc95b35ee50c4da1b1a9b86a9687d7be1e95a604` (`origin/main`, after A9)
+- Scope: Formalized the text-only voice-input boundary. Browser speech-to-text is an input aid: the user edits and confirms the transcript, then the existing answer endpoint receives only the final `content` text. Existing active-state, ownership, validation, quota, and idempotency behavior remains the canonical path for typed and voice-confirmed answers.
+- Contracts and privacy: `SubmitAnswerRequest` remains `{ questionId, content, durationSeconds }`; no raw transcript, audio field, alternate answer record, or speech provider was added. Persisted answer content is the sole input for answer evaluation, follow-up context, history, and reports. `durationSeconds` remains optional timing metadata, not audio proof. Audio capture/storage and backend STT require a separately approved provider, consent, lifecycle, and retention policy.
+- Files/modules: API contract documentation, security/privacy documentation, A10 implementation checklist, OpenAPI regression coverage, and end-to-end interview answer/report/idempotency regression coverage. No production runtime, persistence model, or migration changes were required because the existing endpoint already enforces the provider-neutral text contract.
+- Verification: `dotnet tool restore` and `dotnet restore Nexora.slnx --nologo` passed; Release solution build passed with 0 warnings/errors; full Release unit tests passed (349) and integration tests passed (216), including the focused A10/OpenAPI regressions (2); EF `migrations has-pending-model-changes` reported no changes; changed-C# style/analyzer verification, NuGet vulnerability audit, and `git diff --check` passed. No live AI/STT/audio provider or production service calls were made.
+- Migration impact: None. No EF entity, DbSet, snapshot, or migration changed.
+- FE impact: No frontend code changed. FE may use browser STT but must submit the same confirmed text contract as typed input.
+- Dependencies and deferred decisions: No live AI/STT/audio provider calls. Backend STT abstraction, audio upload/retention, recording consent text, and any provider selection remain deferred; A11 was not started.

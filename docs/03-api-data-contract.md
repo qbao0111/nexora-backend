@@ -1,7 +1,7 @@
 # API và mô hình dữ liệu
 
 **Status:** Approved implementation baseline  
-**Last updated:** 2026-08-21
+**Last updated:** 2026-09-11
 
 ## Quy ước API
 
@@ -275,6 +275,15 @@ Idempotency-Key: 4e8b...
   "durationSeconds": 94
 }
 ```
+
+Voice/browser STT boundary (A10): the browser may turn speech into an editable
+transcript, but the user must confirm the final text before submission. The
+backend receives only `content` from this request and treats it exactly like a
+typed answer; it does not receive or store raw STT transcript, audio, provider
+metadata, or an alternate answer record. `durationSeconds` remains optional
+answer/session timing supplied by the client and is not proof of an audio
+recording. Evaluation, follow-up context, history, and reports use the
+persisted final `content` value.
 
 Response có answer đã lưu và question tiếp theo hoặc `isComplete: true`. Một question chỉ nhận một answer chính thức trừ khi endpoint revision được định nghĩa riêng.
 
