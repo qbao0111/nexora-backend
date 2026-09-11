@@ -587,6 +587,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.Property(item => item.TargetCompany).HasMaxLength(160);
             entity.Property(item => item.TargetDate).HasColumnType("date");
             entity.Property(item => item.Active).IsRequired().HasDefaultValue(true);
+            entity.Property(item => item.DeletedAt);
             entity.Property(item => item.CreatedAt).IsRequired();
             entity.Property(item => item.UpdatedAt).IsRequired();
             entity.HasOne(item => item.User).WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);

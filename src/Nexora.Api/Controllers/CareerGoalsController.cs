@@ -59,6 +59,17 @@ public sealed class CareerGoalsController(ICareerGoalService careerGoalService) 
         return Ok(new ApiResponse<CareerGoalResponse>(Map(goal)));
     }
 
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
+    {
+        await careerGoalService.DeleteAsync(
+            User.GetRequiredUserId(),
+            id,
+            Request.Headers["Idempotency-Key"].ToString(),
+            cancellationToken);
+        return NoContent();
+    }
+
     private static CareerGoalResponse Map(CareerGoalView goal) =>
         new(goal.Id, goal.TargetRole, goal.Seniority, goal.Industry, goal.TargetCompany,
             goal.TargetJobDescriptionId, goal.TargetDate, goal.Active, goal.CreatedAt, goal.UpdatedAt);
