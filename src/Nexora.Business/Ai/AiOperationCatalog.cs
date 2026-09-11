@@ -1144,6 +1144,33 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
 
     public override string BuildRepairInstructions(AiValidationResult<AnswerEvaluation> priorResult, string originalInstructions)
     {
+        if (string.Equals(priorResult.FailureReason, "rubric.criteria_missing", StringComparison.Ordinal))
+        {
+            return $"""
+                {originalInstructions}
+
+                IMPORTANT RUBRIC CORRECTION INSTRUCTION:
+                The previous structured evaluation failed validation with reason 'rubric.criteria_missing' because one or more required rubric criteria were missing.
+                Return exactly four rubric items: one each for correctness, structure, completeness, and clarity.
+                Include every criterion exactly once; there must be no duplicate or missing criteria.
+                Each item must have an integer score from 0 to 100 and non-blank evidence grounded in the ORIGINAL candidate answer.
+                Return a completely corrected object matching the schema.
+                """;
+        }
+
+        if (string.Equals(priorResult.FailureReason, "interview.improvements_not_actionable", StringComparison.Ordinal))
+        {
+            return $"""
+                {originalInstructions}
+
+                IMPORTANT COACHING CORRECTION INSTRUCTION:
+                The previous structured evaluation failed validation with reason 'interview.improvements_not_actionable' because it contained a non-actionable improvement.
+                Return 1-3 improvement items. Every item must state a concrete action with an action verb, such as add, include, explain, quantify, clarify, describe, mention, specify, show, provide, use, nêu, bổ sung, thêm, định lượng, làm rõ, giải thích, or mô tả.
+                Keep every improvement grounded in the ORIGINAL candidate answer. Do not invent facts, experience, or technologies.
+                Return a completely corrected object matching the schema.
+                """;
+        }
+
         if (priorResult.FailureReason?.StartsWith("star.", StringComparison.Ordinal) == true)
         {
             return $"""
