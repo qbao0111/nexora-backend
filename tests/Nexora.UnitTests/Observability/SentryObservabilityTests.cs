@@ -8,6 +8,7 @@ using Nexora.Business.Privacy;
 using Nexora.Worker;
 using Nexora.Worker.Observability;
 using Sentry;
+using Sentry.Extensibility;
 
 namespace Nexora.UnitTests.Observability;
 
@@ -35,6 +36,7 @@ public sealed class SentryObservabilityTests
         Assert.Equal(Microsoft.Extensions.Logging.LogLevel.None, options.MinimumBreadcrumbLevel);
         Assert.Null(options.TracesSampleRate);
         Assert.Null(options.ProfilesSampleRate);
+        Assert.Equal("worker", options.DefaultTags["service"]);
     }
 
     [Fact]
@@ -51,6 +53,20 @@ public sealed class SentryObservabilityTests
         SentryObservability.Configure(options, new TestHostEnvironment("Development"), configuration);
 
         Assert.Equal(string.Empty, options.Dsn);
+    }
+
+    [Fact]
+    public void ExplicitWorkerCaptureSetsTheSafeServiceTag()
+    {
+        var hub = new RecordingHub();
+
+        new WorkerSentryReporter(hub).Capture(
+            new InvalidOperationException("unexpected"),
+            "worker-cycle-123");
+
+        var sentryEvent = Assert.Single(hub.Events);
+        Assert.Equal("worker", sentryEvent.Tags["service"]);
+        Assert.Equal("worker-cycle-123", sentryEvent.Tags["worker_cycle_id"]);
     }
 
     [Fact]
@@ -171,6 +187,68 @@ public sealed class SentryObservabilityTests
             Exceptions.Add(exception);
             ExecutionIds.Add(executionId);
             Captured.TrySetResult();
+        }
+    }
+
+    private sealed class RecordingHub : IHub
+    {
+        public List<SentryEvent> Events { get; } = [];
+        public bool IsEnabled => true;
+        public SentryId LastEventId => default;
+        public SentryStructuredLogger Logger => null!;
+        public SentryMetricEmitter Metrics => null!;
+        public bool IsSessionActive => false;
+
+        public SentryId CaptureEvent(SentryEvent sentryEvent, Action<Scope> configureScope)
+        {
+            var scope = new Scope(new SentryOptions());
+            configureScope(scope);
+            scope.Apply(sentryEvent);
+            Events.Add(sentryEvent);
+            return sentryEvent.EventId;
+        }
+
+        public SentryId CaptureEvent(SentryEvent sentryEvent, SentryHint? hint, Action<Scope> configureScope) =>
+            CaptureEvent(sentryEvent, configureScope);
+
+        public SentryId CaptureEvent(SentryEvent evt, Scope? scope, SentryHint? hint) => CaptureEvent(evt, _ => { });
+        public SentryId CaptureFeedback(SentryFeedback feedback, out CaptureFeedbackResult result, Scope? scope, SentryHint? hint)
+        {
+            result = default!;
+            return default;
+        }
+        public void CaptureTransaction(SentryTransaction transaction) { }
+        public void CaptureTransaction(SentryTransaction transaction, Scope? scope, SentryHint? hint) { }
+        public void CaptureSession(SessionUpdate sessionUpdate) { }
+        public SentryId CaptureCheckIn(string monitorSlug, CheckInStatus status, SentryId? sentryId, TimeSpan? duration, Scope? scope, Action<SentryMonitorOptions>? configureMonitorOptions) => default;
+        public bool CaptureEnvelope(Sentry.Protocol.Envelopes.Envelope envelope) => false;
+        public Task FlushAsync(TimeSpan timeout) => Task.CompletedTask;
+        public void ConfigureScope(Action<Scope> configureScope) { }
+        public void ConfigureScope<TArg>(Action<Scope, TArg> configureScope, TArg arg) { }
+        public Task ConfigureScopeAsync(Func<Scope, Task> configureScope) => Task.CompletedTask;
+        public Task ConfigureScopeAsync<TArg>(Func<Scope, TArg, Task> configureScope, TArg arg) => Task.CompletedTask;
+        public void SetTag(string key, string value) { }
+        public void UnsetTag(string key) { }
+        public void BindClient(ISentryClient client) { }
+        public IDisposable PushScope() => null!;
+        public IDisposable PushScope<TState>(TState state) => null!;
+
+        public ITransactionTracer StartTransaction(ITransactionContext context, IReadOnlyDictionary<string, object?> customSamplingContext) => null!;
+        public void BindException(Exception exception, ISpan span) { }
+        public ISpan GetSpan() => null!;
+        public SentryTraceHeader GetTraceHeader() => null!;
+        public BaggageHeader GetBaggage() => null!;
+        public W3CTraceparentHeader GetTraceparentHeader() => null!;
+        public TransactionContext ContinueTrace(string? traceHeader, string? baggageHeader, string? name = null, string? operation = null) => null!;
+        public TransactionContext ContinueTrace(SentryTraceHeader? traceHeader, BaggageHeader? baggageHeader, string? name = null, string? operation = null) => null!;
+        public void StartSession() { }
+        public void PauseSession() { }
+        public void ResumeSession() { }
+        public void EndSession(SessionEndStatus status) { }
+        public SentryId CaptureFeedback(SentryFeedback feedback, out CaptureFeedbackResult result, Action<Scope> configureScope, SentryHint? hint)
+        {
+            result = default!;
+            return default;
         }
     }
 

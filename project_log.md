@@ -863,3 +863,10 @@ This log records completed implementation milestones and verification evidence. 
 - Migration/FE impact: None; no EF entity, DbSet, snapshot or migration changed, and `nexora-fe` was untouched.
 - External alert status: Not configured or verified against a real Sentry project; runbook documents staging/production alert setup for API 5xx and Worker failure spikes.
 - Dependencies: A12 UptimeRobot and A13 broader production configuration hardening remain out of scope.
+
+## 2026-09-11 — A11 review correction
+
+- ExternalFailure handling: API business failures now keep their safe 503 envelope and are captured exactly once with canonical request metadata; expected 4xx failures and request cancellation remain non-events.
+- Host attribution: API and Worker Sentry options now carry default `service=api` / `service=worker` tags, while explicit reporter tags and privacy sanitization remain intact.
+- Release truthfulness: `Sentry:Release` remains an optional server-side release hook for a build/deploy identifier; current staging/production SHA wiring, real Sentry alert delivery, UptimeRobot and A13 hardening are still deferred.
+- Verification scope: deterministic observability regression coverage includes the five expected 4xx kinds, ExternalFailure capture/envelope behavior, host default tags and explicit reporter tags; focused observability tests passed (6 unit, 11 integration) and the full Release suites passed (355 unit, 227 integration). No migration, frontend change, live Sentry call or real DSN was used.

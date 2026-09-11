@@ -23,6 +23,15 @@ public sealed partial class ExceptionHandlingMiddleware(
                 BusinessErrorKind.Conflict => 409,
                 _ => 503
             };
+            if (exception.Kind == BusinessErrorKind.ExternalFailure)
+            {
+                sentryReporter.Capture(
+                    exception,
+                    context.TraceIdentifier,
+                    context.Request.Method,
+                    context.Request.Path.Value ?? "/",
+                    status);
+            }
             await ApiErrorWriter.WriteAsync(context, status, exception.Code, exception.Message);
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)

@@ -805,7 +805,7 @@ Tasks:
 - [x] Add Sentry ASP.NET Core integration.
 - [x] Worker exception capture.
 - [x] Environment: Development/Staging/Production.
-- [x] Release/version tag từ commit SHA/deploy version.
+- [x] Release/version configuration hook (`Sentry:Release`) accepts a deploy/build identifier.
 - [x] Correlation/request ID attach vào event.
 - [ ] Background job aggregate ID có thể attach dạng safe tag.
 - [x] `SendDefaultPii = false`.

@@ -20,6 +20,7 @@ public static partial class SentryObservability
     {
         options.Dsn = ReadDsn(configuration);
         options.Environment = environment.EnvironmentName;
+        options.DefaultTags["service"] = "worker";
         options.Release = ReadRelease(configuration);
         options.SendDefaultPii = false;
         options.MinimumBreadcrumbLevel = LogLevel.None;

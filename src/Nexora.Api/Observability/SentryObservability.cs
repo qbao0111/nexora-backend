@@ -19,6 +19,7 @@ public static partial class SentryObservability
     {
         options.Dsn = ReadDsn(configuration);
         options.Environment = environment.EnvironmentName;
+        options.DefaultTags["service"] = "api";
         options.AdjustStandardEnvironmentNameCasing = false;
         options.Release = ReadRelease(configuration);
         options.SendDefaultPii = false;
