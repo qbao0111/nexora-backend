@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Nexora.Data.Career;
+using Nexora.Data.Learning;
 using Nexora.Data.Persistence;
 
 namespace Nexora.IntegrationTests;
@@ -177,6 +178,94 @@ public sealed class CareerGoalApiTests
         await AssertExactlyOneActiveAsync(factory, account.UserId, null);
     }
 
+    [Fact]
+    public async Task DeletingCareerGoalIsOwnerScopedIdempotentAndPreservesLearningPathHistory()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var ownerClient = factory.CreateHttpsClient();
+        using var otherClient = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(ownerClient);
+        var other = await RegisterAsync(otherClient);
+        ownerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.AccessToken);
+        otherClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", other.AccessToken);
+
+        var goalId = await CreateCareerGoalAsync(ownerClient, "Backend Developer", "junior");
+        var pathId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            db.LearningPaths.Add(new LearningPath
+            {
+                Id = pathId,
+                UserId = owner.UserId,
+                CareerGoalId = goalId,
+                Status = "active",
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var crossUserDelete = await DeleteAsync(otherClient, $"/api/v1/career-goals/{goalId}", "other-user-delete");
+        Assert.Equal(HttpStatusCode.NotFound, crossUserDelete.StatusCode);
+        using var stillVisible = await ownerClient.GetAsync($"/api/v1/career-goals/{goalId}");
+        Assert.Equal(HttpStatusCode.OK, stillVisible.StatusCode);
+
+        using var missingKey = await DeleteAsync(ownerClient, $"/api/v1/career-goals/{goalId}", null);
+        Assert.Equal(HttpStatusCode.BadRequest, missingKey.StatusCode);
+        Assert.Equal("IDEMPOTENCY_KEY_REQUIRED", await ErrorCodeAsync(missingKey));
+
+        const string deleteKey = "owner-career-goal-delete";
+        using var deleted = await DeleteAsync(ownerClient, $"/api/v1/career-goals/{goalId}", deleteKey);
+        Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var persisted = await db.CareerGoals.AsNoTracking().SingleAsync(item => item.Id == goalId);
+            Assert.False(persisted.Active);
+            Assert.NotNull(persisted.DeletedAt);
+            Assert.True(await db.LearningPaths.AsNoTracking().AnyAsync(item => item.Id == pathId && item.CareerGoalId == goalId));
+        }
+
+        using var list = await ownerClient.GetAsync("/api/v1/career-goals");
+        Assert.Equal(HttpStatusCode.OK, list.StatusCode);
+        Assert.Empty((await DataAsync(list)).EnumerateArray());
+
+        using var hiddenGet = await ownerClient.GetAsync($"/api/v1/career-goals/{goalId}");
+        Assert.Equal(HttpStatusCode.NotFound, hiddenGet.StatusCode);
+        using var hiddenPatch = await PatchAsync(ownerClient, $"/api/v1/career-goals/{goalId}", new { active = true });
+        Assert.Equal(HttpStatusCode.NotFound, hiddenPatch.StatusCode);
+
+        using var repeatDelete = await DeleteAsync(ownerClient, $"/api/v1/career-goals/{goalId}", deleteKey);
+        Assert.Equal(HttpStatusCode.NoContent, repeatDelete.StatusCode);
+        using var newKeyDelete = await DeleteAsync(ownerClient, $"/api/v1/career-goals/{goalId}", "owner-career-goal-delete-again");
+        Assert.Equal(HttpStatusCode.NotFound, newKeyDelete.StatusCode);
+
+        using var learningPathRead = await ownerClient.GetAsync("/api/v1/learning-path");
+        Assert.Equal(HttpStatusCode.BadRequest, learningPathRead.StatusCode);
+        Assert.Equal("ACTIVE_CAREER_GOAL_REQUIRED", await ErrorCodeAsync(learningPathRead));
+
+        using var export = await ownerClient.GetAsync("/api/v1/me/export");
+        Assert.Equal(HttpStatusCode.OK, export.StatusCode);
+        var exportedGoals = (await DataAsync(export)).GetProperty("careerGoals").EnumerateArray().ToArray();
+        Assert.Contains(exportedGoals, item => item.GetProperty("id").GetGuid() == goalId);
+
+        var newGoalId = await CreateCareerGoalAsync(ownerClient, "Platform Engineer", "senior");
+        await AssertExactlyOneActiveAsync(factory, owner.UserId, newGoalId);
+        using var reusedKey = await DeleteAsync(ownerClient, $"/api/v1/career-goals/{newGoalId}", deleteKey);
+        Assert.Equal(HttpStatusCode.Conflict, reusedKey.StatusCode);
+        Assert.Equal("IDEMPOTENCY_CONFLICT", await ErrorCodeAsync(reusedKey));
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(1, await db.IdempotencyRecords.CountAsync(item =>
+                item.ActorId == owner.UserId && item.Operation == "career-goal.delete" && item.Key == deleteKey));
+        }
+    }
+
     private static async Task AssertExactlyOneActiveAsync(NexoraApiFactory factory, Guid userId, Guid? expectedId)
     {
         using var scope = factory.Services.CreateScope();
@@ -210,6 +299,13 @@ public sealed class CareerGoalApiTests
         {
             Content = JsonContent.Create(body)
         });
+    }
+
+    private static async Task<HttpResponseMessage> DeleteAsync(HttpClient client, string path, string? idempotencyKey)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Delete, path);
+        if (idempotencyKey is not null) request.Headers.Add("Idempotency-Key", idempotencyKey);
+        return await client.SendAsync(request);
     }
 
     private static async Task<string> ErrorCodeAsync(HttpResponseMessage response)

@@ -1,16 +1,22 @@
 using System.Data;
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 using Nexora.Business.Career;
 using Nexora.Business.Common;
+using Nexora.Data.Billing;
 using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Career;
 
-public sealed class CareerGoalService(
+public sealed partial class CareerGoalService(
     NexoraDbContext dbContext,
-    TimeProvider timeProvider) : ICareerGoalService
+    TimeProvider timeProvider,
+    ILogger<CareerGoalService> logger) : ICareerGoalService
 {
+    private const string DeleteOperation = "career-goal.delete";
+
     public async Task<CareerGoalView> CreateAsync(
         Guid userId,
         CreateCareerGoalCommand command,
@@ -43,7 +49,6 @@ public sealed class CareerGoalService(
         };
         try
         {
-            await dbContext.SaveChangesAsync(cancellationToken);
             dbContext.CareerGoals.Add(goal);
             await dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
@@ -57,7 +62,7 @@ public sealed class CareerGoalService(
 
     public async Task<IReadOnlyCollection<CareerGoalView>> GetManyAsync(Guid userId, CancellationToken cancellationToken)
     {
-        var query = dbContext.CareerGoals.AsNoTracking().Where(item => item.UserId == userId);
+        var query = dbContext.CareerGoals.AsNoTracking().Where(item => item.UserId == userId && item.DeletedAt == null);
         if (!dbContext.Database.IsNpgsql())
             return (await query.ToArrayAsync(cancellationToken))
                 .OrderByDescending(item => item.Active)
@@ -76,7 +81,7 @@ public sealed class CareerGoalService(
 
     public async Task<CareerGoalView> GetAsync(Guid userId, Guid careerGoalId, CancellationToken cancellationToken) =>
         await dbContext.CareerGoals.AsNoTracking()
-            .Where(item => item.Id == careerGoalId && item.UserId == userId)
+            .Where(item => item.Id == careerGoalId && item.UserId == userId && item.DeletedAt == null)
             .Select(MapExpression)
             .SingleOrDefaultAsync(cancellationToken)
         ?? throw NotFound();
@@ -105,11 +110,20 @@ public sealed class CareerGoalService(
         if (command.ActiveSpecified && command.Active is null)
             throw Validation("Active không hợp lệ.");
 
+        var timer = Stopwatch.StartNew();
+        var stageTimer = Stopwatch.StartNew();
         await using var transaction = await BeginTransactionAsync(cancellationToken);
+        var transactionBeginMs = stageTimer.Elapsed.TotalMilliseconds;
+
+        stageTimer.Restart();
         await LockUserAsync(userId, cancellationToken);
+        var userLockMs = stageTimer.Elapsed.TotalMilliseconds;
+
+        stageTimer.Restart();
         var goal = await dbContext.CareerGoals.SingleOrDefaultAsync(
-            item => item.Id == careerGoalId && item.UserId == userId, cancellationToken)
+            item => item.Id == careerGoalId && item.UserId == userId && item.DeletedAt == null, cancellationToken)
             ?? throw NotFound();
+        var goalLoadMs = stageTimer.Elapsed.TotalMilliseconds;
 
         if (command.TargetJobDescriptionIdSpecified)
         {
@@ -124,9 +138,12 @@ public sealed class CareerGoalService(
 
         var now = timeProvider.GetUtcNow();
         var activating = command.ActiveSpecified && command.Active == true && !goal.Active;
+        var deactivateMs = 0d;
         if (activating)
         {
+            stageTimer.Restart();
             await DeactivateOtherGoalsAsync(userId, goal.Id, now, cancellationToken);
+            deactivateMs = stageTimer.Elapsed.TotalMilliseconds;
         }
         else if (command.ActiveSpecified && command.Active == false)
         {
@@ -136,17 +153,86 @@ public sealed class CareerGoalService(
 
         try
         {
-            if (activating)
-                await dbContext.SaveChangesAsync(cancellationToken);
+            // Deactivation is already persisted in the transaction before the partial unique index sees this activation.
             if (activating) goal.Active = true;
+            stageTimer.Restart();
             await dbContext.SaveChangesAsync(cancellationToken);
+            var saveChangesMs = stageTimer.Elapsed.TotalMilliseconds;
+            var commitMs = 0d;
+            stageTimer.Restart();
             await transaction.CommitAsync(cancellationToken);
+            commitMs = stageTimer.Elapsed.TotalMilliseconds;
+            CareerGoalMutationTiming(logger, "update", activating, timer.Elapsed.TotalMilliseconds, transactionBeginMs,
+                userLockMs, goalLoadMs, deactivateMs, saveChangesMs, commitMs);
         }
         catch (DbUpdateException exception) when (IsActiveUniqueViolation(exception))
         {
             throw ActiveConflict();
         }
         return Map(goal);
+    }
+
+    public async Task DeleteAsync(
+        Guid userId,
+        Guid careerGoalId,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        var key = RequireKey(idempotencyKey);
+        var fingerprint = careerGoalId.ToString("N");
+        var prior = await FindDeletionAsync(userId, key, cancellationToken);
+        if (prior is not null)
+        {
+            EnsureFingerprint(prior, fingerprint);
+            return;
+        }
+
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        prior = await FindDeletionAsync(userId, key, cancellationToken);
+        if (prior is not null)
+        {
+            EnsureFingerprint(prior, fingerprint);
+            return;
+        }
+
+        await LockUserAsync(userId, cancellationToken);
+        var goal = await dbContext.CareerGoals.SingleOrDefaultAsync(
+            item => item.Id == careerGoalId && item.UserId == userId && item.DeletedAt == null,
+            cancellationToken)
+            ?? throw NotFound();
+
+        var now = timeProvider.GetUtcNow();
+        goal.Active = false;
+        goal.DeletedAt = now;
+        goal.UpdatedAt = now;
+        dbContext.IdempotencyRecords.Add(new IdempotencyRecord
+        {
+            Id = Guid.NewGuid(),
+            ActorId = userId,
+            Operation = DeleteOperation,
+            Key = key,
+            RequestFingerprint = fingerprint,
+            ResourceId = careerGoalId,
+            CreatedAt = now
+        });
+
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception) when (IsIdempotencyUniqueViolation(exception))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            dbContext.ChangeTracker.Clear();
+            prior = await FindDeletionAsync(userId, key, cancellationToken);
+            if (prior is not null)
+            {
+                EnsureFingerprint(prior, fingerprint);
+                return;
+            }
+            throw;
+        }
     }
 
     private async Task ValidateTargetJobDescriptionAsync(
@@ -166,14 +252,14 @@ public sealed class CareerGoalService(
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        var activeGoals = await dbContext.CareerGoals
-            .Where(item => item.UserId == userId && item.Active && (!exceptGoalId.HasValue || item.Id != exceptGoalId.Value))
-            .ToArrayAsync(cancellationToken);
-        foreach (var activeGoal in activeGoals)
-        {
-            activeGoal.Active = false;
-            activeGoal.UpdatedAt = now;
-        }
+        // The caller locks the owner row first, so this set-based update preserves the one-active-goal transition
+        // while avoiding a read of every active goal and a separate tracked SaveChanges round-trip.
+        await dbContext.CareerGoals
+            .Where(item => item.UserId == userId && item.Active && item.DeletedAt == null &&
+                (!exceptGoalId.HasValue || item.Id != exceptGoalId.Value))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(item => item.Active, false)
+                .SetProperty(item => item.UpdatedAt, now), cancellationToken);
     }
 
     private async Task LockUserAsync(Guid userId, CancellationToken cancellationToken)
@@ -189,6 +275,21 @@ public sealed class CareerGoalService(
         dbContext.Database.BeginTransactionAsync(
             dbContext.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable,
             cancellationToken);
+
+    private Task<IdempotencyRecord?> FindDeletionAsync(Guid userId, string key, CancellationToken cancellationToken) =>
+        dbContext.IdempotencyRecords.AsNoTracking().SingleOrDefaultAsync(
+            item => item.ActorId == userId && item.Operation == DeleteOperation && item.Key == key,
+            cancellationToken);
+
+    private static string RequireKey(string value) => string.IsNullOrWhiteSpace(value) || value.Trim().Length > 128
+        ? throw new BusinessException("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key hợp lệ là bắt buộc.", BusinessErrorKind.Validation)
+        : value.Trim();
+
+    private static void EnsureFingerprint(IdempotencyRecord prior, string fingerprint)
+    {
+        if (!string.Equals(prior.RequestFingerprint, fingerprint, StringComparison.Ordinal))
+            throw new BusinessException("IDEMPOTENCY_CONFLICT", "Idempotency-Key đã được dùng với dữ liệu khác.", BusinessErrorKind.Conflict);
+    }
 
     private static CareerGoalView Map(CareerGoal goal) =>
         new(goal.Id, goal.TargetRole, goal.Seniority, goal.Industry, goal.TargetCompany,
@@ -213,4 +314,27 @@ public sealed class CareerGoalService(
         return message.Contains("IX_career_goals_one_active_per_user", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("career_goals.UserId", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool IsIdempotencyUniqueViolation(DbUpdateException exception)
+    {
+        var message = exception.InnerException?.Message ?? exception.Message;
+        return message.Contains("idempotency_keys", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("IdempotencyRecords", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [LoggerMessage(
+        EventId = 9101,
+        Level = LogLevel.Information,
+        Message = "Career goal mutation timing {Operation} {ActiveTransition} {TotalMs} {TransactionBeginMs} {UserLockMs} {GoalLoadMs} {DeactivateMs} {SaveChangesMs} {CommitMs}")]
+    private static partial void CareerGoalMutationTiming(
+        ILogger logger,
+        string operation,
+        bool activeTransition,
+        double totalMs,
+        double transactionBeginMs,
+        double userLockMs,
+        double goalLoadMs,
+        double deactivateMs,
+        double saveChangesMs,
+        double commitMs);
 }

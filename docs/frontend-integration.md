@@ -91,7 +91,9 @@ For password recovery, call `POST /auth/forgot-password` with `{ "email": "..." 
 
 Career Goals are user-owned target context shared by future skill, learning and recommendation features. Use `POST /api/v1/career-goals` with `targetRole` and `seniority`; a newly created goal is active and automatically deactivates the user's previous active goal. Use `GET /api/v1/career-goals` to hydrate the full list and choose the item with `active: true`.
 
-`PATCH /api/v1/career-goals/{id}` supports `targetRole`, `seniority`, `industry`, `targetCompany`, `targetJobDescriptionId`, `targetDate` and `active`. Omit a property to leave it unchanged; send `null` for nullable `industry`, `targetCompany`, `targetJobDescriptionId` or `targetDate` to clear it. A referenced Job Description must belong to the same user. The API returns only owner-scoped goals and uses the standard `{ "data": ... }`/`{ "error": ... }` envelopes.
+`PATCH /api/v1/career-goals/{id}` supports `targetRole`, `seniority`, `industry`, `targetCompany`, `targetJobDescriptionId`, `targetDate` and `active`. Omit a property to leave it unchanged; send `null` for nullable `industry`, `targetCompany`, `targetJobDescriptionId` or `targetDate` to clear it. A referenced Job Description must belong to the same user. The API returns only owner-scoped, non-deleted goals and uses the standard `{ "data": ... }`/`{ "error": ... }` envelopes.
+
+For destructive removal, render a separate `Xóa` action from reversible `Lưu trữ` behavior. Confirm with exactly `Bạn có chắc muốn xóa mục tiêu này? Hành động này không thể hoàn tác.` before sending `DELETE /api/v1/career-goals/{id}` with a unique `Idempotency-Key`. Disable only the affected delete action while pending; on `204`, remove the card from local/cache state without a full-list refetch before rendering. If the request fails, restore the card and show the API error. For archive/reactivate PATCH actions, apply the returned Career Goal to local/cache state immediately, mark any other active goal inactive, and revalidate in the background when useful.
 
 ## Skill Profile
 

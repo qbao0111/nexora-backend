@@ -140,7 +140,7 @@ public sealed class LearningPathService(
     private async Task<CareerGoal> GetActiveCareerGoalAsync(Guid userId, CancellationToken cancellationToken)
     {
         return await dbContext.CareerGoals.AsNoTracking()
-            .SingleOrDefaultAsync(item => item.UserId == userId && item.Active, cancellationToken)
+            .SingleOrDefaultAsync(item => item.UserId == userId && item.Active && item.DeletedAt == null, cancellationToken)
             ?? throw ActiveCareerGoalRequired();
     }
 
