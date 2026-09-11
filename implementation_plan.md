@@ -961,6 +961,14 @@ Rule-based trước, AI optional sau.
 
 Ưu tiên weakness có evidence mạnh + chưa luyện gần đây.
 
+- [x] Authenticated `GET /api/v1/recommendations/next` returns one nullable `{ data }` read model without creating or mutating Learning Path data.
+- [x] Candidate source is the current user's B11 Learning Path; only `pending` activities are eligible and completed/obsolete activities are excluded.
+- [x] Current B10 competency evidence filters stale numeric gaps and supplies score, evidence count and latest evidence timestamp.
+- [x] Recent-practice signal uses the newer of B10 `LatestEvidenceAt` and completed B11 activity `CompletedAt` for the same competency.
+- [x] Deterministic ranking, truthful reason construction and server-owned estimated-minute mapping are covered by focused unit tests.
+- [x] Owner isolation, nullable empty state, resource IDs, activity durations, stale/completed filtering and non-mutation behavior are covered by integration-test source; execution is subject to the documented local application-control blocker.
+- [x] No AI call, new persistence, migration, ModelSnapshot change, B13 dashboard logic or `PracticeService.cs` change.
+
 ## B13. Progress Dashboard v2 [P1]
 
 Nâng từ analytics cơ bản thành readiness dashboard:
