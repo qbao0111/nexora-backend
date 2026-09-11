@@ -864,6 +864,34 @@ This log records completed implementation milestones and verification evidence. 
 - External alert status: Not configured or verified against a real Sentry project; runbook documents staging/production alert setup for API 5xx and Worker failure spikes.
 - Dependencies: A12 UptimeRobot and A13 broader production configuration hardening remain out of scope.
 
+## 2026-09-11 — B12 Next Practice Recommendation
+
+- Status: Implementation complete / Ready for independent review; local integration execution is blocked by the host Windows application-control policy.
+- Owner: Bảo Nguyên — Backend workstream B.
+- Branch: `feat/next-practice-recommendation`.
+- Base main SHA: `483673091c90c47652cb64c061fd75a71790a50a` (`origin/main` after the latest fast-forward sync).
+- Implementation commit: `f189e4aaf794a45e824a37a62e526e50bf0f259d`.
+- Endpoint: Authenticated `GET /api/v1/recommendations/next`, returning `{ data: { reason, activityType, resourceId, estimatedMinutes, priority } }` or `{ data: null }` when a valid path has no eligible pending candidate. Existing B11 `ACTIVE_CAREER_GOAL_REQUIRED` and `LEARNING_PATH_NOT_FOUND` behavior is preserved.
+- Architecture: Computed read model in `Nexora.Business.Recommendations`, `Nexora.Data.Recommendations`, and a thin authenticated `RecommendationsController`. The service calls `ILearningPathService.GetAsync` and `ISkillProfileService.GetAsync` for the current authenticated user only.
+- B10 dependency: Uses `SkillProfileCompetency.Score`, `EvidenceCount`, `LatestEvidenceAt` and normalized competency codes; it does not rebuild B10 aggregation or inspect raw CV, answer, STAR or scenario records.
+- B11 dependency: Flattens the persisted B11 milestones/activities and uses the activity's real type, priority and nullable resource ID; it does not rebuild the planner or refresh/mutate the path.
+- Candidate/ranking: Only `pending` activities are eligible. Numeric candidates require a current B10 competency match with score below B11's `< 75` gap threshold; completed, obsolete and stale candidates are excluded. Ranking is priority ascending, evidence count descending, last practice ascending, score ascending, milestone order, activity order, then activity ID.
+- Recent-practice definition: For numeric candidates, the newer of B10 `LatestEvidenceAt` and completed B11 activity `CompletedAt` values with the same normalized competency. Qualitative no-code activities use stable Learning Path `CreatedAt` only as a fallback ordering signal and do not receive invented score/evidence.
+- Reason/duration policy: Reasons are deterministic and server-generated from activity/competency name, priority, evidence count and peer recency; no AI is called. Estimated minutes are scenario 20, star_drill 15, interview 20, resume_improvement 15 and external_learning 20.
+- Persistence/migration: None. No entity, `DbSet`, migration, ModelSnapshot change, recommendation score or `PracticeService.cs` change. GET does not mutate Learning Path rows.
+- Owner isolation: No client `userId` is accepted. Existing owner-scoped B10/B11 services receive `User.GetRequiredUserId()`, so another user's path or evidence cannot influence the result.
+- Tests added: 8 focused policy test methods plus 5 duration theory cases, and 13 integration test methods/theories covering authentication, B11 empty/error behavior, ranking, recent practice, stale/completed/obsolete filtering, qualitative fallback, real scenario resource IDs, external-learning null resources, durations, owner isolation, determinism and non-mutation. The focused unit suite passed 12 tests before the final completed-practice regression was added; the final test sources compiled successfully under the local CI-equivalent build.
+- Test execution blocker: Freshly built test assemblies are refused by Windows error `0x800711C7` (Application Control policy), including the integration assembly and full-suite dependencies such as `Nexora.Integrations.dll`/`Sentry.dll`. No assertion failure or live-provider failure was observed; the integration suite could not be executed on this host.
+- Build/restore: `dotnet tool restore` and `dotnet restore Nexora.slnx` passed. The ordinary solution build is blocked locally when Sentry's compiler extension analyzer is loaded; a temporary untracked MSBuild removal of that host-blocked analyzer produced a complete solution build with 0 warnings/errors, and the temporary file was removed before commit.
+- EF result: `dotnet-ef migrations has-pending-model-changes --project src/Nexora.Data --startup-project src/Nexora.Api --no-build` reported `No changes have been made to the model since the last migration.` The repository-local `dotnet ef` shim was unavailable in the shell despite the restored manifest tool, so the installed `dotnet-ef` equivalent was used.
+- Style/analyzers: Changed-file `dotnet format Nexora.slnx style --verify-no-changes --no-restore --include ...` passed; changed-file analyzer verification passed.
+- Vulnerability audit: Current CI-equivalent `dotnet package list --project Nexora.slnx --vulnerable --include-transitive --format json --output-version 1 --no-restore` completed with no vulnerability entries returned.
+- Diff check: CRLF-aware staged `git -c core.whitespace=cr-at-eol diff --cached --check` passed.
+- FE impact: No frontend code changed. B12 API shape, owner scope, ranking, durations and null/legacy B11 error behavior are documented in `docs/03-api-data-contract.md`, `docs/frontend-integration.md` and the no-persistence note in `docs/08-data-model.md`.
+- Remote/CI: No hosted CI claim and no Pull Request was created. Independent review remains required.
+- Blockers: Local Windows Application Control prevents execution of freshly built integration/full-suite assemblies; no product blocker or schema blocker remains. B13 was not started.
+- Provider safety: No live AI, payment, storage, email, production database or external provider calls were made.
+
 ## 2026-09-11 — A11 review correction
 
 - ExternalFailure handling: API business failures now keep their safe 503 envelope and are captured exactly once with canonical request metadata; expected 4xx failures and request cancellation remain non-events.

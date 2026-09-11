@@ -51,6 +51,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/learning-path` | Tạo learning path ban đầu cho active Career Goal; lặp lại là idempotent. |
 | POST | `/learning-path/refresh` | Reconcile learning path hiện tại với Skill Profile mới nhất. |
 | PATCH | `/learning-path/activities/:activityId` | Đánh dấu activity owner là completed. |
+| GET | `/recommendations/next` | Đọc một hoạt động pending được chọn deterministic từ Learning Path hiện tại. |
 | POST | `/interviews` | Tạo và bắt đầu phiên phỏng vấn. |
 | GET | `/interviews/:id` | Đọc session state/question hiện tại của owner. |
 | POST | `/interviews/:id/answers` | Lưu câu trả lời, đánh giá và mở câu hỏi tiếp theo theo policy server. |
@@ -168,6 +169,16 @@ Response có id, careerGoalId, status, timestamps, progress và milestones. prog
 Planner map gap số có score < 60 vào priority 1 và 60..74 vào priority 2; score >= 75 không tạo numeric gap. scenario.<competency> tạo scenario activity với Scenario đã published tương ứng; nếu chưa có resource phù hợp, gap vẫn được biểu diễn bằng external_learning với cùng competencyCode, priority/milestone và resourceId/externalUrl đều null. behavioral.*, interview.* và resume.* lần lượt tạo star_drill, interview và resume_improvement. CV qualitative signal chỉ tạo supporting resume_improvement, không tạo điểm số và không lấn át numeric gaps. B11 không tự sinh URL hoặc Scenario ID.
 
 PATCH /api/v1/learning-path/activities/{activityId} nhận { "status": "completed" }. Chỉ transition pending -> completed được phép; lặp lại transition completed là idempotent, không có API đưa completed trở lại pending. Activity obsolete trả 409; ID của owner khác trả 404 LEARNING_PATH_ACTIVITY_NOT_FOUND. Refresh không xóa activity đã completed, giữ nguyên id/completedAt, chuyển pending gap đã được giải quyết thành obsolete và thêm gap mới ở trạng thái pending. Nếu cùng competency vẫn là gap nhưng có LatestEvidenceAt mới hơn CompletedAt, refresh giữ activity completed cũ và tạo đúng một activity pending cho learning cycle mới; refresh lặp lại với cùng evidence không nhân bản activity.
+
+### Next Practice Recommendation
+
+`GET /api/v1/recommendations/next` yêu cầu Bearer authentication và chỉ đọc Learning Path cùng Skill Profile của authenticated user. Endpoint là computed read model: không gọi AI, không tạo hoặc cập nhật Learning Path, không thêm entity/table/DbSet/migration và không nhận `userId` từ client.
+
+Response thành công dùng envelope chuẩn và trả `data` là `null` khi path hợp lệ nhưng không còn activity `pending`; trạng thái rỗng này là `200`, không phải lỗi. Nếu user chưa có active Career Goal hoặc active goal chưa có Learning Path, endpoint giữ nguyên lỗi B11 tương ứng `ACTIVE_CAREER_GOAL_REQUIRED` hoặc `LEARNING_PATH_NOT_FOUND`.
+
+Khi có ứng viên, response chỉ gồm `reason`, `activityType`, nullable `resourceId`, `estimatedMinutes` và `priority`. Chỉ activity `pending` được xét; `completed`, `obsolete`, và numeric activity không còn là gap hiện tại của B10 (không có competency match hoặc score >= 75) bị loại. Scenario chỉ trả resource ID đã có trong B11; `external_learning` và activity không có resource trả `resourceId: null`.
+
+Ranking rule deterministic theo thứ tự: `priority` tăng dần; `EvidenceCount` giảm dần; `LastPracticeAt` tăng dần; score tăng dần; milestone `SortOrder`; activity `SortOrder`; activity ID. Với competency, `LastPracticeAt` là thời điểm mới nhất giữa B10 `LatestEvidenceAt` và `CompletedAt` của activity B11 đã completed cùng competency. Với qualitative resume improvement không có competency code, ranking chỉ dùng timestamp ổn định của Learning Path và `EvidenceCount = 0`/không có score để làm fallback. `estimatedMinutes` là server policy: scenario 20, star_drill 15, interview 20, resume_improvement 15, external_learning 20. `reason` được tạo deterministic từ tên activity/competency, priority, evidence count và tín hiệu recency; không chứa raw CV, answer, STAR hoặc AI output.
 
 ### Tạo interview
 

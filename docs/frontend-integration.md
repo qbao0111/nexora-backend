@@ -115,6 +115,12 @@ The response is a nested milestones[].activities[] read model. Each activity con
 
 To complete an activity, send PATCH /api/v1/learning-path/activities/{activityId} with { "status": "completed" }. Completion is idempotent; clients should not offer an uncomplete transition. When refreshing, retain completed activity IDs and completedAt values, hide/label obsolete pending activities, and add new pending activities. If newer evidence leaves a previously completed competency below threshold, the response contains the preserved completed activity plus one new pending activity for that cycle; repeated refreshes with unchanged evidence do not add more rows. Switching the active Career Goal selects a separate path and does not delete the previous goal's path/history.
 
+## Next Practice Recommendation
+
+Call `GET /api/v1/recommendations/next` with the user's Bearer token after the Learning Path exists. The endpoint is owner-scoped and read-only: it consumes the current user's persisted Learning Path and computed Skill Profile, does not call AI, and does not create or refresh path data. The response is `{ "data": { "reason", "activityType", "resourceId", "estimatedMinutes", "priority" } }`; `resourceId` may be `null` for `external_learning` or other activities without a real resource.
+
+Only pending activities can be selected. Completed/obsolete activities and stale numeric competency gaps are excluded. Selection is deterministic: lower B11 priority, stronger B10 evidence, less recent practice, weaker current score, Learning Path order, then activity ID. Recent practice is the newer of B10 `latestEvidenceAt` and completed B11 activity timestamps for the same competency. If a valid path has no pending candidate, the API returns `200` with `data: null`. If no active goal/path exists, handle the existing B11 `ACTIVE_CAREER_GOAL_REQUIRED`/`LEARNING_PATH_NOT_FOUND` errors. The duration is server-owned: scenario/interview/external learning 20 minutes, star drill/resume improvement 15 minutes.
+
 ## Interview and report flow
 
 1. Optional `GET /plans` (`200`) and `POST /checkout-sessions` (`201`, idempotency key) for a paid development entitlement:

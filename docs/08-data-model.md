@@ -59,6 +59,10 @@ Activity statuses are pending, completed and obsolete; only pending-to-completed
 
 Numeric gap policy is explicit: scores below 60 are critical priority, scores 60 through 74 are developing priority, and scores 75 or higher are not numeric gaps. Qualitative CV signals may produce supporting resume activities but never a numeric score. Progress is computed at read time as completed activities divided by non-obsolete activities; an empty path returns 0/0 and 0%. Learning Path rows are included in privacy export and deleted during account deletion before the Career Goal rows.
 
+### Next Practice Recommendation read model
+
+B12 adds no persisted model. `GET /api/v1/recommendations/next` flattens the authenticated user's existing Learning Path and reads the authenticated user's computed B10 Skill Profile. It returns one deterministic recommendation or `data: null` when no pending candidate remains; it never writes Learning Path rows, adds a `DbSet`, or requires a migration. The endpoint does not read raw practice tables or call an AI provider.
+
 ### Interview session state machine
 
 ```text
