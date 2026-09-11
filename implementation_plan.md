@@ -1,15 +1,17 @@
 # Nexora — Implementation Plan trước Production
 
-> **Phạm vi:** Backend production hardening + hoàn thiện product loop cho Nexora  
+> **Phạm vi:** Course MVP end-to-end product flow, demo/testing/staging readiness  
 > **Team Backend:** **Bảo (qb)** và **Bảo Nguyên**  
-> **Baseline khi lập kế hoạch:** `main` tại `78fc7f5d719d3a058db59b291a463236e2e5b065` — SignalR resource notifications đã merge.  
+> **Current baseline:** `main` tại `e25d4022955ad4a097632926ab725044c829cde0` — A11 đã merge; A11/A12 hiện được de-scope khỏi course MVP.  
 > **Nguyên tắc lớn:** chia task theo domain/file ownership để hai người có thể code song song mà hạn chế conflict; REST vẫn là source of truth, SignalR chỉ notification; không rewrite kiến trúc Modular Monolith hiện tại.
 
 ---
 
-## 1. Mục tiêu production
+> **Scope decision (2026-09-11):** A11 Sentry operational monitoring and A12 uptime monitoring are intentionally dropped from the course MVP, not failures. The expected user scale and staging/demo focus do not justify operational setup, release management, alert routing or on-call workflows. Existing Render logs, structured backend logs, request IDs, API error codes and health endpoints are sufficient for the current scope. A13 is redefined as minimal staging/deployment configuration; effort is redirected to frontend integration, E2E validation and demo readiness.
 
-Trước khi public production, Nexora cần đạt 5 mục tiêu:
+## 1. Course MVP / staging outcome
+
+Để hoàn thiện course MVP, demo và staging, Nexora cần đạt 5 mục tiêu:
 
 1. **Một vòng trải nghiệm Free đủ thuyết phục**
    - 1 lần phân tích CV miễn phí.
@@ -32,12 +34,12 @@ Trước khi public production, Nexora cần đạt 5 mục tiêu:
    - Text input và voice-to-text; transcript được sửa trước khi submit.
    - Không làm camera/body-language trong production scope này.
 
-4. **Production infrastructure đủ an toàn và quan sát được**
+4. **Minimal staging/deployment safety cho course MVP**
    - Cloudflare R2 cho storage production.
    - Resend cho transactional email.
-   - Sentry cho error monitoring.
-   - UptimeRobot cho uptime monitoring.
-   - Health endpoint, SignalR, Neon migration/deployment flow được harden.
+   - CORS/JWT/database connection hoạt động đúng cho staging.
+   - Staging khởi động thành công và FE gọi được BE.
+   - Health endpoint hoạt động; không commit secrets.
 
 5. **Auth đủ tiêu chuẩn public product**
    - Xác minh email.
@@ -50,7 +52,7 @@ Trước khi public production, Nexora cần đạt 5 mục tiêu:
 
 # 2. Priority
 
-## P0 — Bắt buộc trước Production
+## P0 — Required for course MVP / staging
 
 - Cloudflare R2 production storage.
 - Email verification + Resend.
@@ -63,8 +65,6 @@ Trước khi public production, Nexora cần đạt 5 mục tiêu:
 - Per-answer coaching: strengths / improvements / improvedAnswer.
 - Partial report khi user dừng sau phần Free.
 - SignalR integration đầy đủ cho các async state liên quan.
-- Sentry API + Worker.
-- UptimeRobot production monitor.
 - Migration/runbook/backup/recovery/security tests.
 
 ## P1 — Nên có ở Production nếu timeline cho phép
@@ -99,9 +99,7 @@ Trước khi public production, Nexora cần đạt 5 mục tiêu:
 - AI operation liên quan CV + Interview.
 - Free-trial / question-limit semantics của CV + Interview.
 - Cloudflare R2.
-- Sentry.
-- UptimeRobot.
-- Shared production wiring/config integration.
+- Minimal staging/deployment configuration and shared integration.
 
 **File ownership chính trong thời gian làm song song:**
 
@@ -790,60 +788,46 @@ Tasks:
 
 ---
 
-# 9. PHASE 3 — Learning loop + Observability
+# 9. PHASE 3 — Learning loop + delivery readiness
 
 **Thời lượng mục tiêu:** 5–7 ngày.
 
-## Workstream A — Bảo: Observability / Production infra
+## Workstream A — Bảo: Minimal staging/deployment safety
 
-## A11. Sentry [P0]
+## A11. Sentry [DROPPED / OUT OF SCOPE FOR COURSE MVP]
 
-API + Worker đều phải có Sentry.
+This is an intentional course-MVP scope decision, not a failed deliverable.
 
-Tasks:
+- Existing merged API/Worker Sentry code may remain because it is safe with no DSN.
+- Do not configure or operationally verify Sentry for the course MVP.
+- Do not add controlled test endpoints, DSN/release deployment requirements or alert routing.
+- Existing deterministic privacy tests remain useful regression coverage; no new A11 work is planned.
 
-- [x] Add Sentry ASP.NET Core integration.
-- [x] Worker exception capture.
-- [x] Environment: Development/Staging/Production.
-- [x] Release/version configuration hook (`Sentry:Release`) accepts a deploy/build identifier.
-- [x] Correlation/request ID attach vào event.
-- [ ] Background job aggregate ID có thể attach dạng safe tag.
-- [x] `SendDefaultPii = false`.
-- [x] Không gửi:
-  - JWT/Authorization;
-  - refresh token;
-  - DeepSeek/Gemini key;
-  - raw CV;
-  - answer/transcript;
-  - AI prompt/response;
-  - payment secret.
-- [x] Filter expected 4xx/business validation để tránh noise.
-- [ ] Alert cho unhandled 5xx/job failure spike.
+## A12. UptimeRobot [DROPPED / OUT OF SCOPE FOR COURSE MVP]
 
-## A12. UptimeRobot [P0]
+No uptime monitor, alert threshold, external notification route or status page is required.
 
-Không cần SDK trong repo.
+Existing `/health/live` and `/api/v1/health` endpoints remain useful for Render and staging smoke tests.
 
-Production monitor:
+## A13. Minimal staging/deployment configuration [P0 — COURSE MVP]
 
-```text
-GET https://<api-domain>/health/live
-```
+Required scope:
 
-- [ ] 5 phút/lần hoặc mức Free plan hỗ trợ.
-- [ ] Alert email tới team.
-- [ ] Không dùng endpoint trả nội dung nhạy cảm.
-- [ ] Nếu readiness endpoint public-safe, có thể thêm monitor thứ 2 sau.
-- [ ] Runbook ghi rõ: uptime alert -> check Sentry -> check Render/Railway -> check Neon.
+- [ ] Frontend/backend CORS works.
+- [ ] JWT configuration is safe enough for staging/demo.
+- [ ] Database connection is configured and staging starts successfully.
+- [ ] R2 storage works where enabled.
+- [ ] Resend works where required.
+- [ ] FE can call BE and health endpoint works.
+- [ ] No secrets are committed.
+- [ ] Deployment documentation matches the actual Render runtime.
 
-## A13. Production config hardening [P0]
+Not required:
 
-- [ ] `.env.example` có tên key nhưng không secret.
-- [ ] Production Safety validate R2/Resend/Sentry config cần thiết.
-- [ ] Render/Railway env docs.
-- [ ] `Frontend:AllowedOrigins` đúng Vercel custom domain.
-- [ ] SignalR hub CORS/JWT vẫn pass.
-- [ ] Rotate các secret đã từng xuất hiện trong screenshot/chat nếu còn dùng.
+- Sentry DSN, release wiring, alert validation or environment-tag verification.
+- Uptime monitoring, status pages or on-call workflows.
+- Railway parity unless it is actually used.
+- Advanced production-operations hardening.
 
 ---
 
@@ -1095,7 +1079,7 @@ Trong phase này **feature freeze**. Chỉ bugfix/hardening.
 - [ ] Signed upload expire đúng.
 - [ ] Delete account xoá/queue xoá R2 object liên quan.
 - [ ] Rate limit auth/email endpoints.
-- [x] Sentry PII scrubbing test.
+- [x] Existing Sentry PII scrubbing regression retained as legacy coverage; no operational gate.
 
 ## 11.4 Billing/Freemium
 
@@ -1140,13 +1124,19 @@ Checkout
 - [ ] Failure trước first useful question không mất trial.
 - [ ] Report retry vẫn free/idempotent.
 
-## 11.5 Observability
+## 11.5 MVP troubleshooting baseline
 
-- [ ] UptimeRobot nhận `/health/live` 200.
-- [ ] Test intentionally captured exception xuất hiện ở Sentry staging.
-- [x] Sentry event không có Authorization/CV/answer/secret.
-- [x] Worker failure có event + correlation safe.
-- [ ] Alert test được gửi tới team.
+For the current course MVP, troubleshooting uses:
+
+- Render logs.
+- Backend structured logs.
+- `requestId`.
+- API error code/message.
+- Health endpoints.
+- Browser devtools/network.
+- Manual end-to-end tests.
+
+This is sufficient for the current scope; do not claim enterprise-grade observability. A11 and A12 operational checks are intentionally dropped.
 
 ## 11.6 Performance
 
@@ -1172,9 +1162,9 @@ Checkout
 | A7 | Free Q1–Q3 + paid continuation | P0 | A6 | Medium |
 | A8 | strengths/improvements/improvedAnswer | P0 | A6 | Medium AI catalog |
 | A9 | Partial/full report | P0 | A7/A8 | Medium |
-| A11 | Sentry API + Worker | P0 | core merge stable | Medium shared wiring |
-| A12 | UptimeRobot | P0 | prod URL | Very low |
-| A13 | Production config/runbook | P0 | A1/A11/B1 | Medium |
+| A11 | Sentry operational monitoring | DROPPED | course MVP scope | — |
+| A12 | UptimeRobot | DROPPED | course MVP scope | — |
+| A13 | Minimal staging/deployment configuration | P0 | A1/B1/current app | Medium |
 | A10 | Voice input/STT contract | P1 | interview stable | Low |
 
 ## BẢO NGUYÊN — Recommended order
@@ -1242,9 +1232,9 @@ Bảo merge Interview schema trước. Sau đó **Bảo Nguyên mới generate P
 ```text
 Bảo                         Bảo Nguyên
 ────────────────────        ────────────────────
-Sentry                      Learning Path
-UptimeRobot                 Next Recommendation
-Prod config/runbook         Progress v2
+Minimal staging config       Learning Path
+Frontend integration         Next Recommendation
+Demo/E2E readiness           Progress v2
                             Weekly goal optional
 ```
 
@@ -1331,13 +1321,10 @@ Email__FromAddress=
 Email__FromName=Nexora
 Frontend__PublicUrl=https://...
 
-Sentry__Dsn=
-Sentry__Release=
-
 Authentication__Google__ClientId=        # optional
 ```
 
-UptimeRobot config nằm ngoài repo; runbook ghi monitor URL + contact.
+Sentry DSN/release configuration is not required for the course MVP. UptimeRobot configuration is intentionally out of scope.
 
 ---
 
@@ -1402,8 +1389,7 @@ Mỗi task chỉ Done khi:
 - [ ] R2 production.
 - [ ] Neon migrated + backup.
 - [ ] Resend verified domain.
-- [ ] Sentry alert.
-- [ ] UptimeRobot alert.
+- [ ] Staging service starts and health endpoint passes.
 - [ ] SignalR production connection.
 
 ## Security
@@ -1421,7 +1407,7 @@ Mỗi task chỉ Done khi:
 - [ ] Rollback path.
 - [ ] DB restore test.
 - [ ] Staging soak 24–48h nếu timeline cho phép.
-- [ ] Team biết xem Sentry/UptimeRobot/hosting logs.
+- [ ] Team biết xem Render/backend logs, requestId, API errors and health endpoints.
 
 ---
 
@@ -1446,11 +1432,9 @@ Mỗi task chỉ Done khi:
 14. B7 Scenario v2
 15. B8/B9 STAR Story + Career Goal + Bảo Nguyên migration
 16. B10–B13 Skill/Learning/Progress
-17. A11 Sentry
-18. A12 UptimeRobot
-19. A13 Production config/runbook
-20. B14–B17 Optional reminders/Google OAuth
-21. Feature freeze + release gate
+17. Minimal staging/deployment config
+18. B14–B17 Optional reminders/Google OAuth
+19. Feature freeze + release gate
 ```
 
 > Không bắt buộc merge đúng từng số nếu một task bị block, nhưng **không được phá migration ownership và hot-file ownership**.
@@ -1463,7 +1447,7 @@ Với team 2 backend dev, cách an toàn nhất là:
 
 ```text
 Bảo
-= CV + Interview + R2 + Observability + shared production wiring
+= CV + Interview + R2 + minimal staging/deployment config
 
 Bảo Nguyên
 = Auth + Resend + Scenario/STAR + Learning loop + optional reminders/Google
