@@ -84,6 +84,42 @@ public sealed class ProgressDashboardApiTests
     }
 
     [Fact]
+    public async Task DashboardReturnsRecentScoresAndActivityInDescendingOrderWithoutCrossUserRows()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var ownerClient = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(ownerClient);
+        Authorize(ownerClient, owner);
+        using var otherClient = factory.CreateHttpsClient();
+        var other = await RegisterAsync(otherClient);
+        Authorize(otherClient, other);
+        await SeedFeatureEntitlementAsync(factory, owner.UserId);
+
+        await SeedInterviewWithReportAsync(factory, owner.UserId, 61, At(2));
+        await SeedInterviewWithReportAsync(factory, owner.UserId, 89, At(3));
+        await SeedScenarioAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Completed, At(4));
+        await SeedStarAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Completed, At(5));
+        await SeedScenarioAttemptAsync(factory, other.UserId, PracticeFeatureValues.Completed, At(6));
+
+        using var response = await ownerClient.GetAsync("/api/v1/progress/dashboard");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var data = await DataAsync(response);
+        var historical = data.GetProperty("historicalStats");
+        var scores = historical.GetProperty("recentInterviewScores").EnumerateArray().ToArray();
+        var activity = historical.GetProperty("recentActivity").EnumerateArray().ToArray();
+
+        Assert.Equal(2, historical.GetProperty("completedInterviews").GetInt32());
+        Assert.Equal(89, scores[0].GetProperty("score").GetInt32());
+        Assert.Equal(61, scores[1].GetProperty("score").GetInt32());
+        Assert.Equal(4, activity.Length);
+        Assert.Equal("star", activity[0].GetProperty("kind").GetString());
+        Assert.Equal("scenario", activity[1].GetProperty("kind").GetString());
+        Assert.Equal("interview", activity[2].GetProperty("kind").GetString());
+        Assert.Equal("interview", activity[3].GetProperty("kind").GetString());
+    }
+
+    [Fact]
     public async Task DashboardMapsReadinessImprovementsRecommendationAndLegacyStats()
     {
         var historical = new ProgressView(
@@ -378,6 +414,48 @@ public sealed class ProgressDashboardApiTests
         });
         db.AddRange(subscription, entitlement, reservation);
         await db.SaveChangesAsync();
+    }
+
+    private static async Task<Guid> SeedInterviewWithReportAsync(
+        NexoraApiFactory factory,
+        Guid userId,
+        int score,
+        DateTimeOffset completedAt)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var subscription = new Subscription
+        {
+            Id = Guid.NewGuid(), UserId = userId, Status = BillingValues.Active, StartsAt = completedAt.AddDays(-1),
+            EndsAt = completedAt.AddYears(100), CreatedAt = completedAt, UpdatedAt = completedAt
+        };
+        var entitlement = new Entitlement
+        {
+            Id = Guid.NewGuid(), UserId = userId, SubscriptionId = subscription.Id, PlanCodeSnapshot = "dashboard-report-test",
+            Status = BillingValues.Active, StartsAt = subscription.StartsAt, EndsAt = subscription.EndsAt,
+            CreatedAt = completedAt, UpdatedAt = completedAt, ConcurrencyToken = Guid.NewGuid()
+        };
+        var reservation = new UsageEvent
+        {
+            Id = Guid.NewGuid(), UserId = userId, EntitlementId = entitlement.Id, Action = BillingValues.Consume,
+            Quantity = 1, SourceType = "interview", SourceId = Guid.NewGuid().ToString("N"),
+            IdempotencyKey = Guid.NewGuid().ToString("N"), CreatedAt = completedAt
+        };
+        var session = new InterviewSession
+        {
+            Id = Guid.NewGuid(), UserId = userId, ReservationEventId = reservation.Id, Role = "Backend Developer",
+            Seniority = "senior", InterviewType = "technical", Difficulty = "medium", Status = PracticeValues.Completed,
+            Version = 1, CreatedAt = completedAt, UpdatedAt = completedAt, CompletedAt = completedAt
+        };
+        var report = new InterviewReport
+        {
+            Id = Guid.NewGuid(), UserId = userId, InterviewSessionId = session.Id, OverallScore = score,
+            Rubric = "[]", Strengths = "[]", Gaps = "[]", ActionPlan = "[]", Disclaimer = "test",
+            ModelVersion = "test", PromptVersion = "test", RubricVersion = "test", SchemaVersion = "test", CreatedAt = completedAt
+        };
+        db.AddRange(subscription, entitlement, reservation, session, report);
+        await db.SaveChangesAsync();
+        return session.Id;
     }
 
     private static async Task SeedScenarioAttemptAsync(

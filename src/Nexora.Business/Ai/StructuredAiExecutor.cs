@@ -69,7 +69,16 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
                 if (validation.IsValid)
                 {
-                    LogExecutionSucceeded(logger, operation.Purpose, attempt, isRepairAttempt, stopwatch.ElapsedMilliseconds, correlationId);
+                    LogExecutionSucceeded(
+                        logger,
+                        operation.Purpose,
+                        modelVersion,
+                        request.MaxOutputTokens,
+                        ReasoningMode(currentReasoningOverride),
+                        attempt,
+                        isRepairAttempt,
+                        stopwatch.ElapsedMilliseconds,
+                        correlationId);
                     if (isRepairAttempt)
                     {
                         LogOutputRepaired(logger, operation.Purpose, attempt, correlationId);
@@ -94,11 +103,30 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                         stopwatch.ElapsedMilliseconds);
                 }
 
-                LogValidationFailed(logger, operation.Purpose, validation.FailureReason ?? "unknown", validation.ValidationStage ?? "validation", attempt, validation.Repairable, correlationId);
+                LogValidationFailed(
+                    logger,
+                    operation.Purpose,
+                    modelVersion,
+                    request.MaxOutputTokens,
+                    ReasoningMode(currentReasoningOverride),
+                    validation.FailureReason ?? "unknown",
+                    validation.ValidationStage ?? "validation",
+                    attempt,
+                    validation.Repairable,
+                    correlationId);
 
                 if (!validation.Repairable || attempt >= maxAttempts)
                 {
-                    LogExecutionTerminalFailure(logger, operation.Purpose, validation.FailureReason ?? "unknown", validation.ValidationStage ?? "validation", attempt, correlationId);
+                    LogExecutionTerminalFailure(
+                        logger,
+                        operation.Purpose,
+                        modelVersion,
+                        request.MaxOutputTokens,
+                        ReasoningMode(currentReasoningOverride),
+                        validation.FailureReason ?? "unknown",
+                        validation.ValidationStage ?? "validation",
+                        attempt,
+                        correlationId);
 
                     throw new BusinessException("AI_OUTPUT_INVALID", "Dữ liệu phản hồi từ AI không hợp lệ.", BusinessErrorKind.ExternalFailure);
                 }
@@ -115,8 +143,10 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                 LogProviderRequestFailed(
                     logger,
                     operation.Purpose,
+                    modelVersion,
                     ex.Kind.ToString(),
                     request.MaxOutputTokens,
+                    ReasoningMode(currentReasoningOverride),
                     ex.RetryHint.ToString(),
                     retryReason,
                     attempt,
@@ -150,7 +180,16 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                     attempt >= maxAttempts ||
                     !IsRetryable(ex.Kind))
                 {
-                    LogProviderTerminalFailure(logger, operation.Purpose, ex.Kind.ToString(), attempt, correlationId);
+                    LogProviderTerminalFailure(
+                        logger,
+                        operation.Purpose,
+                        modelVersion,
+                        request.MaxOutputTokens,
+                        ReasoningMode(currentReasoningOverride),
+                        ex.Kind.ToString(),
+                        ex.RetryHint.ToString(),
+                        attempt,
+                        correlationId);
 
                     throw MapProviderException(ex);
                 }
@@ -166,6 +205,9 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
     private static bool IsRetryable(AiProviderFailureKind kind) =>
         kind is AiProviderFailureKind.RateLimited or AiProviderFailureKind.Timeout or AiProviderFailureKind.Unavailable or AiProviderFailureKind.InvalidResponse;
 
+    private static string ReasoningMode(AiReasoningEffortOverride? reasoningOverride) =>
+        reasoningOverride?.ToString().ToLowerInvariant() ?? "configured";
+
     private static BusinessException MapProviderException(AiProviderException exception) => exception.Kind switch
     {
         AiProviderFailureKind.RateLimited => new BusinessException("AI_RATE_LIMITED", "AI provider đang bị giới hạn tốc độ.", BusinessErrorKind.ExternalFailure),
@@ -173,21 +215,23 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
         _ => new BusinessException("AI_OUTPUT_INVALID", "Dữ liệu phản hồi từ AI không hợp lệ.", BusinessErrorKind.ExternalFailure)
     };
 
-    [LoggerMessage(LogLevel.Information, "AI structured execution succeeded: purpose={Purpose}, attempt={Attempt}, repairUsed={RepairUsed}, latencyMs={LatencyMs}, correlationId={CorrelationId}")]
-    private static partial void LogExecutionSucceeded(ILogger logger, string purpose, int attempt, bool repairUsed, long latencyMs, string correlationId);
+    [LoggerMessage(LogLevel.Information, "AI structured execution succeeded: purpose={Purpose}, model={Model}, effectiveBudget={EffectiveBudget}, reasoningMode={ReasoningMode}, attempt={Attempt}, repairUsed={RepairUsed}, latencyMs={LatencyMs}, correlationId={CorrelationId}")]
+    private static partial void LogExecutionSucceeded(ILogger logger, string purpose, string model, int effectiveBudget, string reasoningMode, int attempt, bool repairUsed, long latencyMs, string correlationId);
 
-    [LoggerMessage(LogLevel.Warning, "AI structured validation failed: purpose={Purpose}, failureReason={FailureReason}, stage={Stage}, attempt={Attempt}, repairable={Repairable}, correlationId={CorrelationId}")]
-    private static partial void LogValidationFailed(ILogger logger, string purpose, string failureReason, string stage, int attempt, bool repairable, string correlationId);
+    [LoggerMessage(LogLevel.Warning, "AI structured validation failed: purpose={Purpose}, model={Model}, effectiveBudget={EffectiveBudget}, reasoningMode={ReasoningMode}, failureReason={FailureReason}, stage={Stage}, attempt={Attempt}, repairable={Repairable}, correlationId={CorrelationId}")]
+    private static partial void LogValidationFailed(ILogger logger, string purpose, string model, int effectiveBudget, string reasoningMode, string failureReason, string stage, int attempt, bool repairable, string correlationId);
 
-    [LoggerMessage(LogLevel.Error, "AI structured execution failed terminal: purpose={Purpose}, failureReason={FailureReason}, stage={Stage}, attempt={Attempt}, outcome=failed, correlationId={CorrelationId}")]
-    private static partial void LogExecutionTerminalFailure(ILogger logger, string purpose, string failureReason, string stage, int attempt, string correlationId);
+    [LoggerMessage(LogLevel.Error, "AI structured execution failed terminal: purpose={Purpose}, model={Model}, effectiveBudget={EffectiveBudget}, reasoningMode={ReasoningMode}, failureReason={FailureReason}, stage={Stage}, attempt={Attempt}, outcome=failed, correlationId={CorrelationId}")]
+    private static partial void LogExecutionTerminalFailure(ILogger logger, string purpose, string model, int effectiveBudget, string reasoningMode, string failureReason, string stage, int attempt, string correlationId);
 
-    [LoggerMessage(LogLevel.Warning, "AI provider request failed: purpose={Purpose}, failureKind={FailureKind}, effectiveBudget={EffectiveBudget}, retryHint={RetryHint}, retryReason={RetryReason}, attempt={Attempt}, latencyMs={LatencyMs}, correlationId={CorrelationId}")]
+    [LoggerMessage(LogLevel.Warning, "AI provider request failed: purpose={Purpose}, model={Model}, failureKind={FailureKind}, effectiveBudget={EffectiveBudget}, reasoningMode={ReasoningMode}, retryHint={RetryHint}, retryReason={RetryReason}, attempt={Attempt}, latencyMs={LatencyMs}, correlationId={CorrelationId}")]
     private static partial void LogProviderRequestFailed(
         ILogger logger,
         string purpose,
+        string model,
         string failureKind,
         int effectiveBudget,
+        string reasoningMode,
         string retryHint,
         string retryReason,
         int attempt,
@@ -200,8 +244,8 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
     [LoggerMessage(LogLevel.Information, "AI structured retry using reasoning override: purpose={Purpose}, effectiveEffort={EffectiveEffort}, attempt={Attempt}, retryReason=reasoning_budget_exhausted, correlationId={CorrelationId}")]
     private static partial void LogReasoningFallbackRetry(ILogger logger, string purpose, string effectiveEffort, int attempt, string correlationId);
 
-    [LoggerMessage(LogLevel.Error, "AI provider request failed terminal: purpose={Purpose}, failureKind={FailureKind}, attempt={Attempt}, outcome=failed, correlationId={CorrelationId}")]
-    private static partial void LogProviderTerminalFailure(ILogger logger, string purpose, string failureKind, int attempt, string correlationId);
+    [LoggerMessage(LogLevel.Error, "AI provider request failed terminal: purpose={Purpose}, model={Model}, failureKind={FailureKind}, effectiveBudget={EffectiveBudget}, reasoningMode={ReasoningMode}, retryHint={RetryHint}, attempt={Attempt}, outcome=failed, correlationId={CorrelationId}")]
+    private static partial void LogProviderTerminalFailure(ILogger logger, string purpose, string model, int effectiveBudget, string reasoningMode, string failureKind, string retryHint, int attempt, string correlationId);
 
     [LoggerMessage(LogLevel.Information, "AI output repaired successfully: purpose={Purpose}, attempt={Attempt}, correlationId={CorrelationId}")]
     private static partial void LogOutputRepaired(ILogger logger, string purpose, int attempt, string correlationId);

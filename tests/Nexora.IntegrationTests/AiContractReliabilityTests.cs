@@ -82,7 +82,6 @@ public sealed class AiContractReliabilityTests
         // Authoritatively normalized to applicable = false:
         Assert.False(starElement.GetProperty("applicable").GetBoolean());
     }
-
     [Fact]
     public async Task FreePrimaryAnswerDoesNotGenerateAdaptiveFollowup()
     {
@@ -263,6 +262,89 @@ public sealed class AiContractReliabilityTests
         Assert.True(answerResponse.IsSuccessStatusCode, await answerResponse.Content.ReadAsStringAsync());
         // Exactly 2 calls made for interview.evaluate (1 initial + 1 repair)
         Assert.Equal(2, aiProvider.GetCallCount("interview.evaluate"));
+
+        var evaluationRequests = aiProvider.Invocations
+            .Where(item => item.Purpose == AiPurposes.InterviewEvaluate)
+            .ToArray();
+        var repairInstructions = evaluationRequests[1].Instructions ?? string.Empty;
+        Assert.Contains("rubric.criteria_missing", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("exactly four rubric items", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("correctness, structure, completeness, and clarity", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("no duplicate or missing criteria", repairInstructions, StringComparison.Ordinal);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
+    }
+
+    [Fact]
+    public async Task NonActionableCoachingRepairsOnAttempt2WithFocusedInstructionsAndPersistsOnce()
+    {
+        var aiProvider = new TestAiProvider();
+        var candidateAnswer = "Polymorphism enables treating objects of different types through a common interface.";
+
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "Good answer."),
+                new RubricScore("structure", 80, "Clear structure."),
+                new RubricScore("completeness", 80, "Complete response."),
+                new RubricScore("clarity", 85, "Very clear.")
+            ],
+            "Good job.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            Strengths: ["Polymorphism is clear."],
+            Improvements: ["The answer is clear."],
+            ImprovedAnswer: candidateAnswer));
+
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "Good answer."),
+                new RubricScore("structure", 80, "Clear structure."),
+                new RubricScore("completeness", 80, "Complete response."),
+                new RubricScore("clarity", 85, "Very clear.")
+            ],
+            "Good job.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            Strengths: ["Polymorphism is clear."],
+            Improvements: ["Add one concrete example if available."],
+            ImprovedAnswer: candidateAnswer));
+
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 5);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var interviewId = await StartInterviewAsync(client, "technical", "coaching-actionable-repair");
+        await ProcessJobsAsync(factory);
+        var questionId = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+
+        using var answerRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/answers")
+        {
+            Content = JsonContent.Create(new { questionId, content = candidateAnswer, durationSeconds = 45 })
+        };
+        answerRequest.Headers.Add("Idempotency-Key", "answer-coaching-actionable-repair");
+        using var answerResponse = await client.SendAsync(answerRequest);
+
+        Assert.Equal(HttpStatusCode.OK, answerResponse.StatusCode);
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+
+        var evaluationRequests = aiProvider.Invocations
+            .Where(item => item.Purpose == AiPurposes.InterviewEvaluate)
+            .ToArray();
+        var repairInstructions = evaluationRequests[1].Instructions ?? string.Empty;
+        Assert.Contains("interview.improvements_not_actionable", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("1-3 improvement items", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("add, include, explain, quantify, clarify, describe, mention, specify, show, provide, use", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("nêu, bổ sung, thêm, định lượng, làm rõ, giải thích, or mô tả", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("Do not invent facts, experience, or technologies", repairInstructions, StringComparison.Ordinal);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
     }
 
     [Fact]
@@ -318,6 +400,53 @@ public sealed class AiContractReliabilityTests
         Assert.Equal(0, answerCount);
     }
 
+    [Fact]
+    public async Task NullRubricItemMapsToSafe503AndDoesNotPersistAnswer()
+    {
+        var aiProvider = new TestAiProvider();
+        var malformed = new AnswerEvaluation(
+            [
+                null!,
+                new RubricScore("structure", 80, "Clear structure."),
+                new RubricScore("completeness", 80, "Complete response."),
+                new RubricScore("clarity", 80, "Clear communication.")
+            ],
+            "Malformed rubric",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            Strengths: ["Grounded answer"],
+            Improvements: ["Add one concrete example if available."],
+            ImprovedAnswer: "Keep the same answer and add concrete evidence if available.");
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, malformed);
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, malformed);
+
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 5);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var interviewId = await StartInterviewAsync(client, "technical", "null-rubric-item");
+        await ProcessJobsAsync(factory);
+        var questionId = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/answers")
+        {
+            Content = JsonContent.Create(new { questionId, content = "A grounded answer.", durationSeconds = 30 })
+        };
+        request.Headers.Add("Idempotency-Key", "null-rubric-item-answer");
+        using var response = await client.SendAsync(request);
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("AI_OUTPUT_INVALID", body, StringComparison.Ordinal);
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(0, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
+    }
     [Fact]
     public async Task AnswerCoachingPersistsAndIdempotentReplayDoesNotReevaluate()
     {

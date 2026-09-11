@@ -122,4 +122,23 @@ public sealed class CanonicalRubricValidatorTests
         Assert.Equal("rubric.evidence_blank", result.FailureReason);
         Assert.True(result.Repairable);
     }
+
+    [Fact]
+    public void ValidateAndNormalizeTreatsNullRubricItemAsRepairableSchemaFailure()
+    {
+        var input = new RubricScore[]
+        {
+            null!,
+            new RubricScore("structure", 75, "Logical flow"),
+            new RubricScore("completeness", 90, "Covered everything"),
+            new RubricScore("clarity", 80, "Very clear")
+        };
+
+        var result = CanonicalRubricValidator.ValidateAndNormalize(input);
+
+        Assert.False(result.IsValid);
+        Assert.Equal("rubric.item_invalid", result.FailureReason);
+        Assert.Equal("semantic", result.ValidationStage);
+        Assert.True(result.Repairable);
+    }
 }

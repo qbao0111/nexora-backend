@@ -1,6 +1,9 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Nexora.Business.Ai;
 
@@ -16,9 +19,13 @@ public sealed class GeminiOptions
     public int RetryBaseDelayMilliseconds { get; set; } = 250;
 }
 
-public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptions> options) : IAiProvider
+public sealed partial class GeminiAiProvider(
+    HttpClient httpClient,
+    IOptions<GeminiOptions> options,
+    ILogger<GeminiAiProvider>? logger = null) : IAiProvider
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly ILogger<GeminiAiProvider> logger = logger ?? NullLogger<GeminiAiProvider>.Instance;
 
     public string ModelVersion => $"gemini:{options.Value.Model.Trim()}";
 
@@ -31,6 +38,7 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
             throw new AiProviderException(AiProviderFailureKind.Configuration, "AI provider configuration is incomplete.");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(configuration.TimeoutSeconds));
+        var stopwatch = Stopwatch.StartNew();
 
         try
         {
@@ -40,7 +48,7 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
                 using var response = await httpClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
                 if (response.IsSuccessStatusCode)
                 {
-                    try { return await ReadStructuredResponseAsync<T>(response, timeout.Token); }
+                    try { return await ReadStructuredResponseAsync<T>(response, request, configuration, stopwatch, timeout.Token); }
                     catch (JsonException) when (attempt < configuration.MaxAttempts)
                     {
                         await DelayBeforeRetryAsync(configuration, attempt, timeout.Token);
@@ -94,7 +102,12 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
         return message;
     }
 
-    private static async Task<T> ReadStructuredResponseAsync<T>(HttpResponseMessage response, CancellationToken cancellationToken)
+    private async Task<T> ReadStructuredResponseAsync<T>(
+        HttpResponseMessage response,
+        AiRequest request,
+        GeminiOptions configuration,
+        Stopwatch stopwatch,
+        CancellationToken cancellationToken)
     {
         using var payload = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
         if (!payload.RootElement.TryGetProperty("candidates", out var candidates) ||
@@ -102,9 +115,10 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
             candidates[0].ValueKind != JsonValueKind.Object)
             throw new JsonException("Structured response content was missing.");
 
-        if (candidates[0].TryGetProperty("finishReason", out var finishReason) &&
-            finishReason.ValueKind == JsonValueKind.String &&
-            finishReason.GetString() is { } reason &&
+        var finishReason = ReadString(candidates[0], "finishReason");
+        LogUsage(request, configuration, stopwatch.ElapsedMilliseconds, ReadUsage(payload.RootElement), finishReason);
+
+        if (finishReason is { } reason &&
             (reason.Equals("MAX_TOKENS", StringComparison.OrdinalIgnoreCase) ||
              reason.Equals("length", StringComparison.OrdinalIgnoreCase)))
         {
@@ -125,6 +139,58 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
         return JsonSerializer.Deserialize<T>(json ?? string.Empty, JsonOptions)
             ?? throw new JsonException("Structured response was empty.");
     }
+
+    private void LogUsage(
+        AiRequest request,
+        GeminiOptions configuration,
+        long latencyMs,
+        GeminiUsage? usage,
+        string? finishReason)
+    {
+        if (!logger.IsEnabled(LogLevel.Information))
+            return;
+
+        var model = $"gemini:{configuration.Model.Trim()}";
+        var reasoningMode = request.ReasoningEffortOverride?.ToString().ToLowerInvariant() ?? "configured";
+        LogUsageTelemetry(
+            logger,
+            request.CorrelationId,
+            request.Purpose,
+            model,
+            request.MaxOutputTokens,
+            reasoningMode,
+            latencyMs,
+            usage?.PromptTokens,
+            usage?.CompletionTokens,
+            usage?.ReasoningTokens,
+            usage?.TotalTokens,
+            finishReason);
+    }
+
+    private static GeminiUsage? ReadUsage(JsonElement root)
+    {
+        if (!root.TryGetProperty("usageMetadata", out var usage) || usage.ValueKind != JsonValueKind.Object)
+            return null;
+
+        return new GeminiUsage(
+            ReadInt64(usage, "promptTokenCount"),
+            ReadInt64(usage, "candidatesTokenCount"),
+            ReadInt64(usage, "thoughtsTokenCount"),
+            ReadInt64(usage, "totalTokenCount"));
+    }
+
+    private static long? ReadInt64(JsonElement element, string propertyName) =>
+        element.TryGetProperty(propertyName, out var value) &&
+        value.ValueKind == JsonValueKind.Number &&
+        value.TryGetInt64(out var number)
+            ? number
+            : null;
+
+    private static string? ReadString(JsonElement element, string propertyName) =>
+        element.TryGetProperty(propertyName, out var value) &&
+        value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
 
     private static AiProviderFailureKind Classify(HttpStatusCode statusCode) => statusCode switch
     {
@@ -159,4 +225,28 @@ public sealed class GeminiAiProvider(HttpClient httpClient, IOptions<GeminiOptio
         var delay = TimeSpan.FromMilliseconds(configuration.RetryBaseDelayMilliseconds * Math.Pow(2, attempt - 1));
         return Task.Delay(delay, cancellationToken);
     }
+
+    [LoggerMessage(
+        EventId = 4201,
+        Level = LogLevel.Information,
+        Message = "Gemini usage telemetry correlationId={CorrelationId} purpose={Purpose} model={Model} effectiveBudget={EffectiveBudget} reasoningMode={ReasoningMode} latencyMs={LatencyMs} promptTokens={PromptTokens} completionTokens={CompletionTokens} reasoningTokens={ReasoningTokens} totalTokens={TotalTokens} finishReason={FinishReason}")]
+    private static partial void LogUsageTelemetry(
+        ILogger logger,
+        string correlationId,
+        string purpose,
+        string model,
+        int effectiveBudget,
+        string reasoningMode,
+        long latencyMs,
+        long? promptTokens,
+        long? completionTokens,
+        long? reasoningTokens,
+        long? totalTokens,
+        string? finishReason);
+
+    private sealed record GeminiUsage(
+        long? PromptTokens,
+        long? CompletionTokens,
+        long? ReasoningTokens,
+        long? TotalTokens);
 }

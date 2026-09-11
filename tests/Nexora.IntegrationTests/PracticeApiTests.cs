@@ -598,6 +598,96 @@ public sealed class PracticeApiTests
     }
 
     [Fact]
+    public async Task DashboardSummaryPreservesContractBillingFeaturesOrderingAndOwnership()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var ownerClient = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(ownerClient);
+        await SeedEntitlementAsync(factory, owner.UserId, 3, questionLimit: 6);
+        ownerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.AccessToken);
+        var olderInterviewId = await StartInterviewAsync(ownerClient, "dashboard-summary-older");
+        var newerInterviewId = await StartInterviewAsync(ownerClient, "dashboard-summary-newer");
+
+        using var otherClient = factory.CreateHttpsClient();
+        var other = await RegisterAsync(otherClient);
+        otherClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", other.AccessToken);
+        var otherInterviewId = await StartInterviewAsync(otherClient, "dashboard-summary-other");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var now = DateTimeOffset.UtcNow;
+            var older = await db.InterviewSessions.SingleAsync(item => item.Id == olderInterviewId);
+            var newer = await db.InterviewSessions.SingleAsync(item => item.Id == newerInterviewId);
+            older.UpdatedAt = now.AddMinutes(-2);
+            newer.UpdatedAt = now;
+            db.InterviewReports.Add(new InterviewReport
+            {
+                Id = Guid.NewGuid(), UserId = owner.UserId, InterviewSessionId = newerInterviewId, OverallScore = 88,
+                Rubric = "[]", Strengths = "[]", Gaps = "[]", ActionPlan = "[]", Disclaimer = "test",
+                ModelVersion = "test", PromptVersion = "test", RubricVersion = "test", SchemaVersion = "test", CreatedAt = now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var response = await ownerClient.GetAsync("/api/v1/dashboard");
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var data = await DataAsync(response);
+        Assert.Equal(
+            ["billing", "interviews", "reports"],
+            data.EnumerateObject().Select(item => item.Name).ToArray());
+        Assert.Equal(JsonValueKind.Object, data.GetProperty("billing").ValueKind);
+
+        var billingEntitlement = data.GetProperty("billing").GetProperty("entitlement");
+        Assert.Equal("practice", billingEntitlement.GetProperty("planCode").GetString()![..8]);
+        Assert.Contains(
+            billingEntitlement.GetProperty("features").EnumerateArray(),
+            feature => feature.GetProperty("code").GetString() == FeatureValues.InterviewQuestionLimit &&
+                feature.GetProperty("limit").GetInt32() == 6);
+        var orders = data.GetProperty("billing").GetProperty("orders").EnumerateArray().ToArray();
+        Assert.Single(orders);
+        Assert.Equal(1, orders[0].GetProperty("amountMinor").GetInt64());
+
+        var interviews = data.GetProperty("interviews").EnumerateArray().ToArray();
+        Assert.Equal(2, interviews.Length);
+        Assert.Equal(newerInterviewId, interviews[0].GetProperty("id").GetGuid());
+        Assert.Equal(olderInterviewId, interviews[1].GetProperty("id").GetGuid());
+        Assert.DoesNotContain(interviews, item => item.GetProperty("id").GetGuid() == otherInterviewId);
+
+        var reports = data.GetProperty("reports").EnumerateArray().ToArray();
+        Assert.Single(reports);
+        Assert.Equal(newerInterviewId, reports[0].GetProperty("interviewId").GetGuid());
+        Assert.Equal(88, reports[0].GetProperty("overallScore").GetInt32());
+    }
+
+    [Fact]
+    public async Task EmptyUserDashboardReturns200WithNullableBillingEntitlement()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var entitlements = await db.Entitlements.Where(item => item.UserId == account.UserId).ToArrayAsync();
+            foreach (var entitlement in entitlements)
+                entitlement.EndsAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+
+        using var response = await client.GetAsync("/api/v1/dashboard");
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var data = await DataAsync(response);
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("billing").GetProperty("entitlement").ValueKind);
+        Assert.Empty(data.GetProperty("interviews").EnumerateArray());
+        Assert.Empty(data.GetProperty("reports").EnumerateArray());
+    }
+
+    [Fact]
     public async Task PartialReportUsesAnsweredTranscriptAndPersistedAnswerCoaching()
     {
         var aiProvider = new TestAiProvider();

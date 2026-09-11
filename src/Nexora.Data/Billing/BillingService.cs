@@ -335,32 +335,77 @@ public sealed partial class BillingService(
     public async Task<BillingSummary> GetSummaryAsync(Guid userId, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
+        var isSqlite = string.Equals(
+            dbContext.Database.ProviderName,
+            "Microsoft.EntityFrameworkCore.Sqlite",
+            StringComparison.Ordinal);
         var activeEntitlements = await dbContext.Entitlements.AsNoTracking()
             .Where(item => item.UserId == userId && item.Status == BillingValues.Active)
-            .Select(item => new { item, features = item.FeatureEntitlements }).ToArrayAsync(cancellationToken);
+            .Select(item => new
+            {
+                item.Id,
+                item.PlanCodeSnapshot,
+                item.Status,
+                item.InterviewLimit,
+                item.Reserved,
+                item.Consumed,
+                item.Adjustment,
+                item.StartsAt,
+                item.EndsAt
+            })
+            .ToArrayAsync(cancellationToken);
+        var entitlementIds = activeEntitlements.Select(item => item.Id).ToArray();
+        var featureRows = await dbContext.EntitlementFeatures.AsNoTracking()
+            .Where(item => entitlementIds.Contains(item.EntitlementId))
+            .Select(item => new
+            {
+                item.EntitlementId,
+                item.FeatureCode,
+                item.FeatureDefinitionId,
+                item.IsEnabled,
+                item.Limit,
+                item.Reserved,
+                item.Consumed,
+                item.Adjustment
+            })
+            .ToArrayAsync(cancellationToken);
         var views = new List<EntitlementView>();
         var featureDefNames = await dbContext.FeatureDefinitions.AsNoTracking().ToDictionaryAsync(item => item.Id, item => item.Name, cancellationToken);
         foreach (var entry in activeEntitlements)
         {
             var interview = new EntitlementFeatureView(FeatureValues.Interview, "Phỏng vấn",
-                true, entry.item.InterviewLimit, entry.item.Reserved, entry.item.Consumed, entry.item.Adjustment,
-                Available(entry.item.InterviewLimit, entry.item.Reserved, entry.item.Consumed, entry.item.Adjustment),
-                entry.item.InterviewLimit is null);
-            var generic = entry.features
+                true, entry.InterviewLimit, entry.Reserved, entry.Consumed, entry.Adjustment,
+                Available(entry.InterviewLimit, entry.Reserved, entry.Consumed, entry.Adjustment),
+                entry.InterviewLimit is null);
+            var generic = featureRows
+                .Where(ef => ef.EntitlementId == entry.Id)
                 .Where(ef => !string.Equals(ef.FeatureCode, FeatureValues.Interview, StringComparison.OrdinalIgnoreCase))
                 .Select(ef => new EntitlementFeatureView(
                     ef.FeatureCode, featureDefNames.GetValueOrDefault(ef.FeatureDefinitionId, ef.FeatureCode), ef.IsEnabled, ef.Limit,
                     ef.Reserved, ef.Consumed, ef.Adjustment, Available(ef.Limit, ef.Reserved, ef.Consumed, ef.Adjustment), ef.IsEnabled && ef.Limit is null)).ToArray();
-            views.Add(new EntitlementView(entry.item.Id, entry.item.PlanCodeSnapshot, entry.item.Status, entry.item.StartsAt, entry.item.EndsAt,
-                entry.item.InterviewLimit, entry.item.Reserved, entry.item.Consumed, entry.item.Adjustment, [interview, .. generic]));
+            views.Add(new EntitlementView(entry.Id, entry.PlanCodeSnapshot, entry.Status, entry.StartsAt, entry.EndsAt,
+                entry.InterviewLimit, entry.Reserved, entry.Consumed, entry.Adjustment, [interview, .. generic]));
         }
         var entitlement = views.Where(item => item.StartsAt <= now && item.EndsAt > now)
             .OrderBy(item => string.Equals(item.PlanCode, "free", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
             .ThenBy(item => item.EndsAt).FirstOrDefault();
-        var orderRows = await dbContext.Orders.AsNoTracking().Where(order => order.UserId == userId)
+        var orderRowsQuery = dbContext.Orders.AsNoTracking()
+            .Where(order => order.UserId == userId)
+            .Select(order => new { order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt });
+        var orderRows = isSqlite
+            ? await dbContext.Orders
+                .FromSqlInterpolated($"SELECT * FROM orders WHERE \"UserId\" = {userId} ORDER BY \"CreatedAt\" DESC, \"Id\" DESC LIMIT 20")
+                .AsNoTracking()
+                .Select(order => new { order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt })
+                .ToArrayAsync(cancellationToken)
+            : await orderRowsQuery
+                .OrderByDescending(order => order.CreatedAt)
+                .ThenByDescending(order => order.Id)
+                .Take(20)
+                .ToArrayAsync(cancellationToken);
+        var orders = orderRows
             .Select(order => new OrderView(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt))
-            .ToArrayAsync(cancellationToken);
-        var orders = orderRows.OrderByDescending(order => order.CreatedAt).Take(20).ToArray();
+            .ToArray();
         return new BillingSummary(entitlement, orders);
     }
 

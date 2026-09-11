@@ -176,6 +176,23 @@ public sealed class DeepSeekAiProviderTests
         Assert.Contains(executorLogger.Messages, message =>
             message.Contains("effectiveEffort=low", StringComparison.Ordinal) &&
             message.Contains("retryReason=reasoning_budget_exhausted", StringComparison.Ordinal));
+        Assert.Contains(executorLogger.Messages, message =>
+            message.Contains("model=deepseek:deepseek-v4-flash", StringComparison.Ordinal) &&
+            message.Contains("effectiveBudget=6000", StringComparison.Ordinal) &&
+            message.Contains("reasoningMode=low", StringComparison.Ordinal) &&
+            message.Contains("attempt=2", StringComparison.Ordinal));
+        Assert.Contains(executorLogger.Messages, message =>
+            message.Contains("AI provider request failed", StringComparison.Ordinal) &&
+            message.Contains("purpose=interview.evaluate", StringComparison.Ordinal) &&
+            message.Contains("model=deepseek:deepseek-v4-flash", StringComparison.Ordinal) &&
+            message.Contains("failureKind=InvalidResponse", StringComparison.Ordinal) &&
+            message.Contains("effectiveBudget=6000", StringComparison.Ordinal) &&
+            message.Contains("reasoningMode=configured", StringComparison.Ordinal) &&
+            message.Contains("retryHint=LowerReasoningEffort", StringComparison.Ordinal) &&
+            message.Contains("retryReason=reasoning_budget_exhausted", StringComparison.Ordinal) &&
+            message.Contains("attempt=1", StringComparison.Ordinal) &&
+            message.Contains("latencyMs=", StringComparison.Ordinal) &&
+            message.Contains("correlationId=reasoning-exhaustion", StringComparison.Ordinal));
         var providerExhaustionMessages = providerLogger.Messages
             .Where(message => message.Contains("outcome=reasoning_budget_exhausted", StringComparison.Ordinal))
             .ToArray();
@@ -271,6 +288,9 @@ public sealed class DeepSeekAiProviderTests
         Assert.Contains(executorLogger.Messages, message =>
             message.Contains("AI structured execution succeeded", StringComparison.Ordinal) &&
             message.Contains("purpose=resume.analysis", StringComparison.Ordinal) &&
+            message.Contains("model=deepseek:deepseek-v4-flash", StringComparison.Ordinal) &&
+            message.Contains("effectiveBudget=8192", StringComparison.Ordinal) &&
+            message.Contains("reasoningMode=configured", StringComparison.Ordinal) &&
             message.Contains("attempt=2", StringComparison.Ordinal));
         Assert.DoesNotContain(executorLogger.Messages, message =>
             message.Contains("retryReason=reasoning_budget_exhausted", StringComparison.Ordinal));
@@ -490,6 +510,8 @@ public sealed class DeepSeekAiProviderTests
         Assert.Equal("ok", result.Content);
         var telemetry = Assert.Single(logger.Messages);
         Assert.Contains("purpose=interview.evaluate", telemetry, StringComparison.Ordinal);
+        Assert.Contains("modelVersion=deepseek:deepseek-v4-flash", telemetry, StringComparison.Ordinal);
+        Assert.Contains("effectiveBudget=512", telemetry, StringComparison.Ordinal);
         Assert.Contains("thinking=enabled", telemetry, StringComparison.Ordinal);
         Assert.Contains("reasoningEffort=high", telemetry, StringComparison.Ordinal);
         Assert.Contains("promptTokens=12", telemetry, StringComparison.Ordinal);

@@ -491,6 +491,26 @@ public sealed class StructuredAiExecutorTests
     }
 
     [Fact]
+    public async Task ExecuteAsyncRepairsNullRubricItemOnSecondAttemptWithoutThirdCall()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(TechnicalEvaluationWithNullRubricItem());
+        fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "technical answer",
+            new AiOperationContext("null-rubric-item-repair", ExpectedStar: false),
+            CancellationToken.None);
+
+        Assert.True(result.RepairUsed);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Contains("rubric.item_invalid", fakeProvider.Requests[1].Instructions);
+    }
+
+    [Fact]
     public async Task ExecuteAsyncRejectsInvalidScoreScaleAfterExactlyTwoAttempts()
     {
         var fakeProvider = new MockAiProvider();
@@ -545,6 +565,20 @@ public sealed class StructuredAiExecutorTests
         "Grounded feedback",
         null,
         scoreScale,
+        ["Grounded answer"],
+        ["Add one concrete example if available"],
+        "Grounded answer with evidence");
+
+    private static AnswerEvaluation TechnicalEvaluationWithNullRubricItem() => new(
+        [
+            null!,
+            new RubricScore("structure", 80, "Evidence"),
+            new RubricScore("completeness", 80, "Evidence"),
+            new RubricScore("clarity", 80, "Evidence")
+        ],
+        "Grounded feedback",
+        null,
+        AiOperations.ScoreScale,
         ["Grounded answer"],
         ["Add one concrete example if available"],
         "Grounded answer with evidence");

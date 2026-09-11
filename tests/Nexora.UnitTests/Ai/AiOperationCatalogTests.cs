@@ -296,8 +296,9 @@ public sealed class AiOperationCatalogTests
 
         var repairInstructions = AiOperations.InterviewEvaluate.BuildRepairInstructions(validation, original);
 
-        Assert.Contains("IMPORTANT CORRECTION INSTRUCTION", repairInstructions);
+        Assert.Contains("IMPORTANT RUBRIC CORRECTION INSTRUCTION", repairInstructions);
         Assert.Contains("rubric.criteria_missing", repairInstructions);
+        Assert.Contains("exactly four rubric items", repairInstructions);
         Assert.Contains(original, repairInstructions);
     }
 

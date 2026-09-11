@@ -377,6 +377,7 @@ public sealed partial class DeepSeekAiProvider(
             request.CorrelationId,
             request.Purpose,
             modelVersion,
+            request.MaxOutputTokens,
             policy.ThinkingEnabled ? "enabled" : "disabled",
             policy.ReasoningEffort ?? "none",
             latencyMs,
@@ -468,12 +469,13 @@ public sealed partial class DeepSeekAiProvider(
     [LoggerMessage(
         EventId = 4101,
         Level = LogLevel.Information,
-        Message = "DeepSeek usage telemetry correlationId={CorrelationId} purpose={Purpose} modelVersion={ModelVersion} thinking={Thinking} reasoningEffort={ReasoningEffort} latencyMs={LatencyMs} promptTokens={PromptTokens} promptCacheHitTokens={PromptCacheHitTokens} promptCacheMissTokens={PromptCacheMissTokens} completionTokens={CompletionTokens} reasoningTokens={ReasoningTokens} totalTokens={TotalTokens} finishReason={FinishReason}")]
+        Message = "DeepSeek usage telemetry correlationId={CorrelationId} purpose={Purpose} modelVersion={ModelVersion} effectiveBudget={EffectiveBudget} thinking={Thinking} reasoningEffort={ReasoningEffort} latencyMs={LatencyMs} promptTokens={PromptTokens} promptCacheHitTokens={PromptCacheHitTokens} promptCacheMissTokens={PromptCacheMissTokens} completionTokens={CompletionTokens} reasoningTokens={ReasoningTokens} totalTokens={TotalTokens} finishReason={FinishReason}")]
     private static partial void LogUsageTelemetry(
         ILogger logger,
         string correlationId,
         string purpose,
         string modelVersion,
+        int effectiveBudget,
         string thinking,
         string reasoningEffort,
         long latencyMs,
