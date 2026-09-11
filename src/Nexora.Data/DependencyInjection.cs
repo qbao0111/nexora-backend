@@ -9,6 +9,7 @@ using Nexora.Business.Career;
 using Nexora.Business.Learning;
 using Nexora.Business.Practice;
 using Nexora.Business.Privacy;
+using Nexora.Business.Recommendations;
 using Nexora.Business.Skills;
 using Nexora.Data.Auth;
 using Nexora.Data.Billing;
@@ -18,6 +19,7 @@ using Nexora.Data.Learning;
 using Nexora.Data.Persistence;
 using Nexora.Data.Practice;
 using Nexora.Data.Privacy;
+using Nexora.Data.Recommendations;
 using Nexora.Data.Skills;
 
 namespace Nexora.Data;
@@ -83,6 +85,7 @@ public static class DependencyInjection
         services.AddScoped<ICareerGoalService, CareerGoalService>();
         services.AddScoped<ISkillProfileService, SkillProfileService>();
         services.AddScoped<ILearningPathService, LearningPathService>();
+        services.AddScoped<INextPracticeRecommendationService, NextPracticeRecommendationService>();
         services.AddScoped<IUploadIntentStore, UploadIntentStore>();
         services.AddSingleton<IResumeContextBuilder, ResumeContextBuilder>();
         services.AddScoped<PracticeService>();
