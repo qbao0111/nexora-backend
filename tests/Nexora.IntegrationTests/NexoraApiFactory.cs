@@ -59,6 +59,15 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
         if (environment is "Staging" or "Production")
         {
             dict["Authentication:EmailVerification:PublicUrl"] = "https://staging.nexora.app";
+            dict["Storage:Provider"] = "r2";
+            dict["Storage:R2:AccountId"] = "test-account";
+            dict["Storage:R2:Bucket"] = "test-private-bucket";
+            dict["Storage:R2:AccessKeyId"] = "test-access-key";
+            dict["Storage:R2:SecretAccessKey"] = "test-secret-key";
+            dict["Storage:R2:Endpoint"] = "https://test-account.r2.cloudflarestorage.com";
+            dict["Sentry:Dsn"] = "https://public@example.invalid/1";
+            dict["Sentry:Release"] = "test-release";
+            dict["Frontend:AllowedOrigins:0"] = "https://staging.nexora.app";
             dict["Email:Provider"] = "resend";
             dict["Email:FromAddress"] = "support@nexora.app";
             dict["Email:FromName"] = "Nexora";

@@ -77,6 +77,8 @@ public sealed class StorageProviderSelectionTests
     [InlineData("http://account-id.r2.cloudflarestorage.com")]
     [InlineData("not a uri")]
     [InlineData("https://account-id.r2.cloudflarestorage.com?signature=secret")]
+    [InlineData(" https://account-id.r2.cloudflarestorage.com")]
+    [InlineData("https://account-id.r2.cloudflarestorage.com ")]
     public void R2EndpointMustBeAbsoluteHttpsWithoutQuery(string endpoint)
     {
         using var services = BuildServices(Configuration("r2", endpoint));

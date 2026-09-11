@@ -1,116 +1,140 @@
-# Nexora Internal Staging Deployment (Render Free)
+# Render staging deployment
 
-## Overview
+**Status:** Approved deployment configuration baseline; operator values remain required  
+**Last updated:** 2026-09-11
 
-This document details the internal staging topology, architecture rationale, configuration, limitations, and operational runbook for hosting the **Nexora Backend** on **Render Free** for frontend team integration.
+This guide describes the current Render Free staging shape for Nexora. It is a
+deployment guide, not evidence that a live service, Sentry project, domain or
+Railway environment has been configured.
 
----
+## Topology and lifecycle
 
-## Staging Architecture & Topology
+The existing Docker image runs `Nexora.Worker` and `Nexora.Api` in one Render
+web service. They remain co-located for the current small staging workload and
+to keep the migration/startup/shutdown lifecycle simple; they do **not** share
+product files through a local filesystem. Resume objects are private R2
+objects, and both processes receive the same environment and Sentry release.
+
+Startup runs the migration bundle once, then starts API and Worker. If either
+child exits unexpectedly, `scripts/render-entrypoint.sh` stops the sibling and
+returns a failure. `/health/live` is the liveness check and
+`/api/v1/health` is the readiness check.
+
+## Render Blueprint
+
+`render.yaml` contains names and non-secret defaults only. Values marked
+`sync: false` must be entered in the Render dashboard or an approved secret
+manager; never put credentials in the Blueprint.
+
+Non-secret staging settings include:
 
 ```text
-Vercel Frontend (https://nexora-staging.vercel.app or local http://localhost:5173)
-       │
-       ▼ (HTTPS / Cross-Site Cookie / Bearer JWT)
-Render Free Web Service (`nexora-staging`)
-┌─────────────────────────────────────────────────────────────┐
-│ Docker Container (Linux x64, ASP.NET Core 10 Runtime)       │
-│                                                             │
-│   ├── Nexora.Api (Web API listening on 0.0.0.0:$PORT)       │
-│   │                                                         │
-│   ├── Nexora.Worker (Outbox queue polling & background jobs)│
-│   │                                                         │
-│   └── Shared Ephemeral Filesystem (/tmp/nexora-storage)     │
-└─────────────────────────────────────────────────────────────┘
-       │                              │                 │
-       ▼                              ▼                 ▼
-Neon PostgreSQL (Non-Prod)    Google Gemini API   SePay Sandbox
-(ep-crimson-art-...-singapore)  (gemini-2.5-flash) (pay-sandbox.sepay.vn)
+ASPNETCORE_ENVIRONMENT=Staging
+DOTNET_ENVIRONMENT=Staging
+Features__Ai=true
+Features__Payment=true
+Features__Upload=true
+Ai__Provider=gemini
+Storage__Provider=r2
+Authentication__Jwt__Issuer=Nexora.Api
+Authentication__Jwt__Audience=Nexora.Frontend
+Authentication__RefreshCookie__SameSite=None
+Authentication__RefreshCookie__Secure=true
+Billing__Payment__Provider=sepay
+Billing__Sepay__Environment=Sandbox
+Email__Provider=resend
+Email__FromName=Nexora
+Email__Resend__ApiBaseUrl=https://api.resend.com
 ```
 
-### Why API and Worker are Co-located in One Container
-- Current Nexora uses `LocalStorageProvider` for candidate CV/document uploads.
-- When an applicant uploads a resume, `Nexora.Api` stores the file under `Storage__Local__RootPath` (`/tmp/nexora-storage`).
-- The background outbox processor `Nexora.Worker` later inspects the database queue, retrieves the file from that local path, and performs text extraction and profiling.
-- On Render Free, separate services do **not** share a local filesystem, and persistent disks are unavailable.
-- By packaging both executables inside the same Docker container managed by `scripts/render-entrypoint.sh`, both processes read and write to the same `/tmp/nexora-storage` directory while the container is running.
+The operator must supply these values through secure Render configuration:
 
-> [!WARNING]
-> **DO NOT COPY THIS SINGLE-SERVICE FILESYSTEM TOPOLOGY TO PRODUCTION.**  
-> Production requires adopting a durable shared object storage provider (e.g. S3-compatible cloud storage) before splitting `Nexora.Api` and `Nexora.Worker` into independently scalable services.
+```text
+ConnectionStrings__Postgres
+Authentication__Jwt__SigningKey
+Authentication__EmailVerification__PublicUrl
+Email__FromAddress
+Email__Resend__ApiKey
+Storage__R2__AccountId
+Storage__R2__Bucket
+Storage__R2__AccessKeyId
+Storage__R2__SecretAccessKey
+Storage__R2__Endpoint
+Sentry__Dsn
+Sentry__Release (optional when RENDER_GIT_COMMIT is available)
+Frontend__AllowedOrigins__0
+Ai__Gemini__ApiKey
+Ai__Gemini__Model
+Billing__Sepay__MerchantId
+Billing__Sepay__SecretKey
+```
 
----
+R2 values describe a private bucket and an HTTPS S3-compatible endpoint. No
+public-read ACL or public bucket URL is required. `Frontend__AllowedOrigins`
+must be the actual HTTPS Vercel/custom frontend origin; do not enter the
+Render backend URL and do not guess a domain. Add more indexed values only for
+additional verified frontend origins.
 
-## Render Free Tier Limitations (Accepted for Staging)
+Render supplies `RENDER_GIT_COMMIT`. The entrypoint preserves an explicit
+`Sentry__Release`; when it is empty, it exports `RENDER_GIT_COMMIT` as the
+release before launching API and Worker. If neither is available, deployed
+startup fails closed. The release is safe metadata, not a secret.
 
-The frontend team and stakeholders accept the following constraints of Render Free:
-1. **Ephemeral Raw Storage**: Files uploaded to `/tmp/nexora-storage` are ephemeral. Any restart, redeploy, or container spin-down will clear raw uploads. (Neon PostgreSQL data remains fully persistent).
-2. **Idle Spin-Down**: The Web Service automatically spins down after 15 minutes of inactivity.
-3. **Cold Starts**: The first request after spin-down experiences a cold start delay (typically 30–50 seconds).
-4. **Worker Pauses with Service**: Background processing in `Nexora.Worker` pauses when the container is spun down due to inactivity.
-5. **Constrained Resources**: Limited CPU and 512 MB RAM.
+## Operational checklist
 
----
+1. Create separate staging Neon, R2, Resend, SePay Sandbox and Sentry values.
+2. Enter the variables above in the Render dashboard. Keep R2 objects private.
+3. Confirm the frontend origin and public email-verification URL are HTTPS.
+4. Deploy the Blueprint and verify `/health/live`, `/api/v1/health` and the
+   OpenAPI route from the actual service host.
+5. Confirm migration bundle completion and inspect safe API/Worker logs. Logs
+   may contain request/resource IDs and outcomes, never credentials, tokens,
+   signed URLs, connection strings or CV/transcript contents.
+6. Exercise a synthetic login, private upload/finalize, extraction and worker
+   path. Use request/correlation IDs for diagnosis.
+7. Configure and verify Sentry alerts separately. A11 sanitization remains
+   enabled; do not mark live alert delivery complete without external evidence.
 
-## Service Specifications
+Render Free can sleep or cold-start. That is an operational limitation, not a
+reason to restore local filesystem storage. R2 and Neon are the durable
+staging stores.
 
-| Property | Value |
-|---|---|
-| **Service Name** | `nexora-staging` |
-| **Service Type** | Web Service |
-| **Runtime** | Docker (Multi-stage .NET 10) |
-| **Plan** | Free |
-| **Region** | Oregon (`oregon`) |
-| **Auto-Deploy** | Disabled during initial branch validation; enabled on `main` post-merge |
-| **Health Check Route** | `/health/live` (Readiness: `/api/v1/health`) |
-| **Local Storage Path** | `/tmp/nexora-storage` |
-| **EF Core Migrations** | Pre-run bundle `/app/nexora-migrate` via `scripts/render-entrypoint.sh` |
+## Railway equivalent (future option)
 
----
+Nexora is not currently declared deployed to Railway. If Railway is selected
+under DEC-04, configure the same semantic keys using Railway environment
+variables:
 
-## Environment & Secrets Configuration
+```text
+ConnectionStrings__Postgres
+Storage__Provider=r2
+Storage__R2__AccountId
+Storage__R2__Bucket
+Storage__R2__AccessKeyId
+Storage__R2__SecretAccessKey
+Storage__R2__Endpoint
+Sentry__Dsn
+Sentry__Release
+Frontend__AllowedOrigins__0
+Email__Provider=resend
+Email__Resend__ApiKey
+Authentication__Jwt__SigningKey
+Authentication__EmailVerification__PublicUrl
+```
 
-### Non-Secret Environment Variables
-- `ASPNETCORE_ENVIRONMENT=Staging`
-- `DOTNET_ENVIRONMENT=Staging`
-- `Features__Ai=true`
-- `Features__Payment=true`
-- `Features__Upload=true`
-- `Storage__Local__RootPath=/tmp/nexora-storage`
-- `Authentication__Jwt__Issuer=Nexora.Api`
-- `Authentication__Jwt__Audience=Nexora.Frontend`
-- `Authentication__RefreshCookie__SameSite=None`
-- `Authentication__RefreshCookie__Secure=true`
-- `Billing__Payment__Provider=sepay`
-- `Billing__Sepay__Environment=Sandbox`
-- `Email__Provider=resend`
-- `Email__FromName=Nexora`
-- `Frontend__AllowedOrigins__0=http://localhost:3000`
-- `Frontend__AllowedOrigins__1=http://localhost:5173`
-- `Frontend__AllowedOrigins__2=http://127.0.0.1:3000`
-- `Frontend__AllowedOrigins__3=http://127.0.0.1:5173`
-- `Frontend__AllowedOrigins__4=https://nexora-backend-q32b.onrender.com`
+Use a Railway-supported commit/release variable only after the operator has
+verified its current name and behavior. Otherwise set `Sentry__Release`
+explicitly for both API and Worker. Do not invent a variable name or rely on
+Blueprint interpolation. Production AI, payment, legal/privacy and hosting
+decisions remain gated by DEC-01 through DEC-04.
 
-### Secure Secrets (Configure in Render Dashboard or CLI)
-- `ConnectionStrings__Postgres`: Non-production Neon connection string (`sslmode=require`).
-- `Authentication__Jwt__SigningKey`: 64+ character cryptographically secure key.
-- `Authentication__EmailVerification__PublicUrl`: Frontend URL (e.g. `https://nexora-staging.vercel.app` or custom HTTPS domain).
-- `Email__FromAddress`: Verified sending email address (e.g. `onboarding@resend.dev` or domain address).
-- `Email__Resend__ApiKey`: Resend API key (`re_...`).
-- `Ai__Gemini__ApiKey`: Google Gemini API key.
-- `Ai__Gemini__Model`: `gemini-3.5-flash-lite`.
-- `Billing__Sepay__MerchantId`: SePay Sandbox Merchant ID.
-- `Billing__Sepay__SecretKey`: SePay Sandbox Secret Key.
+## Rollback
 
----
+Rollback the application image/configuration first. Do not silently fall back
+from R2 to local storage in a deployed environment. If R2 is unavailable,
+keep the deployment failed/observable and restore the approved R2 settings or
+perform a forward fix. Database migrations remain the source-controlled
+bundle and require the normal backup/restore rehearsal.
 
-## Frontend Integration Handoff
-
-- **Staging API Base URL**: `https://nexora-backend-q32b.onrender.com/api/v1`
-- **Swagger UI (Interactive API Explorer)**: `https://nexora-backend-q32b.onrender.com/swagger`
-- **OpenAPI v1 Document**: `https://nexora-backend-q32b.onrender.com/openapi/v1.json`
-- **Authentication**:
-  - Access Token: Stored in frontend memory only. Sent via `Authorization: Bearer <token>`.
-  - Refresh Token: Handled automatically via `HttpOnly`, `Secure`, `SameSite=None` cookie.
-  - Required Request Header: `credentials: "include"` on all `fetch`/`axios` requests.
-- **SePay IPN Webhook URL**: `https://nexora-backend-q32b.onrender.com/api/v1/webhooks/payments/sepay`
+See [04-production-runbook.md](04-production-runbook.md) for the environment
+matrix, production gates, incident response and Sentry privacy controls.

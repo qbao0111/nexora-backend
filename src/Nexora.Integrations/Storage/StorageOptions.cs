@@ -20,9 +20,17 @@ public sealed class R2StorageOptions
 
 public static class R2ConfigurationValidation
 {
+    public static bool IsValid(R2StorageOptions? options) =>
+        options is not null &&
+        IsConfiguredValue(options.AccountId) &&
+        IsConfiguredValue(options.Bucket) &&
+        IsConfiguredValue(options.AccessKeyId) &&
+        IsConfiguredValue(options.SecretAccessKey) &&
+        IsValidEndpoint(options.Endpoint);
+
     public static bool IsValidEndpoint(string? endpoint)
     {
-        if (!Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out var uri) || uri is null)
+        if (!IsConfiguredValue(endpoint) || !Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri is null)
             return false;
 
         return uri.Scheme == Uri.UriSchemeHttps &&
@@ -31,4 +39,9 @@ public static class R2ConfigurationValidation
             string.IsNullOrEmpty(uri.Query) &&
             string.IsNullOrEmpty(uri.Fragment);
     }
+
+    private static bool IsConfiguredValue(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        string.Equals(value, value.Trim(), StringComparison.Ordinal) &&
+        !value.Contains("replace-with", StringComparison.OrdinalIgnoreCase);
 }

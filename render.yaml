@@ -19,8 +19,10 @@ services:
         value: "true"
       - key: Features__Upload
         value: "true"
-      - key: Storage__Local__RootPath
-        value: /tmp/nexora-storage
+      - key: Ai__Provider
+        value: gemini
+      - key: Storage__Provider
+        value: r2
       - key: Authentication__Jwt__Issuer
         value: Nexora.Api
       - key: Authentication__Jwt__Audience
@@ -41,6 +43,16 @@ services:
         sync: false
       - key: Ai__Gemini__Model
         sync: false
+      - key: Storage__R2__AccountId
+        sync: false
+      - key: Storage__R2__Bucket
+        sync: false
+      - key: Storage__R2__AccessKeyId
+        sync: false
+      - key: Storage__R2__SecretAccessKey
+        sync: false
+      - key: Storage__R2__Endpoint
+        sync: false
       - key: Billing__Sepay__MerchantId
         sync: false
       - key: Billing__Sepay__SecretKey
@@ -53,15 +65,13 @@ services:
         value: Nexora
       - key: Email__Resend__ApiKey
         sync: false
+      - key: Email__Resend__ApiBaseUrl
+        value: https://api.resend.com
       - key: Authentication__EmailVerification__PublicUrl
         sync: false
       - key: Frontend__AllowedOrigins__0
-        value: http://localhost:3000
-      - key: Frontend__AllowedOrigins__1
-        value: http://localhost:5173
-      - key: Frontend__AllowedOrigins__2
-        value: http://127.0.0.1:3000
-      - key: Frontend__AllowedOrigins__3
-        value: http://127.0.0.1:5173
-      - key: Frontend__AllowedOrigins__4
-        value: https://nexora-backend-q32b.onrender.com
+        sync: false
+      - key: Sentry__Dsn
+        sync: false
+      - key: Sentry__Release
+        sync: false

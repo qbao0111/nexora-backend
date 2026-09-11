@@ -152,7 +152,7 @@ Update `project_log.md` after a completed verified slice, commit, push and creat
 
 ## 8. Staging deployment (Render Free)
 
-For deployed testing and frontend team integration without running a local backend, see [`docs/render-staging.md`](render-staging.md). Staging runs on Render Free (`https://<render-host>/api/v1`) using a co-located Docker container for API and Worker with ephemeral local storage.
+For deployed testing and frontend team integration without running a local backend, see [`docs/render-staging.md`](render-staging.md). Staging runs on Render Free (`https://<render-host>/api/v1`) using a co-located Docker container for API and Worker with private R2 object storage; the container filesystem is not a product-storage dependency.
 
 ## 9. Common problems
 

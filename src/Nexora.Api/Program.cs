@@ -27,6 +27,13 @@ builder.WebHost.UseSentry((context, options) =>
 // Hosting request-start logs include query strings; browser SignalR transports use access_token.
 builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting", LogLevel.Warning);
 builder.Logging.AddFilter("Microsoft.AspNetCore.Http.Connections", LogLevel.Warning);
+ProductionSafety.ValidateDevelopmentAdapters(
+    builder.Environment.IsProduction(),
+    builder.Configuration.GetValue("Features:Ai", true),
+    builder.Configuration.GetValue("Features:Payment", true),
+    builder.Configuration.GetValue("Features:Upload", true),
+    builder.Configuration.GetValue<string?>("Storage:Provider"));
+ProductionSafety.ValidateDeploymentConfiguration(builder.Environment.EnvironmentName, builder.Configuration);
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IUserIdProvider, SubClaimUserIdProvider>();
 builder.Services.AddOptions<RealtimeOptions>().Bind(builder.Configuration.GetSection(RealtimeOptions.SectionName))
@@ -38,15 +45,6 @@ builder.Services.AddHostedService<RealtimeNotificationBroadcaster>();
 builder.Services.AddBusiness();
 builder.Services.AddSingleton<IApiSentryReporter, ApiSentryReporter>();
 builder.Services.AddData(builder.Configuration);
-ProductionSafety.ValidateDevelopmentAdapters(
-    builder.Environment.IsProduction(),
-    builder.Configuration.GetValue("Features:Ai", true),
-    builder.Configuration.GetValue("Features:Payment", true),
-    builder.Configuration.GetValue("Features:Upload", true),
-    builder.Configuration.GetValue<string?>("Storage:Provider"));
-ProductionSafety.ValidateEmailConfiguration(
-    builder.Environment.IsProduction() || builder.Environment.IsStaging(),
-    builder.Configuration);
 builder.Services.AddIntegrations(builder.Configuration);
 builder.Services.AddControllers(options => options.Conventions.Add(new DevelopmentOnlyControllerConvention(builder.Environment)));
 builder.Services.AddOpenApi(OpenApiConfiguration.Configure);
@@ -70,7 +68,9 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 });
 
 var jwt = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
-var signingKey = jwt.SigningKey.Length >= 32 ? jwt.SigningKey : new string('0', 32);
+var signingKey = jwt.SigningKey.Length >= ProductionSafety.MinimumJwtSigningKeyLength
+    ? jwt.SigningKey
+    : new string('0', ProductionSafety.MinimumJwtSigningKeyLength);
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
     options.MapInboundClaims = false;
@@ -125,12 +125,15 @@ builder.Services.AddAuthorization(options =>
 });
 builder.Services.AddSingleton<IAuthorizationHandler, OwnerAuthorizationHandler>();
 
-builder.Services.AddCors(options => options.AddPolicy("Frontend", policy => policy
-    .SetIsOriginAllowed(origin => (builder.Configuration.GetSection("Frontend:AllowedOrigins").Get<string[]>() ?? [])
-        .Contains(origin, StringComparer.OrdinalIgnoreCase))
-    .AllowAnyHeader()
-    .AllowAnyMethod()
-    .AllowCredentials()));
+builder.Services.AddCors(options =>
+{
+    var frontendOrigins = ProductionSafety.ValidateFrontendOrigins(builder.Environment.EnvironmentName, builder.Configuration);
+    options.AddPolicy("Frontend", policy => policy
+        .SetIsOriginAllowed(origin => ProductionSafety.IsAllowedFrontendOrigin(origin, frontendOrigins))
+        .AllowAnyHeader()
+        .AllowAnyMethod()
+        .AllowCredentials());
+});
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {

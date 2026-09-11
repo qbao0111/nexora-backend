@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Nexora.Integrations;
 using Sentry;
 using Sentry.Extensibility;
 using Sentry.Extensions.Logging;
@@ -71,8 +72,7 @@ public static partial class SentryObservability
 
     public static string? ReadRelease(IConfiguration configuration)
     {
-        var release = configuration["Sentry:Release"]?.Trim();
-        return string.IsNullOrWhiteSpace(release) ? null : release[..Math.Min(release.Length, 200)];
+        return ProductionSafety.ResolveSentryRelease(configuration["Sentry:Release"], configuration["RENDER_GIT_COMMIT"]);
     }
 
     private static string? ReadDsn(IConfiguration configuration)

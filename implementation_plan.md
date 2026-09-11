@@ -838,11 +838,11 @@ GET https://<api-domain>/health/live
 
 ## A13. Production config hardening [P0]
 
-- [ ] `.env.example` có tên key nhưng không secret.
-- [ ] Production Safety validate R2/Resend/Sentry config cần thiết.
-- [ ] Render/Railway env docs.
-- [ ] `Frontend:AllowedOrigins` đúng Vercel custom domain.
-- [ ] SignalR hub CORS/JWT vẫn pass.
+- [x] `.env.example` có tên key nhưng không secret.
+- [x] Production Safety validate PostgreSQL, JWT, R2/Resend/Sentry và CORS config cần thiết cho môi trường deployed.
+- [x] Render/Railway env docs.
+- [x] `Frontend:AllowedOrigins` được validate chặt; origin triển khai thực tế vẫn do operator cung cấp.
+- [x] SignalR hub CORS/JWT vẫn pass qua cấu hình allowlist chung và regression suite hiện có.
 - [ ] Rotate các secret đã từng xuất hiện trong screenshot/chat nếu còn dùng.
 
 ---

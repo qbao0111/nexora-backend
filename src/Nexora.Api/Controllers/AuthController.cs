@@ -6,6 +6,7 @@ using Nexora.Api.Contracts;
 using Nexora.Api.Infrastructure;
 using Nexora.Business.Auth;
 using Nexora.Business.Common;
+using Nexora.Integrations;
 
 namespace Nexora.Api.Controllers;
 
@@ -146,7 +147,7 @@ public sealed class AuthController(
         if (string.IsNullOrWhiteSpace(origin)) return;
         if (IsSameOrigin(origin)) return;
         var allowedOrigins = configuration.GetSection("Frontend:AllowedOrigins").Get<string[]>() ?? [];
-        if (!allowedOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase))
+        if (!ProductionSafety.IsAllowedFrontendOrigin(origin, allowedOrigins))
             throw new BusinessException("CSRF_ORIGIN_INVALID", "Nguồn trình duyệt không được phép.", BusinessErrorKind.Forbidden);
     }
 

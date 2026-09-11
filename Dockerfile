@@ -65,9 +65,6 @@ COPY src/Nexora.Api/appsettings.json ./appsettings.json
 COPY scripts/render-entrypoint.sh ./render-entrypoint.sh
 RUN chmod +x ./render-entrypoint.sh
 
-# Create local storage directory
-RUN mkdir -p /tmp/nexora-storage && chmod 777 /tmp/nexora-storage
-
 EXPOSE 10000
 
 ENTRYPOINT ["/app/render-entrypoint.sh"]

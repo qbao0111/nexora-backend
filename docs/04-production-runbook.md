@@ -1,98 +1,221 @@
-# Runbook production
+# Production runbook
 
-**Status:** Approved operational baseline; production vendors/legal gates deferred  
-**Last updated:** 2026-08-21
+**Status:** Approved operational baseline; vendor/legal enablement gates remain deferred  
+**Last updated:** 2026-09-11
 
-This runbook targets .NET 10 LTS / ASP.NET Core 10 / EF Core 10. DEC-01–04 do not block development or integration testing; they must be resolved only before enabling/deploying the affected real production capability.
+Nexora runs on .NET 10 LTS, ASP.NET Core 10 Web API and EF Core 10 with a
+PostgreSQL database, a modular-monolith API/Business/Data boundary and a
+background Worker. DEC-01 through DEC-04 do not block development or
+integration testing; they must be resolved before the affected real production
+capability is enabled.
 
-## Môi trường và secrets
+## Environment matrix
 
-Tạo `development`, `staging`, `production` tách biệt: database, bucket, OAuth redirect URL và payment keys riêng. Chỉ khai báo secret trong dashboard deploy/secret manager:
+| Environment | PostgreSQL | Object storage | Email | AI | Payment | Sentry | Frontend origin / transport |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Development | Dedicated Neon `development` branch (or local test DB) | `local` | `noop` | Development Gemini/DeepSeek (Fake only in the test harness) | Fake | Optional/disabled | Explicit localhost HTTP origins; secure cookies off |
+| Testing | Test SQLite/Postgres supplied by the harness | `local` | Test double/`noop` | Fake provider | Fake | Optional/disabled | Test origins; no external calls |
+| Staging | Dedicated non-production Neon | `r2` private bucket | Resend | Approved development/staging adapter | SePay Sandbox | DSN + release required | At least one operator-supplied HTTPS frontend origin; secure cross-site cookies |
+| Production | Approved managed PostgreSQL | `r2` private bucket | Approved Resend setup | DEC-01-approved provider/budget | DEC-02-approved provider | DSN + release required | Verified HTTPS frontend origin(s); secure cookies |
+
+Staging and Production fail closed when PostgreSQL, R2, Resend, JWT, Sentry,
+release or CORS configuration is incomplete. Development and Testing keep
+their local/fake adapters where safe. The API and Worker use the same deployed
+environment and Sentry release.
+
+## Configuration and secrets
+
+Use environment variables or an approved secret manager. The canonical names
+are listed in [`.env.example`](../.env.example). Never commit `.env` files,
+credentials, connection strings, DSNs, signed URLs or real candidate data.
+
+Required deployed values include:
 
 ```text
-DATABASE_URL
-AUTH_SECRET
-GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
-AI_PROVIDER_API_KEY
-PAYMENT_PROVIDER_SECRET / PAYMENT_WEBHOOK_SECRET
-STORAGE_* 
+ConnectionStrings__Postgres
+Authentication__Jwt__SigningKey
+Authentication__EmailVerification__PublicUrl
+Storage__Provider=r2
+Storage__R2__AccountId
+Storage__R2__Bucket
+Storage__R2__AccessKeyId
+Storage__R2__SecretAccessKey
+Storage__R2__Endpoint (absolute HTTPS)
+Email__Provider=resend
+Email__FromAddress
+Email__FromName
+Email__Resend__ApiKey
+Email__Resend__ApiBaseUrl=https://api.resend.com
 Sentry__Dsn
-Sentry__Release
+Sentry__Release, or Render's RENDER_GIT_COMMIT fallback
+Frontend__AllowedOrigins__0 (and any additional verified origins)
 ```
 
-Không commit `.env`, CV mẫu có dữ liệu thật hoặc webhook payload production.
+Production `Storage:Provider` is always `r2`, even when uploads are disabled;
+filesystem storage is never a production fallback. R2 objects are private and
+are accessed through storage abstractions and short-lived signed URLs where
+supported. The browser upload/finalize contract is documented in
+[`03-api-data-contract.md`](03-api-data-contract.md); no public bucket is
+required.
 
-## Pipeline phát hành
+### CORS and cookies
 
-1. Pull request: `dotnet restore`, `dotnet format style --verify-no-changes`, `dotnet format analyzers --verify-no-changes`, `dotnet build`, `dotnet test` (unit/integration) và secret scan khi corresponding projects tồn tại. LF-vs-CRLF-only differences are not a correctness failure.
-2. Deploy preview: migration được kiểm thử trên staging, chạy smoke test login/upload/interview.
-3. Production: backup DB, chạy migration tương thích ngược, deploy API/frontend, smoke test và theo dõi lỗi 30 phút.
-4. Rollback: rollback application trước; migration phải có kế hoạch forward-fix hoặc migration rollback đã thử nghiệm.
+Production and Staging require non-empty, HTTPS-only frontend origins. The
+startup validator rejects wildcard, loopback (including localhost), userinfo,
+query strings, fragments, paths other than `/`, control/whitespace tricks and
+duplicate ambiguity. The Render backend URL is not a frontend origin. Enter
+the actual Vercel/custom frontend origin in the deployment dashboard; do not
+guess a domain. SignalR uses the same allowlist and credential requirements.
 
-## Bảo mật tối thiểu
+Access tokens remain in frontend memory and use the `Authorization` header.
+Refresh tokens are `HttpOnly`, `Secure` and `SameSite=None` for cross-site
+staging/production integration. Do not put tokens in localStorage.
+Cookie mutation requests carrying an `Origin` are checked against the same
+allowlist; requests without an `Origin` remain supported for non-browser
+clients, while browser integrations must send their verified frontend origin.
 
-- Cookie HTTP-only, `Secure`, `SameSite`; CSRF protection nếu dùng cookie session.
-- Rate limit bằng ASP.NET Core rate-limiting middleware. Các giá trị production initial (configuration, không hard-code): login **5 attempts/15 phút/IP** và **10/15 phút/email**; refresh **30/giờ/session**; upload **10/giờ/user**; checkout **5/giờ/user**; start AI job **10/giờ/user** ngoài quota plan; submit answer **20/5 phút/session**. Trả `429` + `Retry-After`; calibrate lại sau load test và phê duyệt thay đổi qua config review.
-- Validate detected MIME/signature, kích thước và extension; malware scanning là defence tùy khả năng, không phải guarantee rằng file an toàn.
-- TLS bắt buộc, CSP phù hợp, CORS allowlist theo domain production.
-- Mã hoá dữ liệu khi lưu/truyền; định nghĩa retention và endpoint xoá tài khoản/dữ liệu.
+## Release and deployment
 
-## Observability và alert
+The Render entrypoint requires `ASPNETCORE_ENVIRONMENT` and
+`DOTNET_ENVIRONMENT` to match (or defaults both to `Staging`), then runs the EF
+migration bundle once and starts API and Worker with the same inherited
+environment. It creates a local storage
+directory only when `Storage__Provider=local`; R2 deployments do not depend on
+the container filesystem. If either child exits unexpectedly, the sibling is
+stopped and the container exits non-zero.
 
-- Mỗi request/job/event có `requestId`/`correlationId`.
-- Ghi structured logs: actor, resource, event, duration, error code; không ghi CV, token hoặc nội dung nhạy cảm nguyên văn.
-- API và Worker dùng Sentry .NET integration với cùng bộ biến `Sentry__Dsn` và `Sentry__Release` (secret manager/deploy environment, không commit). `Development`/`Staging`/`Production` được lấy từ host environment; `service` là `api` hoặc `worker`.
-- `SendDefaultPii` luôn bị ép `false`. Request body, query string, Authorization/Cookie, provider payload, CV/JD, answer/transcript, prompt/response và user context bị loại khỏi Sentry. Khi điều tra API, tìm event bằng tag `request_id` và route/method an toàn.
-- Không có DSN vẫn là cấu hình hợp lệ cho Development/Testing; SDK tắt và không tạo network dependency. Sentry không thay thế log/health hiện có.
-- Alert: API 5xx > 2%, queue lag, AI failure, webhook verify fail, payment pending bất thường, quota transaction fail.
-- Dashboard theo dõi: latency, error rate, AI cost/job, payment conversion, job success rate.
-- Poll `/api/v1/health/operations`; trạng thái `Degraded` nghĩa là ít nhất một ngưỡng `OperationsHealth` bị vượt: queue lag, payment pending hoặc recent job/deletion failure. Route chỉ trả trạng thái tổng quát, không lộ count/ID ra response mặc định.
-- Log hoàn tất request gồm request ID, actor ID, method, path, status và duration; job/payment log chỉ chứa correlation/resource IDs, outcome, duration và exception type, không chứa body, CV/JD/transcript, token hoặc raw provider error.
-- Alert delivery/dashboard backend cụ thể được cấu hình cùng hạ tầng đã duyệt theo DEC-04; source hiện cung cấp vendor-neutral structured signals và health state.
+Render provides `RENDER_GIT_COMMIT`. An explicit `Sentry__Release` wins;
+otherwise `scripts/render-entrypoint.sh` exports the commit as
+`Sentry__Release` before launching both processes. If neither exists in a
+deployed environment, startup fails. Do not use unsupported Blueprint
+interpolation such as `Sentry__Release=$RENDER_GIT_COMMIT`.
 
-### Thiết lập và kiểm tra alert Sentry (staging/production)
+For Railway, use the same semantic variable names and set
+`Sentry__Release` explicitly unless an operator has verified a current,
+platform-supported commit variable. Nexora is not claiming a Railway deploy
+in this repository.
 
-1. Tạo project Sentry cho backend .NET trong tổ chức đã được phê duyệt; lấy DSN bằng secret manager và đặt cùng `Sentry__Dsn` cho API/Worker.
-2. Đặt `Sentry__Release` là cùng một build/deploy identifier cho hai process. Không đặt environment từ client; host environment tự tạo `Development`, `Staging` hoặc `Production`.
-3. Tạo issue alert lọc tag `service:api` cho unhandled error/HTTP 5xx và tag `service:worker` cho worker failure spike. Chọn ngưỡng theo traffic thực tế, không dùng ngưỡng giả trong code.
-4. Gây một lỗi có kiểm soát ở staging, kiểm tra event có `service`, `environment`, `release`, `request_id` (API), đồng thời xác nhận không có body, query, header, cookie hay nội dung CV/answer/secret. Chỉ đánh dấu alert đã cấu hình sau khi người vận hành xác nhận delivery.
-5. Nếu Sentry không truy cập được, dùng `request_id` với structured host logs, `/api/v1/health/operations`, database/job status và dashboard provider để điều tra; không bật log raw payload để bù thiếu.
+## Release pipeline
 
-## Performance baseline để test staging
+1. Pull the reviewed commit and run the repository CI-equivalent restore,
+   Release build, unit/integration tests, EF drift check, vulnerability audit,
+   changed-file format/analyzer checks and `git diff --check`.
+2. Back up the target database and rehearse the migration on an isolated
+   staging target.
+3. Configure secret and non-secret deployment values, deploy, and check
+   `/health/live`, `/api/v1/health`, login, private upload/finalize, extraction,
+   and a synthetic interview job.
+4. Observe safe logs, queue/operations health and Sentry for the agreed window.
+5. Roll back the application/configuration first. Use a forward database fix or
+   a rehearsed migration rollback; never silently switch a deployed R2 setup to
+   local storage.
 
-Cho MVP (vài chục–vài trăm user), gate staging ban đầu là **50 virtual users trong 10 phút, tải ổn định 15 RPS CRUD/API**, cộng **burst 100 virtual users trong 60 giây, tối đa 30 RPS**. P95 endpoint synchronous không-AI dưới 500 ms, error rate dưới 1%; job creation chỉ enqueue, không chờ model. AI load testing và k6 CRUD script không thuộc luồng development nội bộ hiện tại; chỉ thực hiện lại bằng dữ liệu/đối tượng được phê duyệt khi chuẩn bị staging. Đây là baseline kỹ thuật, không phải cam kết capacity; chỉnh lại khi có số liệu production.
+## Security and privacy minimums
 
-## Backup/restore rehearsal
+- ASP.NET Core Identity, owner authorization and BOLA negative tests remain
+  authoritative for every user-owned resource.
+- Validate detected MIME/signature, size and extension. Malware scanning is an
+  optional defence, never a guarantee.
+- Keep secrets out of logs. Structured logs contain request/correlation IDs,
+  resource IDs, outcome, duration, status and exception type only; never raw
+  CV/JD/answers/transcripts, prompts, provider responses, headers, tokens,
+  connection strings or signed URLs.
+- Preserve deletion/export capability, immutable usage history, webhook
+  signature verification and idempotency. Obtain explicit consent before any
+  future audio/video recording.
+- Sentry keeps `SendDefaultPii=false`, excludes request bodies/query strings,
+  auth/cookie data and candidate content, and uses safe `request_id`, `service`,
+  `environment` and `release` metadata. Do not mark external alert delivery
+  complete until it has been verified in the approved Sentry project.
 
-T-10 dùng `scripts/verify-postgres-backup.ps1 -ConfirmIsolatedTarget`. Cung cấp connection string qua `NEXORA_BACKUP_SOURCE` và `NEXORA_RESTORE_TARGET`; target phải là database cô lập/disposable có tên thể hiện `isolated`, `restore`, `drill` hoặc `test`. Sau restore, trỏ một API instance vào target rồi đặt `NEXORA_RESTORE_API_READ_URL` tới authenticated read endpoint và `NEXORA_RESTORE_API_TOKEN` của synthetic account. Script chỉ pass khi `pg_dump`, `pg_restore` và API read canonical đều thành công.
+## Health, alerts and recovery
 
-Không chạy drill vào production target. Không ghi connection string/token vào command, log hoặc source control.
+Use `/api/v1/health/operations` for queue lag, payment pending and recent job /
+deletion failure state. For an incident, start with the request/correlation ID
+and timestamp, then check Sentry, Render/Railway service state, PostgreSQL and
+R2 provider status without enabling raw-payload logging.
 
-## Checklist go-live
+Configure API 5xx, Worker failure, queue lag, webhook verification and payment
+pending alerts according to traffic after the relevant vendor decision. This
+repository provides safe signals and health checks; it does not claim a live
+alert destination has been configured.
 
-- [ ] Domain, DNS, HTTPS và OAuth redirect URLs production hoạt động.
-- [ ] Backup/restore DB đã test; retention CV/transcript được phê duyệt.
-- [ ] Webhook payment được verify bằng sandbox và retry idempotent.
-- [ ] RLS/authorization integration tests pass.
-- [ ] Feature flags cho phép tắt AI/payment/upload độc lập.
-- [ ] Terms, Privacy Policy và consent audio/video có URL production.
-- [ ] Owner trực vận hành và quy trình incident/rollback đã xác định.
+Run `scripts/verify-postgres-backup.ps1 -ConfirmIsolatedTarget` only against a
+disposable isolated database. Never run a restore drill against production.
+
+## Rate limits and staging performance baseline
+
+Keep rate-limit values in configuration rather than hard-coding them. The
+initial production baseline is login 5 attempts/15 minutes/IP and 10/15
+minutes/email; refresh 30/hour/session; upload 10/hour/user; checkout
+5/hour/user; AI job start 10/hour/user outside plan quota; and answer submit
+20/5 minutes/session. Return `429` with `Retry-After`, then recalibrate after
+load testing through a reviewed configuration change.
+
+For the initial MVP staging rehearsal (dozens to hundreds of users), target
+50 virtual users for 10 minutes at a steady 15 RPS for CRUD/API traffic, plus
+a 100-user/60-second burst capped at 30 RPS. Keep non-AI synchronous endpoint
+P95 below 500 ms and error rate below 1%; job creation should enqueue rather
+than wait for a model. This is a technical baseline, not a capacity promise.
+
+## Sentry alert verification
+
+Create the approved backend Sentry project and configure separate `service:api`
+and `service:worker` alerts for unhandled errors/HTTP 5xx and worker failure
+spikes. Choose thresholds from observed staging traffic. Trigger a controlled
+staging error and verify `service`, environment, release and safe
+`request_id` metadata while confirming that request bodies, query strings,
+headers, cookies, candidate content and secrets are absent. Only mark alert
+delivery complete after an operator verifies receipt; if Sentry is unavailable,
+use structured logs, health endpoints and provider status without enabling raw
+payload logging.
+
+## Backup and restore rehearsal
+
+For T-10 run
+`scripts/verify-postgres-backup.ps1 -ConfirmIsolatedTarget` with
+`NEXORA_BACKUP_SOURCE` and `NEXORA_RESTORE_TARGET` supplied out of band. The
+target must be disposable and named to indicate `isolated`, `restore`,
+`drill` or `test`. Set `NEXORA_RESTORE_API_READ_URL` and a synthetic account's
+`NEXORA_RESTORE_API_TOKEN` only for the rehearsal. Never place connection
+strings or tokens in command history, logs or source control, and never drill
+against the production target.
 
 ## Production enablement gates
 
-- **DEC-01:** production AI provider/model and budgets approved before real production AI traffic; internal Gemini development traffic remains allowed.
-- **DEC-02:** production Vietnamese payment/refund/invoice/tax decision approved before real payments; `FakePaymentProvider` verified webhook flow remains allowed.
-- **DEC-03:** final retention periods and approved legal/privacy text completed before processing affected personal data in production.
-- **DEC-04:** hosting/storage vendors, domains, mail and infrastructure accounts completed before production deployment.
+- **DEC-01:** approve the production AI provider/model and budgets before real
+  production AI traffic. Development/test adapters remain usable locally.
+- **DEC-02:** approve the Vietnamese payment provider, refunds, invoices and
+  tax handling before real payments. SePay Sandbox/FakePayment tests remain
+  available before that decision.
+- **DEC-03:** approve retention periods and legal/privacy text before affected
+  production processing.
+- **DEC-04:** approve hosting, storage, domains, mail and infrastructure
+  accounts before production deployment.
 
-Development/testing storage may use `LocalStorageProvider`; production-like configuration may use `R2StorageProvider` with private objects and validated HTTPS endpoint/credentials. A2 now supplies the durable database-backed R2 upload-intent, signed PUT and finalize path, so `Features:Upload=true` is technically allowed only when `Storage:Provider=r2`; Production + local upload remains a startup failure. Local filesystem storage is never a production option. Actual production account/hosting enablement remains subject to DEC-04, and the exact deferred-decision wording is canonical in [07-architecture-decisions.md](07-architecture-decisions.md#production-enablement-decisions-dec-01-through-dec-04).
+A13 hardens configuration and does not resolve or bypass these gates.
 
-## Incident response tối thiểu
+## Go-live checklist
 
-| Mức | Ví dụ | Hành động ban đầu |
+- [ ] Verified production domain, DNS, HTTPS and OAuth redirects.
+- [ ] Dedicated PostgreSQL, private R2, Resend and Sentry values configured.
+- [ ] JWT key meets the deployed minimum and is not a development/default key.
+- [ ] Frontend allowlist contains only verified HTTPS origins.
+- [ ] Backup/restore rehearsal and deletion/export checks completed.
+- [ ] Payment webhook signature/idempotency tested in the approved sandbox.
+- [ ] Sentry privacy and alert delivery externally verified.
+- [ ] Legal retention/privacy and consent text approved.
+
+See [`render-staging.md`](render-staging.md) for the Render Blueprint and
+Railway-equivalent configuration guide.
+
+## Incident response
+
+| Severity | Example | Initial action |
 | --- | --- | --- |
-| P1 | Lộ secret, truy cập dữ liệu trái phép, payment xử lý sai diện rộng | Disable integration/rotate secret, giữ evidence log, thông báo owner ngay, dừng deploy. |
-| P2 | API không hoạt động, AI/payment job backlog lớn | Rollback release gần nhất hoặc bật feature flag off, kiểm tra queue/database. |
-| P3 | Một job/report bị lỗi | Ghi request/job ID, retry theo policy, tạo issue nếu lặp lại. |
+| P1 | Secret exposure, unauthorized data access, widespread payment error | Disable the affected integration, rotate secrets, preserve evidence, notify the owner and stop deployment. |
+| P2 | API unavailable or major AI/payment backlog | Roll back the application/configuration or disable the affected feature, then inspect queue and database health. |
+| P3 | One failed job/report | Record request/job ID, retry according to policy and open an issue if it repeats. |
 
-Sau P1/P2 phải có postmortem: timeline, ảnh hưởng, nguyên nhân, corrective action và owner/due date.
+After a P1/P2 incident capture a timeline, impact, root cause, corrective
+action and owner/due date.
