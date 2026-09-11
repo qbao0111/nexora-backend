@@ -82,7 +82,6 @@ public sealed class AiContractReliabilityTests
         // Authoritatively normalized to applicable = false:
         Assert.False(starElement.GetProperty("applicable").GetBoolean());
     }
-
     [Fact]
     public async Task FreePrimaryAnswerDoesNotGenerateAdaptiveFollowup()
     {
@@ -318,6 +317,53 @@ public sealed class AiContractReliabilityTests
         Assert.Equal(0, answerCount);
     }
 
+    [Fact]
+    public async Task NullRubricItemMapsToSafe503AndDoesNotPersistAnswer()
+    {
+        var aiProvider = new TestAiProvider();
+        var malformed = new AnswerEvaluation(
+            [
+                null!,
+                new RubricScore("structure", 80, "Clear structure."),
+                new RubricScore("completeness", 80, "Complete response."),
+                new RubricScore("clarity", 80, "Clear communication.")
+            ],
+            "Malformed rubric",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            Strengths: ["Grounded answer"],
+            Improvements: ["Add one concrete example if available."],
+            ImprovedAnswer: "Keep the same answer and add concrete evidence if available.");
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, malformed);
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, malformed);
+
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 5);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var interviewId = await StartInterviewAsync(client, "technical", "null-rubric-item");
+        await ProcessJobsAsync(factory);
+        var questionId = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/answers")
+        {
+            Content = JsonContent.Create(new { questionId, content = "A grounded answer.", durationSeconds = 30 })
+        };
+        request.Headers.Add("Idempotency-Key", "null-rubric-item-answer");
+        using var response = await client.SendAsync(request);
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("AI_OUTPUT_INVALID", body, StringComparison.Ordinal);
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(0, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
+    }
     [Fact]
     public async Task AnswerCoachingPersistsAndIdempotentReplayDoesNotReevaluate()
     {

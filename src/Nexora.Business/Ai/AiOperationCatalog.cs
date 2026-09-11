@@ -83,6 +83,9 @@ public static class CanonicalRubricValidator
         var normalized = new List<RubricScore>(rawScores.Count);
         foreach (var s in rawScores)
         {
+            if (s is null)
+                return AiValidationResult<IReadOnlyCollection<RubricScore>>.Failure("rubric.item_invalid", "semantic", repairable: true);
+
             var criterion = s.Criterion?.Trim().ToLowerInvariant() ?? string.Empty;
             var evidence = s.Evidence?.Trim() ?? string.Empty;
             normalized.Add(new RubricScore(criterion, s.Score, evidence));
