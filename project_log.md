@@ -898,3 +898,35 @@ This log records completed implementation milestones and verification evidence. 
 - Host attribution: API and Worker Sentry options now carry default `service=api` / `service=worker` tags, while explicit reporter tags and privacy sanitization remain intact.
 - Release truthfulness: `Sentry:Release` remains an optional server-side release hook for a build/deploy identifier; current staging/production SHA wiring, real Sentry alert delivery, UptimeRobot and A13 hardening are still deferred.
 - Verification scope: deterministic observability regression coverage includes the five expected 4xx kinds, ExternalFailure capture/envelope behavior, host default tags and explicit reporter tags; focused observability tests passed (6 unit, 11 integration) and the full Release suites passed (355 unit, 227 integration). No migration, frontend change, live Sentry call or real DSN was used.
+
+## 2026-09-11 — B13 Progress Dashboard v2
+
+- Status: Implementation complete / Ready for independent review; local integration and full-suite execution is blocked by the host Windows application-control policy.
+- Owner: Bảo Nguyên — Backend workstream B.
+- Branch: `feat/progress-dashboard-v2`.
+- Base main SHA: `e25d4022955ad4a097632926ab725044c829cde0` (`origin/main` after B12 was merged).
+- Implementation commit: `2c1fcc7` (`feat(progress): add readiness dashboard`).
+- Endpoint: Added authenticated `GET /api/v1/progress/dashboard` with the standard `{ "data": ... }` envelope. The response contains readiness, weakest competencies, recent improvements, UTC weekly completed activities, nullable next recommendation and unchanged historical stats.
+- Legacy compatibility: `GET /api/v1/progress` remains on its existing action, response fields and `IProgressService` semantics; the dashboard nests the same mapped `ProgressResponse` under `historicalStats`.
+- Architecture: Computed read model in `Nexora.Business.Progress` and `Nexora.Data.Progress`, with a thin action on `ProgressController`. The service reuses `IProgressService`, `ISkillProfileService`, `INextPracticeRecommendationService`, `NexoraDbContext` and `TimeProvider`.
+- B10 dependency: Readiness and weakest competencies use only the B10 `SkillProfileView`; no CV, answer, STAR or scenario evidence is independently aggregated and no scoring logic is duplicated.
+- B12 dependency: Next recommendation is mapped directly from `INextPracticeRecommendationService`; B12 ranking and duration policy are not reimplemented. Only `ACTIVE_CAREER_GOAL_REQUIRED` and `LEARNING_PATH_NOT_FOUND` become a nullable dashboard recommendation.
+- Readiness formula: Equal-weight arithmetic mean of B10 competency scores, rounded once with `Math.Round(mean, MidpointRounding.AwayFromZero)`. Empty scored profile returns null score and zero assessed/evidence/priority-gap counts; qualitative weakness count and latest evidence timestamp remain truthful.
+- Weakest ordering: At most five B10 competencies ordered by score ascending, EvidenceCount descending, LatestEvidenceAt descending and ordinal code ascending. Qualitative signals never become fake numeric competencies.
+- Recent improvements: Consecutive existing `RecentInterviewScores` are compared chronologically; only positive interview deltas are returned, newest first, limited to five. No text inference or fabricated scenario/STAR improvements.
+- UTC weekly window: Monday 00:00 UTC through the current UTC instant from `TimeProvider`; only canonical `CompletedAt` values are counted.
+- Weekly activity sources: Owner-scoped completed `ResumeAnalysis`, `InterviewSession`, `ScenarioAttempt`, `StarAttempt` and `LearningPathActivity` count queries; Learning Path rows scope through `LearningPath.UserId`. Failed, incomplete, pending, processing, draft and obsolete rows are excluded.
+- Next recommendation absence: An entitled empty user still receives a valid dashboard with null readiness score, empty lists, zero weekly counts and null recommendation. Unexpected errors, cancellation and authorization failures propagate.
+- Entitlement: Dashboard calls the existing `IProgressService` first, preserving the `progress_analytics` access gate and existing forbidden behavior.
+- Owner isolation: The endpoint accepts no user ID; B10/B12 services receive `User.GetRequiredUserId()`, and all new weekly queries filter ownership at the database boundary.
+- Persistence/migration: None. No entity, `DbSet`, schema, migration, ModelSnapshot or `PracticeService.cs` change; GET is read-only and does not call AI.
+- Tests added: 10 focused unit test cases cover empty/one/multiple readiness, midpoint rounding, counts/threshold, weakest ordering/limit, qualitative separation, interview improvement rules, determinism and Monday UTC week start. Eight focused integration test methods cover auth/entitlement, legacy compatibility, empty state, dashboard mapping, weekly owner boundaries, B11 absence behavior and no mutation. The integration test source compiled successfully in the Release build.
+- Verification: `dotnet tool restore` passed; `dotnet restore Nexora.slnx` passed; Release solution build passed with 0 warnings/errors using a temporary untracked removal of the host-blocked Sentry analyzer, which was deleted before commit; focused B13 unit tests passed 10/10. Focused integration execution and the full `dotnet test` attempt were blocked before host startup by Windows error `0x800711C7` refusing `Sentry.dll`/`Nexora.Worker.dll`; no product assertion failure was observed.
+- EF result: `dotnet-ef migrations has-pending-model-changes --project src/Nexora.Data/Nexora.Data.csproj --startup-project src/Nexora.Api/Nexora.Api.csproj --configuration Release --no-build` reported `No changes have been made to the model since the last migration.`
+- Style/analyzers: Changed-C# `dotnet format Nexora.slnx style --verify-no-changes --no-restore --include ...` and analyzer verification passed.
+- Vulnerability audit: Current CI-equivalent NuGet audit completed with no vulnerability entries returned.
+- Diff check: `git diff --check` and CRLF-aware diff check passed; EOL warnings are non-functional only.
+- FE impact: No frontend code changed. B13 response fields, formulas, ordering, UTC window, null behavior, entitlement and legacy compatibility are documented in the API, data-model and frontend integration docs.
+- Remote/CI: No hosted CI claim and no Pull Request was created. Hosted CI remains required for the blocked integration/full-suite execution.
+- Blockers: Local Windows Application Control prevents fresh integration/full-suite assemblies from loading; the implementation is otherwise source/build/EF validated. B14+ was not started.
+- Provider safety: No live AI, payment, storage, email, production database or external provider calls were made.

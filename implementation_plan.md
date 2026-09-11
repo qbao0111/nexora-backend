@@ -973,12 +973,12 @@ Rule-based trước, AI optional sau.
 
 Nâng từ analytics cơ bản thành readiness dashboard:
 
-- [ ] Career readiness summary.
-- [ ] Weakest competencies.
-- [ ] Recent improvements.
-- [ ] Weekly completed activities.
-- [ ] Next recommended practice.
-- [ ] Giữ existing historical stats để không break FE cũ hoặc version contract rõ.
+- [x] Career readiness summary.
+- [x] Weakest competencies.
+- [x] Recent improvements.
+- [x] Weekly completed activities.
+- [x] Next recommended practice.
+- [x] Giữ existing historical stats để không break FE cũ hoặc version contract rõ.
 
 ---
 
