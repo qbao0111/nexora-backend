@@ -22,8 +22,6 @@ namespace Nexora.IntegrationTests;
 
 public sealed class ProgressDashboardApiTests
 {
-    private static readonly DateTimeOffset FixedNow = new(2026, 9, 16, 3, 0, 0, TimeSpan.Zero);
-
     [Fact]
     public async Task DashboardRequiresAuthentication()
     {
@@ -142,20 +140,22 @@ public sealed class ProgressDashboardApiTests
         var other = await RegisterAsync(otherClient);
         Authorize(otherClient, other);
 
-        await SeedResumeAnalysisAsync(factory, owner.UserId, PracticeValues.Completed, FixedNow);
-        await SeedInterviewAsync(factory, owner.UserId, FixedNow);
-        await SeedScenarioAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Completed, FixedNow);
-        await SeedStarAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Completed, FixedNow);
-        await SeedLearningPathActivityAsync(factory, owner.UserId, LearningPathValues.Completed, FixedNow);
-        await SeedScenarioAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Completed, FixedNow.AddDays(-3));
-        await SeedScenarioAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Failed, FixedNow);
-        await SeedScenarioAttemptAsync(factory, other.UserId, PracticeFeatureValues.Completed, FixedNow);
+        var capturedNow = DateTimeOffset.UtcNow;
+        var expectedWeekStart = ProgressDashboardPolicy.GetUtcWeekStart(capturedNow);
+        await SeedResumeAnalysisAsync(factory, owner.UserId, PracticeValues.Completed, capturedNow);
+        await SeedInterviewAsync(factory, owner.UserId, capturedNow);
+        await SeedScenarioAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Completed, capturedNow);
+        await SeedStarAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Completed, capturedNow);
+        await SeedLearningPathActivityAsync(factory, owner.UserId, LearningPathValues.Completed, capturedNow);
+        await SeedScenarioAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Completed, expectedWeekStart.AddDays(-1));
+        await SeedScenarioAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Failed, capturedNow);
+        await SeedScenarioAttemptAsync(factory, other.UserId, PracticeFeatureValues.Completed, capturedNow);
 
         using var response = await ownerClient.GetAsync("/api/v1/progress/dashboard");
         var weekly = (await DataAsync(response)).GetProperty("weeklyCompletedActivities");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(new DateTimeOffset(2026, 9, 14, 0, 0, 0, TimeSpan.Zero), weekly.GetProperty("windowStart").GetDateTimeOffset());
+        Assert.Equal(expectedWeekStart, weekly.GetProperty("windowStart").GetDateTimeOffset());
         Assert.Equal(5, weekly.GetProperty("total").GetInt32());
         Assert.Equal(1, weekly.GetProperty("resumeAnalyses").GetInt32());
         Assert.Equal(1, weekly.GetProperty("interviews").GetInt32());
@@ -205,7 +205,7 @@ public sealed class ProgressDashboardApiTests
         using var client = factory.CreateHttpsClient();
         var account = await RegisterAsync(client);
         Authorize(client, account);
-        await SeedLearningPathActivityAsync(factory, account.UserId, LearningPathValues.Completed, FixedNow);
+        await SeedLearningPathActivityAsync(factory, account.UserId, LearningPathValues.Completed, DateTimeOffset.UtcNow);
 
         using var first = await client.GetAsync("/api/v1/progress/dashboard");
         using var second = await client.GetAsync("/api/v1/progress/dashboard");
@@ -235,9 +235,6 @@ public sealed class ProgressDashboardApiTests
                 services.RemoveAll<INextPracticeRecommendationService>();
                 services.AddSingleton<INextPracticeRecommendationService>(recommendation);
             }
-
-            services.RemoveAll<TimeProvider>();
-            services.AddSingleton<TimeProvider>(new FixedTimeProvider(FixedNow));
         });
 
     private static SkillProfileView Profile(params SkillProfileCompetency[] competencies) => new(competencies, []);
@@ -320,7 +317,7 @@ public sealed class ProgressDashboardApiTests
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        var now = completedAt ?? FixedNow;
+        var now = completedAt ?? DateTimeOffset.UtcNow;
         var file = new StoredFile
         {
             Id = Guid.NewGuid(), UserId = userId, StorageKey = $"dashboard/{Guid.NewGuid():N}", FileName = "cv.pdf",
@@ -380,7 +377,7 @@ public sealed class ProgressDashboardApiTests
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        var now = completedAt ?? FixedNow;
+        var now = completedAt ?? DateTimeOffset.UtcNow;
         var category = await db.ScenarioCategories.SingleAsync(item => item.Slug == "banking");
         var scenario = new Scenario
         {
@@ -441,8 +438,16 @@ public sealed class ProgressDashboardApiTests
 
     private static async Task<JsonElement> DataAsync(HttpResponseMessage response)
     {
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        return document.RootElement.GetProperty("data").Clone();
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(
+            response.IsSuccessStatusCode,
+            $"Expected a successful response but got {(int)response.StatusCode} {response.StatusCode}. Body: {body}");
+
+        using var document = JsonDocument.Parse(body);
+        Assert.True(
+            document.RootElement.TryGetProperty("data", out var data),
+            $"Expected response body to contain a data property. Body: {body}");
+        return data.Clone();
     }
 
     private static async Task<JsonElement> ErrorAsync(HttpResponseMessage response)
@@ -468,8 +473,4 @@ public sealed class ProgressDashboardApiTests
         public Task<NextPracticeRecommendationView?> GetAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult(view);
     }
 
-    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => now;
-    }
 }
