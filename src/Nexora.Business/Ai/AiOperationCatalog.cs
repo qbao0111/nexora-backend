@@ -1265,11 +1265,13 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
 
 public sealed class ScenarioEvaluateOperation : AiOperationDefinition<ScenarioEvaluationResult>
 {
+    private const int OutputTokenBudget = 4_000;
+
     public override string Purpose => AiPurposes.ScenarioEvaluate;
     public override string PromptVersion => "scenario-eval-v2";
     public override string SchemaVersion => "scenario-eval-v2";
     public override string RubricVersion => "scenario-rubric-v2";
-    public override int MaxOutputTokens => 2_000;
+    public override int MaxOutputTokens => OutputTokenBudget;
 
     public override JsonDocument OutputSchema { get; } = JsonDocument.Parse("""
         {

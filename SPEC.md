@@ -153,6 +153,8 @@ The structured executor remains bounded to two provider calls. Only a positively
 
 Resume analysis uses strict provider-neutral schemas for its two modes. The job-targeted operation returns `matchScore` and five named breakdown dimensions; the field-benchmark operation returns `readinessScore` and six named dimensions. Both use a 4,096-token first attempt with at most one validated 8,192-token truncation retry and reuse a valid cached `ResumeProfile`.
 
+Scenario evaluation uses a validated 4,000-token per-attempt output budget for its multi-dimension evidence and coaching schema. It keeps the configured enabled/low reasoning policy, and any output-truncation retry remains within the executor's existing two-call ceiling.
+
 ## 12. Billing and quota model
 
 Plans/prices are server-owned and snapshotted on orders. Before DEC-02, use `IPaymentProvider` with `FakePaymentProvider` to exercise:
