@@ -344,6 +344,16 @@ Returns privacy-safe user-owned aggregates:
 - `completedStarAttempts` count
 - `recentActivity` audit timeline (type, resourceId, timestamp)
 
+`GET /api/v1/progress/dashboard` uses the same Bearer and `progress_analytics` entitlement and adds the B13 dashboard read model without changing the legacy response. The response keeps the legacy progress payload under `historicalStats` and adds:
+
+- `readiness`: B10 equal-weight mean score rounded away from zero, assessed/evidence/priority-gap counts, qualitative weakness count and latest evidence timestamp. With no scored competencies, `score` is `null`.
+- `weakestCompetencies`: at most five B10 competencies, ordered by score, evidence strength, recency and ordinal code.
+- `recentImprovements`: only positive consecutive interview-score deltas proven by existing comparable history, newest first.
+- `weeklyCompletedActivities`: completed ResumeAnalysis, InterviewSession, ScenarioAttempt, StarAttempt and LearningPathActivity counts from Monday 00:00 UTC through the current UTC `TimeProvider` instant. `total` equals the displayed category sum.
+- `nextRecommendedPractice`: the B12 recommendation, or `null` when the user has no active Career Goal or has no Learning Path yet. Other errors remain errors.
+
+The endpoint is read-only, uses no AI and returns no raw CV, answer, STAR or scenario content. All values are owner-scoped. An entitled empty user receives a valid empty dashboard; the legacy `/api/v1/progress` contract remains unchanged.
+
 ## Development shortcut (optional)
 
 `POST /dev/resume-analysis` is **DEVELOPMENT ONLY**. It accepts multipart `File` + `JobDescription` and an idempotency key, then orchestrates the same real upload, storage, extraction, automatic fallback, Worker, PostgreSQL and Gemini services. It is useful for backend debugging; the normal frontend should use the explicit sequence above. The route is not mapped outside Development.

@@ -180,6 +180,24 @@ Khi có ứng viên, response chỉ gồm `reason`, `activityType`, nullable `re
 
 Ranking rule deterministic theo thứ tự: `priority` tăng dần; `EvidenceCount` giảm dần; `LastPracticeAt` tăng dần; score tăng dần; milestone `SortOrder`; activity `SortOrder`; activity ID. Với competency, `LastPracticeAt` là thời điểm mới nhất giữa B10 `LatestEvidenceAt` và `CompletedAt` của activity B11 đã completed cùng competency. Với qualitative resume improvement không có competency code, ranking chỉ dùng timestamp ổn định của Learning Path và `EvidenceCount = 0`/không có score để làm fallback. `estimatedMinutes` là server policy: scenario 20, star_drill 15, interview 20, resume_improvement 15, external_learning 20. `reason` được tạo deterministic từ tên activity/competency, priority, evidence count và tín hiệu recency; không chứa raw CV, answer, STAR hoặc AI output.
 
+### Progress Dashboard v2
+
+`GET /api/v1/progress/dashboard` yêu cầu Bearer authentication và cùng entitlement `progress_analytics` với legacy `GET /api/v1/progress`. Nó trả computed read model trong envelope `{ "data": ... }`; `GET /api/v1/progress` và toàn bộ field/semantics của `ProgressResponse` không thay đổi.
+
+Response gồm `readiness`, `weakestCompetencies`, `recentImprovements`, `weeklyCompletedActivities`, `nextRecommendedPractice` và `historicalStats`. `historicalStats` giữ nguyên response legacy để frontend cũ không bị break.
+
+`readiness.score` là arithmetic mean equal-weight của các B10 scored competencies, làm tròn đúng một lần bằng `Math.Round(mean, MidpointRounding.AwayFromZero)`. Khi không có competency, score là `null`, assessed/evidence/priority-gap đều bằng 0; qualitative weakness count và latest evidence timestamp vẫn phản ánh B10 signals. `priorityGapCount` đếm score strictly below B11 threshold `75`, còn `evidenceCount` là tổng EvidenceCount của B10.
+
+`weakestCompetencies` chỉ dùng B10 competencies, tối đa 5 item và sắp xếp theo score tăng, EvidenceCount giảm, LatestEvidenceAt giảm, rồi code ordinal tăng. Qualitative weakness không được chuyển thành competency giả hoặc score giả.
+
+`recentImprovements` chỉ dùng `IProgressService.ProgressView.RecentInterviewScores`. Các score được so sánh theo cặp consecutive chronologically; chỉ delta dương mới được trả, với `kind: "interview"`, current interview ID, previous/current score, delta và thời điểm current score. Kết quả mới nhất đứng trước và tối đa 5 item. Không suy diễn improvement từ text hoặc từ scenario/STAR khi không có chuỗi comparable canonical.
+
+`weeklyCompletedActivities` dùng UTC calendar week: từ Monday 00:00 UTC tới thời điểm UTC hiện tại do `TimeProvider` cung cấp. Chỉ completion timestamp của các row thuộc authenticated user được tính: completed ResumeAnalysis, InterviewSession, ScenarioAttempt, StarAttempt và LearningPathActivity. Failed, queued, processing, draft, obsolete và pending bị loại; `total` là tổng các breakdown.
+
+`nextRecommendedPractice` tái sử dụng B12 `INextPracticeRecommendationService` và giữ nguyên ranking/duration của B12. Chỉ hai lỗi absence đã biết là `ACTIVE_CAREER_GOAL_REQUIRED` và `LEARNING_PATH_NOT_FOUND` được chuyển thành `null`; lỗi database, cancellation, authorization và business error khác vẫn propagate. Empty/entitled user vẫn nhận dashboard hợp lệ với readiness null, các list rỗng, weekly zero và next recommendation null.
+
+Dashboard không gọi AI, không đọc raw CV/answer/STAR/scenario content, không thêm persistence/DbSet/migration/ModelSnapshot và không mutate dữ liệu. Weekly queries filter `UserId` tại database boundary; Learning Path activity scope qua `LearningPath.UserId`.
+
 ### Tạo interview
 
 ```json

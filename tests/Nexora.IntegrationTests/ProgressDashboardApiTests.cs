@@ -1,0 +1,475 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Nexora.Business.Billing;
+using Nexora.Business.Common;
+using Nexora.Business.Learning;
+using Nexora.Business.Practice;
+using Nexora.Business.Progress;
+using Nexora.Business.Recommendations;
+using Nexora.Business.Skills;
+using Nexora.Data.Billing;
+using Nexora.Data.Career;
+using Nexora.Data.Learning;
+using Nexora.Data.Persistence;
+using Nexora.Data.Practice;
+
+namespace Nexora.IntegrationTests;
+
+public sealed class ProgressDashboardApiTests
+{
+    private static readonly DateTimeOffset FixedNow = new(2026, 9, 16, 3, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task DashboardRequiresAuthentication()
+    {
+        using var factory = NewFakeFactory(Profile(), Historical(), new FixedRecommendationService(null));
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+
+        using var response = await client.GetAsync("/api/v1/progress/dashboard");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DashboardPreservesProgressAnalyticsForbiddenBehavior()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+
+        using var legacy = await client.GetAsync("/api/v1/progress");
+        using var dashboard = await client.GetAsync("/api/v1/progress/dashboard");
+        var legacyError = await ErrorAsync(legacy);
+        var dashboardError = await ErrorAsync(dashboard);
+
+        Assert.Equal(HttpStatusCode.Forbidden, legacy.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, dashboard.StatusCode);
+        Assert.Equal("FEATURE_NOT_AVAILABLE", legacyError.GetProperty("code").GetString());
+        Assert.Equal("FEATURE_NOT_AVAILABLE", dashboardError.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task EntitledEmptyUserGetsAValidEmptyDashboard()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        await SeedFeatureEntitlementAsync(factory, account.UserId);
+
+        using var response = await client.GetAsync("/api/v1/progress/dashboard");
+        var data = await DataAsync(response);
+        var readiness = data.GetProperty("readiness");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(JsonValueKind.Null, readiness.GetProperty("score").ValueKind);
+        Assert.Equal(0, readiness.GetProperty("assessedCompetencies").GetInt32());
+        Assert.Equal(0, readiness.GetProperty("evidenceCount").GetInt32());
+        Assert.Equal(0, readiness.GetProperty("priorityGapCount").GetInt32());
+        Assert.Empty(data.GetProperty("weakestCompetencies").EnumerateArray());
+        Assert.Empty(data.GetProperty("recentImprovements").EnumerateArray());
+        Assert.Equal(0, data.GetProperty("weeklyCompletedActivities").GetProperty("total").GetInt32());
+        Assert.Null(data.GetProperty("nextRecommendedPractice").GetString());
+        Assert.Equal(0, data.GetProperty("historicalStats").GetProperty("completedInterviews").GetInt32());
+    }
+
+    [Fact]
+    public async Task DashboardMapsReadinessImprovementsRecommendationAndLegacyStats()
+    {
+        var historical = new ProgressView(
+            2,
+            [
+                new RecentInterviewScore(Id(3), 75, At(3)),
+                new RecentInterviewScore(Id(2), 60, At(2)),
+                new RecentInterviewScore(Id(1), 60, At(1))
+            ],
+            70,
+            new ProgressStarAverages(70, 71, 72, 73),
+            4,
+            74,
+            3,
+            [new RecentActivity("interview", Id(3), At(3))]);
+        var profile = new SkillProfileView(
+            [
+                Competency("interview.clarity", "Clarity", "interview", 52, 4, At(2)),
+                Competency("resume.structure", "Structure", "resume", 70, 3, At(3)),
+                Competency("scenario.problem_solving", "Problem Solving", "scenario", 80, 2, At(4))
+            ],
+            [new SkillProfileWeaknessSignal("cv_analysis", "Missing SQL", At(5))]);
+        var recommendation = new NextPracticeRecommendationView("Practice Clarity next.", LearningPathValues.Interview, Id(9), 20, 1);
+
+        using var factory = NewFakeFactory(profile, historical, new FixedRecommendationService(recommendation));
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+
+        using var response = await client.GetAsync("/api/v1/progress/dashboard");
+        var data = await DataAsync(response);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(67, data.GetProperty("readiness").GetProperty("score").GetInt32());
+        Assert.Equal(3, data.GetProperty("readiness").GetProperty("assessedCompetencies").GetInt32());
+        Assert.Equal(9, data.GetProperty("readiness").GetProperty("evidenceCount").GetInt32());
+        Assert.Equal(2, data.GetProperty("readiness").GetProperty("priorityGapCount").GetInt32());
+        Assert.Equal(1, data.GetProperty("readiness").GetProperty("qualitativeWeaknessCount").GetInt32());
+        Assert.Equal("interview.clarity", data.GetProperty("weakestCompetencies")[0].GetProperty("code").GetString());
+        var improvement = Assert.Single(data.GetProperty("recentImprovements").EnumerateArray());
+        Assert.Equal(15, improvement.GetProperty("delta").GetInt32());
+        Assert.Equal("interview", improvement.GetProperty("kind").GetString());
+        Assert.Equal(20, data.GetProperty("nextRecommendedPractice").GetProperty("estimatedMinutes").GetInt32());
+        Assert.Equal(2, data.GetProperty("historicalStats").GetProperty("completedInterviews").GetInt32());
+    }
+
+    [Fact]
+    public async Task WeeklyCountsUseUtcWeekOwnerBoundaryAndExcludeIncompleteRows()
+    {
+        using var factory = NewFakeFactory(Profile(), Historical(), new FixedRecommendationService(null));
+        factory.InitializeDatabase();
+        using var ownerClient = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(ownerClient);
+        Authorize(ownerClient, owner);
+        using var otherClient = factory.CreateHttpsClient();
+        var other = await RegisterAsync(otherClient);
+        Authorize(otherClient, other);
+
+        await SeedResumeAnalysisAsync(factory, owner.UserId, PracticeValues.Completed, FixedNow);
+        await SeedInterviewAsync(factory, owner.UserId, FixedNow);
+        await SeedScenarioAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Completed, FixedNow);
+        await SeedStarAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Completed, FixedNow);
+        await SeedLearningPathActivityAsync(factory, owner.UserId, LearningPathValues.Completed, FixedNow);
+        await SeedScenarioAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Completed, FixedNow.AddDays(-3));
+        await SeedScenarioAttemptAsync(factory, owner.UserId, PracticeFeatureValues.Failed, FixedNow);
+        await SeedScenarioAttemptAsync(factory, other.UserId, PracticeFeatureValues.Completed, FixedNow);
+
+        using var response = await ownerClient.GetAsync("/api/v1/progress/dashboard");
+        var weekly = (await DataAsync(response)).GetProperty("weeklyCompletedActivities");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(new DateTimeOffset(2026, 9, 14, 0, 0, 0, TimeSpan.Zero), weekly.GetProperty("windowStart").GetDateTimeOffset());
+        Assert.Equal(5, weekly.GetProperty("total").GetInt32());
+        Assert.Equal(1, weekly.GetProperty("resumeAnalyses").GetInt32());
+        Assert.Equal(1, weekly.GetProperty("interviews").GetInt32());
+        Assert.Equal(1, weekly.GetProperty("scenarios").GetInt32());
+        Assert.Equal(1, weekly.GetProperty("starAttempts").GetInt32());
+        Assert.Equal(1, weekly.GetProperty("learningPathActivities").GetInt32());
+    }
+
+    [Fact]
+    public async Task MissingCareerGoalDoesNotBreakTheDashboard()
+    {
+        using var factory = NewFakeFactory(Profile(), Historical());
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+
+        using var response = await client.GetAsync("/api/v1/progress/dashboard");
+        var data = await DataAsync(response);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Null(data.GetProperty("nextRecommendedPractice").GetString());
+    }
+
+    [Fact]
+    public async Task MissingLearningPathDoesNotBreakTheDashboard()
+    {
+        using var factory = NewFakeFactory(Profile(), Historical());
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        await CreateCareerGoalAsync(client);
+
+        using var response = await client.GetAsync("/api/v1/progress/dashboard");
+        var data = await DataAsync(response);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Null(data.GetProperty("nextRecommendedPractice").GetString());
+    }
+
+    [Fact]
+    public async Task RepeatedDashboardReadsDoNotMutateLearningPathRows()
+    {
+        using var factory = NewFakeFactory(Profile(), Historical(), new FixedRecommendationService(null));
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        await SeedLearningPathActivityAsync(factory, account.UserId, LearningPathValues.Completed, FixedNow);
+
+        using var first = await client.GetAsync("/api/v1/progress/dashboard");
+        using var second = await client.GetAsync("/api/v1/progress/dashboard");
+        var firstBody = await first.Content.ReadAsStringAsync();
+        var secondBody = await second.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal(firstBody, secondBody);
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(1, await db.LearningPathActivities.CountAsync(item => item.LearningPath.UserId == account.UserId));
+    }
+
+    private static NexoraApiFactory NewFakeFactory(
+        SkillProfileView profile,
+        ProgressView historical,
+        INextPracticeRecommendationService? recommendation = null) =>
+        new(new Dictionary<string, string?>(), services =>
+        {
+            services.RemoveAll<IProgressService>();
+            services.AddSingleton<IProgressService>(new FixedProgressService(historical));
+            services.RemoveAll<ISkillProfileService>();
+            services.AddSingleton<ISkillProfileService>(new FixedSkillProfileService(profile));
+            if (recommendation is not null)
+            {
+                services.RemoveAll<INextPracticeRecommendationService>();
+                services.AddSingleton<INextPracticeRecommendationService>(recommendation);
+            }
+
+            services.RemoveAll<TimeProvider>();
+            services.AddSingleton<TimeProvider>(new FixedTimeProvider(FixedNow));
+        });
+
+    private static SkillProfileView Profile(params SkillProfileCompetency[] competencies) => new(competencies, []);
+
+    private static SkillProfileCompetency Competency(
+        string code,
+        string name,
+        string category,
+        int score,
+        int evidenceCount,
+        DateTimeOffset latestEvidenceAt) =>
+        new(code, name, category, score, evidenceCount, latestEvidenceAt, []);
+
+    private static ProgressView Historical() => new(0, [], null, null, 0, null, 0, []);
+
+    private static DateTimeOffset At(int day) => new(2026, 9, day, 0, 0, 0, TimeSpan.Zero);
+
+    private static Guid Id(int value) => Guid.Parse($"81000000-0000-0000-0000-{value:000000000001}");
+
+    private static void Authorize(HttpClient client, Account account) =>
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+    private static async Task<Account> RegisterAsync(HttpClient client)
+    {
+        var email = $"progress-dashboard-{Guid.NewGuid():N}@example.test";
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email,
+            password = "Strong!Pass123",
+            displayName = "Progress dashboard candidate"
+        });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+        await TestEmailInbox.VerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var data = await DataAsync(login);
+        return new Account(data.GetProperty("user").GetProperty("id").GetGuid(), data.GetProperty("accessToken").GetString()!);
+    }
+
+    private static async Task CreateCareerGoalAsync(HttpClient client)
+    {
+        using var response = await client.PostAsJsonAsync("/api/v1/career-goals", new
+        {
+            targetRole = "Backend Developer",
+            seniority = "senior"
+        });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    private static async Task SeedFeatureEntitlementAsync(NexoraApiFactory factory, Guid userId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var plan = new Plan { Id = Guid.NewGuid(), Code = $"dashboard-{Guid.NewGuid():N}", Name = "Dashboard test", IsActive = true, CreatedAt = now };
+        var price = new PlanPrice { Id = Guid.NewGuid(), PlanId = plan.Id, AmountMinor = 1, Currency = "VND", DurationDays = 30, InterviewQuota = 1, IsActive = true, CreatedAt = now };
+        var subscription = new Subscription { Id = Guid.NewGuid(), UserId = userId, Status = BillingValues.Active, StartsAt = now.AddMinutes(-1), EndsAt = now.AddDays(30), CreatedAt = now, UpdatedAt = now };
+        var entitlement = new Entitlement
+        {
+            Id = Guid.NewGuid(), UserId = userId, SubscriptionId = subscription.Id, PlanCodeSnapshot = plan.Code,
+            Status = BillingValues.Active, InterviewLimit = 1, StartsAt = subscription.StartsAt, EndsAt = subscription.EndsAt,
+            CreatedAt = now, UpdatedAt = now, ConcurrencyToken = Guid.NewGuid()
+        };
+        var feature = await db.FeatureDefinitions.SingleAsync(item => item.Code == FeatureValues.ProgressAnalytics);
+        var entitlementFeature = new EntitlementFeature
+        {
+            Id = Guid.NewGuid(), EntitlementId = entitlement.Id, FeatureDefinitionId = feature.Id,
+            FeatureCode = FeatureValues.ProgressAnalytics, IsEnabled = true, Limit = null,
+            CreatedAt = now, UpdatedAt = now, ConcurrencyToken = Guid.NewGuid()
+        };
+        db.AddRange(plan, price, subscription, entitlement, entitlementFeature);
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedResumeAnalysisAsync(
+        NexoraApiFactory factory,
+        Guid userId,
+        string status,
+        DateTimeOffset? completedAt)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var now = completedAt ?? FixedNow;
+        var file = new StoredFile
+        {
+            Id = Guid.NewGuid(), UserId = userId, StorageKey = $"dashboard/{Guid.NewGuid():N}", FileName = "cv.pdf",
+            ContentType = "application/pdf", Size = 10, Checksum = Guid.NewGuid().ToString("N"), CreatedAt = now
+        };
+        var resume = new ResumeRecord
+        {
+            Id = Guid.NewGuid(), UserId = userId, StoredFileId = file.Id, Status = PracticeValues.Ready,
+            Version = 1, CreatedAt = now, UpdatedAt = now
+        };
+        db.ResumeAnalyses.Add(new ResumeAnalysis
+        {
+            Id = Guid.NewGuid(), UserId = userId, ResumeId = resume.Id, Mode = "field_benchmark", Status = status,
+            ModelVersion = "test", PromptVersion = "test", SchemaVersion = "test", Result = "{}",
+            CreatedAt = now, UpdatedAt = now, CompletedAt = completedAt
+        });
+        db.AddRange(file, resume);
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedInterviewAsync(NexoraApiFactory factory, Guid userId, DateTimeOffset completedAt)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var subscription = new Subscription
+        {
+            Id = Guid.NewGuid(), UserId = userId, Status = BillingValues.Active, StartsAt = completedAt.AddDays(-1),
+            EndsAt = completedAt.AddDays(30), CreatedAt = completedAt, UpdatedAt = completedAt
+        };
+        var entitlement = new Entitlement
+        {
+            Id = Guid.NewGuid(), UserId = userId, SubscriptionId = subscription.Id, PlanCodeSnapshot = "dashboard-test",
+            Status = BillingValues.Active, StartsAt = subscription.StartsAt, EndsAt = subscription.EndsAt,
+            CreatedAt = completedAt, UpdatedAt = completedAt, ConcurrencyToken = Guid.NewGuid()
+        };
+        var reservation = new UsageEvent
+        {
+            Id = Guid.NewGuid(), UserId = userId, EntitlementId = entitlement.Id, Action = BillingValues.Consume,
+            Quantity = 1, SourceType = "interview", SourceId = Guid.NewGuid().ToString("N"),
+            IdempotencyKey = Guid.NewGuid().ToString("N"), CreatedAt = completedAt
+        };
+        db.InterviewSessions.Add(new InterviewSession
+        {
+            Id = Guid.NewGuid(), UserId = userId, ReservationEventId = reservation.Id, Role = "Backend Developer",
+            Seniority = "senior", InterviewType = "technical", Difficulty = "medium", Status = PracticeValues.Completed,
+            Version = 1, CreatedAt = completedAt, UpdatedAt = completedAt, CompletedAt = completedAt
+        });
+        db.AddRange(subscription, entitlement, reservation);
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedScenarioAttemptAsync(
+        NexoraApiFactory factory,
+        Guid userId,
+        string status,
+        DateTimeOffset? completedAt)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var now = completedAt ?? FixedNow;
+        var category = await db.ScenarioCategories.SingleAsync(item => item.Slug == "banking");
+        var scenario = new Scenario
+        {
+            Id = Guid.NewGuid(), Slug = $"dashboard-{Guid.NewGuid():N}", Title = "Dashboard scenario", Summary = "Dashboard test scenario",
+            CategoryId = category.Id, Difficulty = "medium", Competency = "problem_solving", EstimatedMinutes = 15,
+            Content = "Test content", SortOrder = 1, Status = PracticeFeatureValues.Published, CreatedAt = now, UpdatedAt = now, PublishedAt = now
+        };
+        db.ScenarioAttempts.Add(new ScenarioAttempt
+        {
+            Id = Guid.NewGuid(), UserId = userId, ScenarioId = scenario.Id, Status = status, Answer = status == PracticeFeatureValues.Completed ? "answer" : null,
+            CreatedAt = now, UpdatedAt = now, CompletedAt = completedAt
+        });
+        db.Scenarios.Add(scenario);
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedStarAttemptAsync(NexoraApiFactory factory, Guid userId, string status, DateTimeOffset completedAt)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        db.StarAttempts.Add(new StarAttempt
+        {
+            Id = Guid.NewGuid(), UserId = userId, Question = "Tell me about a result.", Answer = "I delivered a result.",
+            Status = status, CreatedAt = completedAt, UpdatedAt = completedAt, CompletedAt = status == PracticeFeatureValues.Completed ? completedAt : null
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedLearningPathActivityAsync(NexoraApiFactory factory, Guid userId, string status, DateTimeOffset completedAt)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var goal = new CareerGoal
+        {
+            Id = Guid.NewGuid(), UserId = userId, TargetRole = "Backend Developer", Seniority = "senior", Active = true,
+            CreatedAt = completedAt, UpdatedAt = completedAt
+        };
+        var path = new LearningPath
+        {
+            Id = Guid.NewGuid(), UserId = userId, CareerGoalId = goal.Id, Status = LearningPathValues.Active,
+            CreatedAt = completedAt, UpdatedAt = completedAt
+        };
+        var milestone = new LearningPathMilestone
+        {
+            Id = Guid.NewGuid(), LearningPathId = path.Id, Code = LearningPathValues.CriticalMilestone,
+            Title = "Critical gaps", SortOrder = 0, Status = LearningPathValues.Active, CreatedAt = completedAt, UpdatedAt = completedAt
+        };
+        db.LearningPathActivities.Add(new LearningPathActivity
+        {
+            Id = Guid.NewGuid(), LearningPathId = path.Id, LearningPathMilestoneId = milestone.Id,
+            ActivityKey = $"dashboard:{Guid.NewGuid():N}", Type = LearningPathValues.Interview, Title = "Dashboard activity",
+            Description = "Dashboard test activity", Priority = 1, SortOrder = 0, Status = status,
+            CreatedAt = completedAt, UpdatedAt = completedAt, CompletedAt = status == LearningPathValues.Completed ? completedAt : null
+        });
+        db.AddRange(goal, path, milestone);
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<JsonElement> DataAsync(HttpResponseMessage response)
+    {
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return document.RootElement.GetProperty("data").Clone();
+    }
+
+    private static async Task<JsonElement> ErrorAsync(HttpResponseMessage response)
+    {
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return document.RootElement.GetProperty("error").Clone();
+    }
+
+    private sealed record Account(Guid UserId, string AccessToken);
+
+    private sealed class FixedProgressService(ProgressView view) : IProgressService
+    {
+        public Task<ProgressView> GetAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult(view);
+    }
+
+    private sealed class FixedSkillProfileService(SkillProfileView view) : ISkillProfileService
+    {
+        public Task<SkillProfileView> GetAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult(view);
+    }
+
+    private sealed class FixedRecommendationService(NextPracticeRecommendationView? view) : INextPracticeRecommendationService
+    {
+        public Task<NextPracticeRecommendationView?> GetAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult(view);
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+}
