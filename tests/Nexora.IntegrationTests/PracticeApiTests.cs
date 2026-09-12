@@ -201,120 +201,6 @@ public sealed class PracticeApiTests
     }
 
     [Fact]
-    public async Task InterviewLanguageDefaultsToVietnameseAndRejectsUnsupportedValues()
-    {
-        var aiProvider = new TestAiProvider();
-        using var factory = new NexoraApiFactory(aiProvider);
-        factory.InitializeDatabase();
-        using var client = factory.CreateHttpsClient();
-        var account = await RegisterAsync(client);
-        await SeedEntitlementAsync(factory, account.UserId, 2);
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
-
-        var interviewId = await StartInterviewAsync(client, "language-default", role: "SA");
-        await ProcessJobsAsync(factory);
-        using (var scope = factory.Services.CreateScope())
-        {
-            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-            var session = await db.InterviewSessions.SingleAsync(item => item.Id == interviewId);
-            Assert.Equal(InterviewLanguageValues.Vietnamese, session.InterviewLanguage);
-        }
-        Assert.Contains(
-            aiProvider.Invocations,
-            item => item.Purpose == AiPurposes.InterviewFirstQuestion &&
-                item.UntrustedInput.Contains("interview-language: vi-VN", StringComparison.Ordinal));
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/interviews")
-        {
-            Content = JsonContent.Create(new
-            {
-                role = "SA",
-                seniority = "junior",
-                interviewType = "behavioral",
-                difficulty = "medium",
-                language = "zh-CN"
-            })
-        };
-        request.Headers.Add("Idempotency-Key", "language-invalid");
-        using var response = await client.SendAsync(request);
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal("INTERVIEW_LANGUAGE_INVALID", error.RootElement.GetProperty("error").GetProperty("code").GetString());
-    }
-
-    [Fact]
-    public async Task EnglishInterviewLanguageIsPersistedAndSentToInterviewOperations()
-    {
-        var aiProvider = new TestAiProvider();
-        using var factory = new NexoraApiFactory(aiProvider);
-        factory.InitializeDatabase();
-        using var client = factory.CreateHttpsClient();
-        var account = await RegisterAsync(client);
-        await SeedEntitlementAsync(factory, account.UserId, 1);
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
-
-        var interviewId = await StartInterviewAsync(
-            client,
-            "language-english",
-            "behavioral",
-            InterviewLanguageValues.English);
-        await ProcessJobsAsync(factory);
-
-        var active = await GetInterviewAsync(client, interviewId);
-        var firstQuestion = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
-        var firstAnswer = await AnswerAsync(client, interviewId, firstQuestion, "I resolved the incident and measured the result.", "language-english-answer-one");
-        var secondQuestion = firstAnswer.GetProperty("nextQuestion").GetProperty("id").GetGuid();
-        var secondAnswer = await AnswerAsync(client, interviewId, secondQuestion, "I documented the fix and monitored the outcome.", "language-english-answer-two");
-        var thirdQuestion = secondAnswer.GetProperty("nextQuestion").GetProperty("id").GetGuid();
-        await AnswerAsync(client, interviewId, thirdQuestion, "The role matches my experience.", "language-english-answer-three");
-        await CompleteAsync(client, interviewId, "language-english-complete");
-        await ProcessJobsAsync(factory);
-
-        using (var scope = factory.Services.CreateScope())
-        {
-            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-            var session = await db.InterviewSessions.SingleAsync(item => item.Id == interviewId);
-            Assert.Equal(InterviewLanguageValues.English, session.InterviewLanguage);
-        }
-
-        var interviewPurposes = new[]
-        {
-            AiPurposes.InterviewFirstQuestion,
-            AiPurposes.InterviewFollowup,
-            AiPurposes.InterviewEvaluate,
-            AiPurposes.InterviewReport
-        };
-        var invocations = aiProvider.Invocations
-            .Where(item => item.CorrelationId == interviewId.ToString("N") && interviewPurposes.Contains(item.Purpose))
-            .ToArray();
-
-        Assert.Contains(invocations, item => item.Purpose == AiPurposes.InterviewFirstQuestion);
-        Assert.Contains(invocations, item => item.Purpose == AiPurposes.InterviewEvaluate);
-        Assert.Contains(invocations, item => item.Purpose == AiPurposes.InterviewReport);
-        Assert.All(invocations, item =>
-        {
-            Assert.Contains("interview-language: en-US", item.UntrustedInput, StringComparison.Ordinal);
-            Assert.Contains("interview language supplied in context is authoritative", item.Instructions ?? string.Empty, StringComparison.Ordinal);
-        });
-    }
-
-    [Fact]
-    public void EveryInterviewContextBuilderUsesTheExplicitLanguage()
-    {
-        var builder = new ResumeContextBuilder();
-        var contexts = new[]
-        {
-            builder.BuildInterviewQuestionContext("SA", "senior", "behavioral", "medium", null, null, interviewLanguage: InterviewLanguageValues.English),
-            builder.BuildAnswerEvaluationContext("SA", "senior", "behavioral", null, "Question", "Answer", null, interviewLanguage: InterviewLanguageValues.English),
-            builder.BuildFollowupQuestionContext("SA", "senior", "behavioral", null, "Question", "Answer", null, null, InterviewLanguageValues.English),
-            builder.BuildReportContext("Q: Question\nA: Answer", null, InterviewLanguageValues.English)
-        };
-
-        Assert.All(contexts, context => Assert.Contains("interview-language: en-US", context, StringComparison.Ordinal));
-    }
-
-    [Fact]
     public async Task VerifiedCheckoutUnlocksPaidContinuationWithoutChargingAnotherInterview()
     {
         var aiProvider = new TestAiProvider();
@@ -1311,25 +1197,11 @@ public sealed class PracticeApiTests
         Assert.Equal(0, await db.InterviewReports.CountAsync(item => item.InterviewSessionId == interviewId));
     }
 
-    private static async Task<Guid> StartInterviewAsync(
-        HttpClient client,
-        string key,
-        string interviewType = "behavioral",
-        string? language = null,
-        string role = "Business Analyst")
+    private static async Task<Guid> StartInterviewAsync(HttpClient client, string key, string interviewType = "behavioral")
     {
-        var payload = new Dictionary<string, object?>
-        {
-            ["role"] = role,
-            ["seniority"] = "junior",
-            ["interviewType"] = interviewType,
-            ["difficulty"] = "medium"
-        };
-        if (language is not null) payload["language"] = language;
-
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/interviews")
         {
-            Content = JsonContent.Create(payload)
+            Content = JsonContent.Create(new { role = "Business Analyst", seniority = "junior", interviewType, difficulty = "medium" })
         };
         request.Headers.Add("Idempotency-Key", key);
         using var response = await client.SendAsync(request);

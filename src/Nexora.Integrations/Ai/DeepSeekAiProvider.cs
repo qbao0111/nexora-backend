@@ -455,6 +455,7 @@ public sealed partial class DeepSeekAiProvider(
         RubricVersion: {request.RubricVersion}
         Trusted operation instructions:
         {request.Instructions ?? "Follow the Nexora-owned response schema."}
+        {AiLanguagePolicy.VietnameseUserFacingInstruction}
 
         The exact Nexora-owned JSON schema is:
         {request.OutputSchema.RootElement.GetRawText()}

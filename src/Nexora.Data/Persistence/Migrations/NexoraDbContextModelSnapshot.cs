@@ -1755,13 +1755,6 @@ namespace Nexora.Data.Persistence.Migrations
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
 
-                    b.Property<string>("InterviewLanguage")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(10)
-                        .HasColumnType("character varying(10)")
-                        .HasDefaultValue("vi-VN");
-
                     b.Property<string>("InterviewType")
                         .IsRequired()
                         .HasMaxLength(40)

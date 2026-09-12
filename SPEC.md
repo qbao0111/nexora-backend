@@ -132,11 +132,11 @@ entitlement before AI, keeps the same session and idempotency identity, and
 creates a policy-selected primary; an explicit follow-up is allowed only for a
 paid behavioral question whose evaluation has missing STAR evidence.
 
-Interview creation accepts optional `language`, normalized to `vi-VN` or
-`en-US`; omitted language defaults to `vi-VN`. The normalized value is persisted
-on the session and remains immutable. All interview question, follow-up,
-evaluation and report AI operations use that server-owned language and never
-infer it from role, CV, job description, answer or transcript.
+All user-facing AI-generated natural-language output is Vietnamese-only in the
+MVP. Input/source content may be in any language; technical names and proper
+nouns may remain unchanged, while machine keys, enums, statuses, versions,
+score scales and codes remain canonical. Localization and language selection
+are out of scope; the canonical rule is in the [AI output language policy](docs/09-ai-integration-spec.md#ai-output-language--vietnamese-mvp).
 
 `docs/08-data-model.md` owns the canonical persisted interview state names and transitions, subject to the formal behavior and business rules in `docs/SRS.md`; API and design documents reference them.
 

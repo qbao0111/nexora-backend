@@ -13,6 +13,31 @@
 
 Nexora is a practice product: AI output is coaching guidance, not hiring truth or real-interview covert assistance.
 
+## AI output language — Vietnamese MVP
+
+Nexora MVP is Vietnamese-only. Every user-facing AI-generated natural-language
+field is written in Vietnamese regardless of the language of the role, CV, job
+description, candidate answer, company, industry, scenario, transcript or
+source document.
+
+Input/source content may be Vietnamese, English, Chinese, Japanese or mixed.
+Technical identifiers, technology names, proper nouns, acronyms, programming
+languages and code terms may remain unchanged when appropriate. JSON field
+names, enums, statuses, purpose names, schema versions, score scales, rubric
+keys and competency codes remain canonical and are not translated.
+
+The policy is centralized in `AiLanguagePolicy.VietnameseUserFacingInstruction`
+and is included by every active user-facing structured operation: `resume.profile`,
+both `resume.analysis` modes, `interview.first-question`,
+`interview.followup`, `interview.evaluate`, `interview.report`,
+`scenario.evaluate` and `star.evaluate`. Localization and user-selected output
+language are out of scope for this MVP.
+
+`GeminiDocumentOcrProvider` is intentionally excluded from this natural-language
+output policy because it is a document-extraction fallback: its contract is to
+preserve source text faithfully rather than translate it. The extracted source
+is not a user-facing coaching output.
+
 ## 2. Provider contract and structured execution layer
 
 ```csharp
@@ -96,9 +121,9 @@ Document fallback is a separate `IDocumentOcrProvider` boundary. `GeminiDocument
 
 ### 2.3 Resume analysis v2 modes
 
-`resume.analysis` is one provider-neutral purpose with an explicit mode selected by the persisted analysis command. `job_targeted` uses the cached `ResumeProfile` plus the selected JobDescription and persists operation versions `resume-analysis-job-targeted-v2` / `analysis-job-targeted-v2`. It returns a 0-100 `matchScore`, grounded matched/missing skills, strengths, gaps, recommendations, section feedback and the required breakdown dimensions `technicalSkillMatch`, `experienceRelevance`, `impactEvidence`, `clarity`, `structure`.
+`resume.analysis` is one provider-neutral purpose with an explicit mode selected by the persisted analysis command. `job_targeted` uses the cached `ResumeProfile` plus the selected JobDescription and persists prompt/schema versions `resume-analysis-job-targeted-v3` / `analysis-job-targeted-v2`. It returns a 0-100 `matchScore`, grounded matched/missing skills, strengths, gaps, recommendations, section feedback and the required breakdown dimensions `technicalSkillMatch`, `experienceRelevance`, `impactEvidence`, `clarity`, `structure`.
 
-`field_benchmark` uses the same cached profile plus the required `industry`, `targetRole` and `seniority` context, with no JobDescription. It persists `resume-analysis-field-benchmark-v2` / `analysis-field-benchmark-v2` and returns a 0-100 `readinessScore`, grounded strengths, gaps, recommendations, section feedback and `technicalFoundation`, `projectEvidence`, `experiencePresentation`, `impactAchievements`, `clarity`, `roleAlignment` breakdown dimensions. The mode is included in the operation metadata and must match the response; provider-specific fields or concepts do not enter Business/API contracts.
+`field_benchmark` uses the same cached profile plus the required `industry`, `targetRole` and `seniority` context, with no JobDescription. It persists prompt/schema versions `resume-analysis-field-benchmark-v3` / `analysis-field-benchmark-v2` and returns a 0-100 `readinessScore`, grounded strengths, gaps, recommendations, section feedback and `technicalFoundation`, `projectEvidence`, `experiencePresentation`, `impactAchievements`, `clarity`, `roleAlignment` breakdown dimensions. The mode is included in the operation metadata and must match the response; provider-specific fields or concepts do not enter Business/API contracts.
 
 Both schemas are strict (`additionalProperties: false`) and require bounded collections, exact breakdown keys and server-side semantic validation. Strengths, gaps, recommendations and section feedback are non-empty; matched/missing skills may be empty when no evidence exists. A `finish_reason=length` response is rejected before deserialization; the existing executor may make one truncation retry at 8,192 tokens after the 4,096-token first attempt. Semantic repair and provider retries remain within the global two-call ceiling. A valid cached profile is serialized as a per-analysis snapshot with its model/prompt/schema provenance; OCR fallback profiles remain unversioned until the canonical text profile operation regenerates them, so no profile AI call is made again for each analysis mode once the cache is current.
 
@@ -128,13 +153,6 @@ operation is reserved for a paid behavioral primary whose saved STAR evaluation
 has missing elements. A failed continuation leaves prior answers intact and
 does not consume another interview reservation.
 
-Every interview session carries an explicit server-owned language, normalized to
-`vi-VN` or `en-US` and defaulted to `vi-VN` for legacy requests. The persisted
-value is included in the typed interview operation context and bounded input for
-`interview.first-question`, `interview.followup`, `interview.evaluate` and
-`interview.report`; those operations must not infer language from role, CV, job
-description, answer or transcript.
-
 ## 4. Output quality, safety and recovery rules
 
 - **Canonical Rubric Validation**: Structured evaluation output must pass JSON schema + server semantic validation:
@@ -156,7 +174,7 @@ description, answer or transcript.
   - Non-behavioral questions: `star.applicable` is server-normalized to `false` without failing evaluation; STAR component details are suppressed.
   - Behavioral questions: If model omits STAR or returns `applicable = false`, the executor marks the issue repairable and attempts repair once.
   - Standalone `star.evaluate` (Scenario/STAR feature): strictly requires `applicable = true`.
-  - **Canonical STAR Instructions (`StarSemantics.CanonicalInstructions`)**: Unified single source of truth embedded in both `interview.answer.evaluate` (`interview-eval-v6`) and `star.evaluate` (`star-eval-v3`). Defines clear technical examples for Situation (system state/incident), Task (candidate's specific duty/ownership), Action (investigation/profiling/indexing/caching/code changes), and Result (latency reduction, recovery, metrics, lessons).
+  - **Canonical STAR Instructions (`StarSemantics.CanonicalInstructions`)**: Unified single source of truth embedded in both `interview.answer.evaluate` (`interview-eval-v7`) and `star.evaluate` (`star-eval-v4`). Defines clear technical examples for Situation (system state/incident), Task (candidate's specific duty/ownership), Action (investigation/profiling/indexing/caching/code changes), and Result (latency reduction, recovery, metrics, lessons).
   - **Question-Focus Detachment**: Evaluator must scan the entire answer for all four components. Phrasing of the interview question must not constrain component detection.
   - **Evidence-First Extraction**: For every component:
     - If concrete evidence exists: `detected = true`, `evidence = "<exact quote>"`, `score = 1..100`.

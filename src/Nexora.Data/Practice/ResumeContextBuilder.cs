@@ -43,11 +43,9 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
         string? jobDescription,
         ResumeProfile? profile,
         int questionSequence = 1,
-        string? questionTopic = null,
-        string interviewLanguage = InterviewLanguageValues.Vietnamese)
+        string? questionTopic = null)
     {
         var builder = new StringBuilder();
-        Append(builder, "interview-language", interviewLanguage, 10);
         Append(builder, "role", role, 160);
         Append(builder, "seniority", seniority, 80);
         Append(builder, "interview-type", interviewType, 80);
@@ -72,8 +70,7 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
         int questionSequence = 1,
         bool isFollowUp = false,
         IReadOnlyCollection<string>? followupTargetElements = null,
-        string? questionTopic = null,
-        string interviewLanguage = InterviewLanguageValues.Vietnamese)
+        string? questionTopic = null)
     {
         // Section priority:
         // 1. Metadata
@@ -82,7 +79,6 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
         // 4. Compact Job Description (from remaining budget)
         // 5. Compact Candidate Profile (from remaining budget)
         var builder = new StringBuilder();
-        Append(builder, "interview-language", interviewLanguage, 10);
         Append(builder, "role", role, 160);
         Append(builder, "seniority", seniority, 80);
         Append(builder, "interview-type", interviewType, 80);
@@ -130,8 +126,7 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
         string question,
         string answer,
         StarEvaluation? star,
-        ResumeProfile? profile,
-        string interviewLanguage = InterviewLanguageValues.Vietnamese)
+        ResumeProfile? profile)
     {
         // Section priority:
         // 1. Previous Question
@@ -140,7 +135,6 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
         // 4. Metadata
         // 5. Compact Job Description & Profile (from remaining budget)
         var builder = new StringBuilder();
-        Append(builder, "interview-language", interviewLanguage, 10);
         Append(builder, "previous-question", question, 2_000);
         Append(builder, "previous-answer", answer, 8_000);
         if (star?.Applicable == true)
@@ -178,13 +172,9 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
         return builder.ToString();
     }
 
-    public string BuildReportContext(
-        string transcript,
-        ResumeProfile? profile,
-        string interviewLanguage = InterviewLanguageValues.Vietnamese)
+    public string BuildReportContext(string transcript, ResumeProfile? profile)
     {
         var builder = new StringBuilder();
-        Append(builder, "interview-language", interviewLanguage, 10);
         Append(builder, "transcript", transcript, 18_000);
         if (profile is not null) AppendProfile(builder, profile, includeDetails: false);
         return Bound(builder.ToString(), ReportContextLimit);

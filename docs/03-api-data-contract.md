@@ -218,7 +218,6 @@ POST /api/v1/interviews
   "seniority": "junior",
   "interviewType": "behavioral",
   "difficulty": "medium",
-  "language": "vi-VN",
   "resumeId": "01J...",
   "jobDescriptionId": "01J..."
 }
@@ -231,8 +230,6 @@ POST /api/v1/interviews
 ```
 
 `resumeId` và `jobDescriptionId` là optional nhưng, nếu có, phải thuộc user hiện tại. Server tự tính entitlement; client không gửi `plan`, `score`, `userId`, price hay quota. Client poll `GET /interviews/{id}` cho tới `active` + first question hoặc terminal failure. Reservation được consume theo server-observable transaction dưới đây, không theo network receipt.
-
-`language` là optional để tương thích client cũ. Server normalize về một trong hai giá trị `vi-VN` hoặc `en-US`; khi bỏ qua, mặc định là `vi-VN`. Giá trị khác bị từ chối với lỗi validation HTTP 400. Ngôn ngữ được lưu bất biến trên `interview_session` và là nguồn sự thật cho toàn bộ câu hỏi, đánh giá và report của session; server không suy ra ngôn ngữ từ role, JD, CV, câu trả lời hoặc transcript.
 
 ### Upload và xử lý CV
 

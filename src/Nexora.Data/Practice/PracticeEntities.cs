@@ -1,4 +1,3 @@
-using Nexora.Business.Practice;
 using Nexora.Data.Billing;
 using Nexora.Data.Identity;
 
@@ -106,7 +105,6 @@ public sealed class InterviewSession
     public string Seniority { get; set; } = string.Empty;
     public string InterviewType { get; set; } = string.Empty;
     public string Difficulty { get; set; } = string.Empty;
-    public string InterviewLanguage { get; set; } = InterviewLanguageValues.Vietnamese;
     public string Status { get; set; } = string.Empty;
     public int Version { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

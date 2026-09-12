@@ -561,7 +561,7 @@ public static class AiOperations
 public sealed class ResumeProfileOperation : AiOperationDefinition<ResumeProfile>
 {
     public override string Purpose => AiPurposes.ResumeProfile;
-    public override string PromptVersion => "resume-profile-v2";
+    public override string PromptVersion => "resume-profile-v3";
     public override string SchemaVersion => "resume-profile-v2";
     public override string RubricVersion => "profile-v2";
     public override int MaxOutputTokens => 3_000;
@@ -617,7 +617,7 @@ public sealed class ResumeProfileOperation : AiOperationDefinition<ResumeProfile
         """);
 
     public override string Instructions =>
-        "Extract a faithful, structured resume profile strictly from the provided resume text. Never infer or fabricate details. For any missing section, return an empty array. Do not fail if optional sections are absent. Write in the language of the resume.";
+        $"Extract a faithful, structured resume profile strictly from the provided resume text. Never infer or fabricate details. For any missing section, return an empty array. Do not fail if optional sections are absent. {AiLanguagePolicy.VietnameseUserFacingInstruction}";
 
     public override AiValidationResult<ResumeProfile> NormalizeAndValidate(ResumeProfile? raw, AiOperationContext context)
         => ResumeProfileValidator.NormalizeAndValidate(raw);
@@ -801,7 +801,7 @@ public sealed class ResumeAnalysisOperation : AiOperationDefinition<ResumeAnalys
     private const int TruncationRetryOutputTokens = 8_192;
 
     public override string Purpose => AiPurposes.ResumeAnalysis;
-    public override string PromptVersion => "resume-analysis-job-targeted-v2";
+    public override string PromptVersion => "resume-analysis-job-targeted-v3";
     public override string SchemaVersion => "resume-analysis-job-targeted-v2";
     public override string RubricVersion => "analysis-job-targeted-v2";
     public override int MaxOutputTokens => InitialOutputTokens;
@@ -830,7 +830,7 @@ public sealed class ResumeAnalysisOperation : AiOperationDefinition<ResumeAnalys
         """);
 
     public override string Instructions =>
-        "Analyze the candidate's resume profile against the target job description. Return mode='job_targeted', a 0-100 matchScore, a concise grounded summary, matched and missing skills (which may be empty when none are evidenced), 1-6 strengths, gaps and recommendations, sectionFeedback, and the five-key 0-100 breakdown. Never invent candidate achievements or qualifications. Write in the language of the supplied job description.";
+        $"Analyze the candidate's resume profile against the target job description. Return mode='job_targeted', a 0-100 matchScore, a concise grounded summary, matched and missing skills (which may be empty when none are evidenced), 1-6 strengths, gaps and recommendations, sectionFeedback, and the five-key 0-100 breakdown. Never invent candidate achievements or qualifications. {AiLanguagePolicy.VietnameseUserFacingInstruction}";
 
     public override AiValidationResult<ResumeAnalysisOutput> NormalizeAndValidate(ResumeAnalysisOutput? raw, AiOperationContext context) =>
         ResumeAnalysisValidator.NormalizeJobTargeted(raw, context);
@@ -842,7 +842,7 @@ public sealed class FieldBenchmarkResumeAnalysisOperation : AiOperationDefinitio
     private const int TruncationRetryOutputTokens = 8_192;
 
     public override string Purpose => AiPurposes.ResumeAnalysis;
-    public override string PromptVersion => "resume-analysis-field-benchmark-v2";
+    public override string PromptVersion => "resume-analysis-field-benchmark-v3";
     public override string SchemaVersion => "resume-analysis-field-benchmark-v2";
     public override string RubricVersion => "analysis-field-benchmark-v2";
     public override int MaxOutputTokens => InitialOutputTokens;
@@ -869,7 +869,7 @@ public sealed class FieldBenchmarkResumeAnalysisOperation : AiOperationDefinitio
         """);
 
     public override string Instructions =>
-        "Benchmark the candidate's resume profile for the supplied industry, target role and seniority. Return mode='field_benchmark', a 0-100 readinessScore, concise grounded summary, 1-6 strengths, gaps and recommendations, sectionFeedback, and the six-key 0-100 breakdown. Never invent candidate achievements or qualifications. Write in the language of the supplied context.";
+        $"Benchmark the candidate's resume profile for the supplied industry, target role and seniority. Return mode='field_benchmark', a 0-100 readinessScore, concise grounded summary, 1-6 strengths, gaps and recommendations, sectionFeedback, and the six-key 0-100 breakdown. Never invent candidate achievements or qualifications. {AiLanguagePolicy.VietnameseUserFacingInstruction}";
 
     public override AiValidationResult<ResumeAnalysisOutput> NormalizeAndValidate(ResumeAnalysisOutput? raw, AiOperationContext context) =>
         ResumeAnalysisValidator.NormalizeFieldBenchmark(raw, context);
@@ -878,7 +878,7 @@ public sealed class FieldBenchmarkResumeAnalysisOperation : AiOperationDefinitio
 public sealed class InterviewFirstQuestionOperation : AiOperationDefinition<GeneratedQuestion>
 {
     public override string Purpose => AiPurposes.InterviewFirstQuestion;
-    public override string PromptVersion => "interview-first-question-v4";
+    public override string PromptVersion => "interview-first-question-v5";
     public override string SchemaVersion => "interview-first-question-v2";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 500;
@@ -894,7 +894,7 @@ public sealed class InterviewFirstQuestionOperation : AiOperationDefinition<Gene
         """);
 
     public override string Instructions =>
-        "Generate one concise, realistic interview question for the supplied role and seniority. The server-owned question-topic in the context is authoritative whenever present; generate only that topic and never infer semantic topic from interview-type or question-sequence. For self_introduction, ask for the candidate's background and relevant experience. For behavioral_star, invite one real-world situation and the candidate's actions and result. For motivation_role_fit, ask about motivation and fit for the role. For other topics, follow the explicit topic and supplied role context. The question must be under 2,000 characters. Do not mention or explain the STAR acronym. The interview language supplied in context is authoritative. Write the entire question in that language. Do not infer language from the role, job description, resume, candidate name, or any other content.";
+        $"Generate one concise, realistic interview question for the supplied role and seniority. The server-owned question-topic in the context is authoritative whenever present; generate only that topic and never infer semantic topic from interview-type or question-sequence. For self_introduction, ask for the candidate's background and relevant experience. For behavioral_star, invite one real-world situation and the candidate's actions and result. For motivation_role_fit, ask about motivation and fit for the role. For other topics, follow the explicit topic and supplied role context. The question must be under 2,000 characters. Do not mention or explain the STAR acronym. {AiLanguagePolicy.VietnameseUserFacingInstruction}";
 
     public override AiValidationResult<GeneratedQuestion> NormalizeAndValidate(GeneratedQuestion? raw, AiOperationContext context)
     {
@@ -912,7 +912,7 @@ public sealed class InterviewFirstQuestionOperation : AiOperationDefinition<Gene
 public sealed class InterviewFollowupOperation : AiOperationDefinition<GeneratedQuestion>
 {
     public override string Purpose => AiPurposes.InterviewFollowup;
-    public override string PromptVersion => "interview-followup-v3";
+    public override string PromptVersion => "interview-followup-v4";
     public override string SchemaVersion => "interview-followup-v2";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 500;
@@ -928,7 +928,7 @@ public sealed class InterviewFollowupOperation : AiOperationDefinition<Generated
         """);
 
     public override string Instructions =>
-        "Generate one concise, natural follow-up interview question based on the candidate's previous answer and context. If STAR missing elements or coaching tips are provided, probe for the missing details (such as specific actions taken, technical decisions, or measurable impact) without mechanically using the word 'STAR'. The question must be under 2,000 characters. The interview language supplied in context is authoritative. Write the entire follow-up question in that language. Do not infer language from the role, job description, resume, candidate answer, or any other content.";
+        $"Generate one concise, natural follow-up interview question based on the candidate's previous answer and context. If STAR missing elements or coaching tips are provided, probe for the missing details (such as specific actions taken, technical decisions, or measurable impact) without mechanically using the word 'STAR'. The question must be under 2,000 characters. {AiLanguagePolicy.VietnameseUserFacingInstruction}";
 
     public override AiValidationResult<GeneratedQuestion> NormalizeAndValidate(GeneratedQuestion? raw, AiOperationContext context)
     {
@@ -946,7 +946,7 @@ public sealed class InterviewFollowupOperation : AiOperationDefinition<Generated
 public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEvaluation>
 {
     public override string Purpose => AiPurposes.InterviewEvaluate;
-    public override string PromptVersion => "interview-eval-v6";
+    public override string PromptVersion => "interview-eval-v7";
     public override string SchemaVersion => "interview-eval-v5";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 6_000;
@@ -1034,8 +1034,8 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         Set scoreScale to '0-100'.
         Return exactly four rubric scores for criteria: correctness, structure, completeness, clarity (scores 0-100 with non-empty evidence quote).
         Return 1-3 strengths grounded in the candidate answer when it demonstrates positive evidence. If no grounded positive evidence is demonstrated, return an empty strengths array, keep rubric scores below 60 where justified, and do not invent a strength. Return 1-3 concrete actionable improvements and one improvedAnswer.
-        Keep improvedAnswer faithful to the candidate answer: do not add metrics, achievements, technologies, roles, or experience that are not explicitly present. When evidence is missing, explain what concrete evidence the candidate could add instead of inventing it. Use the answer's facts and language; do not call another AI operation to rewrite it.
-        The interview language supplied in context is authoritative. Write all user-facing text, including feedback, strengths, improvements, and improvedAnswer, in that language. Do not infer language from the role, job description, resume, candidate answer, or any other content.
+        Keep improvedAnswer faithful to the candidate answer: do not add metrics, achievements, technologies, roles, or experience that are not explicitly present. When evidence is missing, explain what concrete evidence the candidate could add instead of inventing it. Use the answer's facts; do not call another AI operation to rewrite it.
+        {AiLanguagePolicy.VietnameseUserFacingInstruction}
 
         If the question is technical or non-behavioral:
         Set star.applicable = false, omit component details.
@@ -1233,7 +1233,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
 public sealed class InterviewReportOperation : AiOperationDefinition<InterviewReportOutput>
 {
     public override string Purpose => AiPurposes.InterviewReport;
-    public override string PromptVersion => "interview-report-v3";
+    public override string PromptVersion => "interview-report-v4";
     public override string SchemaVersion => "interview-report-v2";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 6_000;
@@ -1268,7 +1268,7 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
         """);
 
     public override string Instructions =>
-        "Synthesize the interview transcript into an authoritative final coaching report. Set scoreScale to '0-100'. Return exactly four scores with criterion values correctness, structure, completeness, and clarity (integer scores 0-100 with evidence citing the transcript). Return 1 to 3 grounded strengths, 1 to 3 clear gaps, and 1 to 3 concrete actionPlan items. Do not leave any array empty. The interview language supplied in context is authoritative. Write all user-facing report text in that language. Do not infer language from the transcript, role, job description, resume, candidate name, or any other content.";
+        $"Synthesize the interview transcript into an authoritative final coaching report. Set scoreScale to '0-100'. Return exactly four scores with criterion values correctness, structure, completeness, and clarity (integer scores 0-100 with evidence citing the transcript). Return 1 to 3 grounded strengths, 1 to 3 clear gaps, and 1 to 3 concrete actionPlan items. Do not leave any array empty. {AiLanguagePolicy.VietnameseUserFacingInstruction}";
 
     public override AiValidationResult<InterviewReportOutput> NormalizeAndValidate(InterviewReportOutput? raw, AiOperationContext context)
     {
@@ -1321,7 +1321,7 @@ public sealed class ScenarioEvaluateOperation : AiOperationDefinition<ScenarioEv
     private const int OutputTokenBudget = 4_000;
 
     public override string Purpose => AiPurposes.ScenarioEvaluate;
-    public override string PromptVersion => "scenario-eval-v2";
+    public override string PromptVersion => "scenario-eval-v3";
     public override string SchemaVersion => "scenario-eval-v2";
     public override string RubricVersion => "scenario-rubric-v2";
     public override int MaxOutputTokens => OutputTokenBudget;
@@ -1355,7 +1355,7 @@ public sealed class ScenarioEvaluateOperation : AiOperationDefinition<ScenarioEv
         """);
 
     public override string Instructions =>
-        "Evaluate the candidate's scenario response against the scenario requirements, difficulty, and target competency. Set scoreScale to '0-100'. Return overallScore (integer 0-100), dimensions array (2 to 4 dimensions; each with criterion, score 0-100, non-empty evidence quote from answer, and actionable feedback), strengths (1-3 items), gaps (1-3 items), recommendedApproach (1-3 actionable steps), and overall feedback summary. Write in the same language as the answer.";
+        $"Evaluate the candidate's scenario response against the scenario requirements, difficulty, and target competency. Set scoreScale to '0-100'. Return overallScore (integer 0-100), dimensions array (2 to 4 dimensions; each with criterion, score 0-100, non-empty evidence quote from answer, and actionable feedback), strengths (1-3 items), gaps (1-3 items), recommendedApproach (1-3 actionable steps), and overall feedback summary. {AiLanguagePolicy.VietnameseUserFacingInstruction}";
 
     public override AiValidationResult<ScenarioEvaluationResult> NormalizeAndValidate(ScenarioEvaluationResult? raw, AiOperationContext context)
     {
@@ -1407,7 +1407,7 @@ public sealed class ScenarioEvaluateOperation : AiOperationDefinition<ScenarioEv
 public sealed class StarEvaluateOperation : AiOperationDefinition<StarEvaluation>
 {
     public override string Purpose => AiPurposes.StarEvaluate;
-    public override string PromptVersion => "star-eval-v3";
+    public override string PromptVersion => "star-eval-v4";
     public override string SchemaVersion => "star-eval-v3";
     public override string RubricVersion => "star-rubric-v2";
     public override int MaxOutputTokens => 6_000;
@@ -1471,7 +1471,7 @@ public sealed class StarEvaluateOperation : AiOperationDefinition<StarEvaluation
         $"""
         Evaluate the candidate's answer using the STAR methodology (Situation, Task, Action, Result).
         Set scoreScale to '0-100' and applicable to true.
-        Write in the same language as the answer.
+        {AiLanguagePolicy.VietnameseUserFacingInstruction}
         {StarSemantics.CanonicalInstructions}
         strengths: 1-3 specific strong points.
         coachingTips: 1-3 actionable improvement tips.

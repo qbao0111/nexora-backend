@@ -137,7 +137,7 @@ public sealed class GeminiAiProviderTests
     }
 
     [Fact]
-    public async Task GenerateStructuredAsyncIncludesStarInstructionsAndLanguageRequirementInPrompt()
+    public async Task GenerateStructuredAsyncIncludesStarInstructionsAndVietnamesePolicyInPrompt()
     {
         string? requestBody = null;
         var handler = new StubHandler(async (request, cancellationToken) =>
@@ -156,8 +156,7 @@ public sealed class GeminiAiProviderTests
         using var requestJson = JsonDocument.Parse(requestBody!);
         var prompt = requestJson.RootElement.GetProperty("contents")[0].GetProperty("parts")[0].GetProperty("text").GetString();
         Assert.Contains("STAR methodology", prompt, StringComparison.Ordinal);
-        Assert.Contains("Language requirement", prompt, StringComparison.Ordinal);
-        Assert.Contains("Vietnamese", prompt, StringComparison.Ordinal);
+        Assert.Contains(AiLanguagePolicy.VietnameseUserFacingInstruction, prompt, StringComparison.Ordinal);
     }
 
     [Fact]

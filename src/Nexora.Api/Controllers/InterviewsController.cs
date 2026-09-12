@@ -14,7 +14,7 @@ public sealed class InterviewsController(IPracticeService practiceService) : Con
     public async Task<ActionResult<ApiResponse<InterviewView>>> Start(StartInterviewRequest request, CancellationToken cancellationToken)
     {
         var interview = await practiceService.StartInterviewAsync(User.GetRequiredUserId(),
-            new StartInterviewCommand(request.Role, request.Seniority, request.InterviewType, request.Difficulty, request.ResumeId, request.JobDescriptionId, request.Language),
+            new StartInterviewCommand(request.Role, request.Seniority, request.InterviewType, request.Difficulty, request.ResumeId, request.JobDescriptionId),
             Request.Headers["Idempotency-Key"].ToString(), cancellationToken);
         return StatusCode(201, new ApiResponse<InterviewView>(interview));
     }

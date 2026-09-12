@@ -41,6 +41,7 @@ public sealed class DeepSeekAiProviderTests
         Assert.Contains("SchemaVersion: schema-v1", systemContent, StringComparison.Ordinal);
         Assert.Contains("RubricVersion: rubric-v1", systemContent, StringComparison.Ordinal);
         Assert.Contains("Use the exact Nexora question contract.", systemContent, StringComparison.Ordinal);
+        Assert.Contains(AiLanguagePolicy.VietnameseUserFacingInstruction, systemContent, StringComparison.Ordinal);
         Assert.Contains(schema.RootElement.GetRawText(), systemContent, StringComparison.Ordinal);
         Assert.Contains("Return ONLY valid JSON", systemContent, StringComparison.Ordinal);
         Assert.Contains("No Markdown fences", systemContent, StringComparison.Ordinal);
