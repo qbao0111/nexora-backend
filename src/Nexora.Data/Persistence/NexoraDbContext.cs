@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Nexora.Business.Practice;
 using Nexora.Data.Billing;
 using Nexora.Data.Career;
 using Nexora.Data.Identity;
@@ -491,6 +492,10 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.Property(session => session.Seniority).HasMaxLength(40).IsRequired();
             entity.Property(session => session.InterviewType).HasMaxLength(40).IsRequired();
             entity.Property(session => session.Difficulty).HasMaxLength(40).IsRequired();
+            entity.Property(session => session.InterviewLanguage)
+                .HasMaxLength(10)
+                .IsRequired()
+                .HasDefaultValue(InterviewLanguageValues.Vietnamese);
             entity.Property(session => session.Status).HasMaxLength(20).IsRequired();
             entity.Property(session => session.Version).IsConcurrencyToken();
             entity.HasOne(session => session.User).WithMany().HasForeignKey(session => session.UserId).OnDelete(DeleteBehavior.Restrict);

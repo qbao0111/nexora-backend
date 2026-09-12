@@ -18,5 +18,12 @@ public sealed class DevelopmentResumeAnalysisRequest
     public IFormFile? File { get; set; }
     public string JobDescription { get; set; } = string.Empty;
 }
-public sealed record StartInterviewRequest(string Role, string Seniority, string InterviewType, string Difficulty, Guid? ResumeId, Guid? JobDescriptionId);
+public sealed record StartInterviewRequest(
+    string Role,
+    string Seniority,
+    string InterviewType,
+    string Difficulty,
+    Guid? ResumeId,
+    Guid? JobDescriptionId,
+    string? Language = null);
 public sealed record SubmitAnswerRequest(Guid QuestionId, string Content, int? DurationSeconds);

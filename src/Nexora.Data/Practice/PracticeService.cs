@@ -362,6 +362,7 @@ public sealed partial class PracticeService(
     public async Task<InterviewView> StartInterviewAsync(
         Guid userId, StartInterviewCommand command, string idempotencyKey, CancellationToken cancellationToken)
     {
+        command = NormalizeInterviewCommand(command);
         ValidateInterview(command);
         var key = RequireKey(idempotencyKey);
         var fingerprint = Fingerprint(command);
@@ -403,6 +404,7 @@ public sealed partial class PracticeService(
             Seniority = command.Seniority.Trim(),
             InterviewType = command.InterviewType.Trim(),
             Difficulty = command.Difficulty.Trim(),
+            InterviewLanguage = command.InterviewLanguage!,
             Status = PracticeValues.Starting,
             Version = 1,
             CreatedAt = now,
@@ -494,7 +496,8 @@ public sealed partial class PracticeService(
             question.Sequence,
             isFollowUp,
             previousMissingElements,
-            question.Topic);
+            question.Topic,
+            snapshot.InterviewLanguage);
         try
         {
             // Question topic is server-owned semantic metadata. Do not infer STAR
@@ -538,7 +541,8 @@ public sealed partial class PracticeService(
                     snapshot.JobDescription?.Content,
                     profile,
                     nextSequence,
-                    nextTopic);
+                    nextTopic,
+                    snapshot.InterviewLanguage);
                 var nextMetadata = new Dictionary<string, string>
                 {
                     ["questionSequence"] = nextSequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -548,7 +552,11 @@ public sealed partial class PracticeService(
                 var nextResult = await structuredAiExecutor.ExecuteAsync(
                     AiOperations.InterviewFirstQuestion,
                     nextContext,
-                    new AiOperationContext(interviewId.ToString("N"), userId, Metadata: nextMetadata),
+                    new AiOperationContext(
+                        interviewId.ToString("N"),
+                        userId,
+                        Metadata: nextMetadata,
+                        InterviewLanguage: snapshot.InterviewLanguage),
                     cancellationToken);
                 generated = nextResult;
             }
@@ -693,7 +701,8 @@ public sealed partial class PracticeService(
                         lastQuestion.Content,
                         lastAnswer.Content,
                         lastEvaluation?.Star,
-                        profile)
+                        profile,
+                        interviewLanguage: session.InterviewLanguage)
                     : resumeContextBuilder.BuildInterviewQuestionContext(
                         session.Role,
                         session.Seniority,
@@ -702,7 +711,8 @@ public sealed partial class PracticeService(
                         session.JobDescription?.Content,
                         profile,
                         session.Questions.Count + 1,
-                        paidTopic),
+                        paidTopic,
+                        session.InterviewLanguage),
                 new AiOperationContext(
                     session.Id.ToString("N"),
                     userId,
@@ -712,7 +722,8 @@ public sealed partial class PracticeService(
                         ["questionKind"] = useStarFollowup ? InterviewQuestionValues.Followup : InterviewQuestionValues.Primary,
                         ["questionTopic"] = useStarFollowup ? lastQuestion.Topic : paidTopic,
                         ["parentQuestionId"] = useStarFollowup ? lastQuestion.Id.ToString("D") : string.Empty
-                    }),
+                    },
+                    InterviewLanguage: session.InterviewLanguage),
                 cancellationToken);
         }
         catch (AiProviderException exception)
@@ -1216,7 +1227,8 @@ public sealed partial class PracticeService(
             snapshot.JobDescription?.Content,
             profile,
             1,
-            firstTopic);
+            firstTopic,
+            snapshot.InterviewLanguage);
         var execResult = await structuredAiExecutor.ExecuteAsync(
             AiOperations.InterviewFirstQuestion,
             context,
@@ -1228,7 +1240,8 @@ public sealed partial class PracticeService(
                     ["questionSequence"] = "1",
                     ["questionKind"] = InterviewQuestionValues.Primary,
                     ["questionTopic"] = firstTopic
-                }),
+                },
+                InterviewLanguage: snapshot.InterviewLanguage),
             cancellationToken);
         var generated = execResult.Value;
 
@@ -1285,14 +1298,18 @@ public sealed partial class PracticeService(
         // Reports must be grounded in the observed interview answers. Resume
         // profile claims are not interview evidence and are intentionally not
         // included in the synthesis input.
-        var reportContext = resumeContextBuilder.BuildReportContext(transcript, profile: null);
+        var reportContext = resumeContextBuilder.BuildReportContext(
+            transcript,
+            profile: null,
+            interviewLanguage: snapshot.InterviewLanguage);
         var execResult = await structuredAiExecutor.ExecuteAsync(
             AiOperations.InterviewReport,
             reportContext,
             new AiOperationContext(
                 snapshot.Id.ToString("N"),
                 snapshot.UserId,
-                GroundingTranscript: string.Join("\n", answeredQuestions.Select(item => item.Answer!.Content))),
+                GroundingTranscript: string.Join("\n", answeredQuestions.Select(item => item.Answer!.Content)),
+                InterviewLanguage: snapshot.InterviewLanguage),
             cancellationToken);
         var output = execResult.Value;
         ValidateScores(output.Scores);
@@ -1526,6 +1543,14 @@ public sealed partial class PracticeService(
     {
         if (new[] { command.Role, command.Seniority, command.InterviewType, command.Difficulty }
             .Any(value => string.IsNullOrWhiteSpace(value) || value.Trim().Length > 160)) throw Validation("Thông tin interview không hợp lệ.");
+    }
+
+    private static StartInterviewCommand NormalizeInterviewCommand(StartInterviewCommand command)
+    {
+        if (!InterviewLanguageValues.TryNormalize(command.InterviewLanguage, out var language))
+            throw Validation("Ngôn ngữ interview không được hỗ trợ.", "INTERVIEW_LANGUAGE_INVALID");
+
+        return command with { InterviewLanguage = language };
     }
 
     private static void ValidateScores(IReadOnlyCollection<RubricScore> scores)

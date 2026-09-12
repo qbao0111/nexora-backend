@@ -128,6 +128,13 @@ operation is reserved for a paid behavioral primary whose saved STAR evaluation
 has missing elements. A failed continuation leaves prior answers intact and
 does not consume another interview reservation.
 
+Every interview session carries an explicit server-owned language, normalized to
+`vi-VN` or `en-US` and defaulted to `vi-VN` for legacy requests. The persisted
+value is included in the typed interview operation context and bounded input for
+`interview.first-question`, `interview.followup`, `interview.evaluate` and
+`interview.report`; those operations must not infer language from role, CV, job
+description, answer or transcript.
+
 ## 4. Output quality, safety and recovery rules
 
 - **Canonical Rubric Validation**: Structured evaluation output must pass JSON schema + server semantic validation:
@@ -149,7 +156,7 @@ does not consume another interview reservation.
   - Non-behavioral questions: `star.applicable` is server-normalized to `false` without failing evaluation; STAR component details are suppressed.
   - Behavioral questions: If model omits STAR or returns `applicable = false`, the executor marks the issue repairable and attempts repair once.
   - Standalone `star.evaluate` (Scenario/STAR feature): strictly requires `applicable = true`.
-  - **Canonical STAR Instructions (`StarSemantics.CanonicalInstructions`)**: Unified single source of truth embedded in both `interview.answer.evaluate` (`interview-eval-v5`) and `star.evaluate` (`star-eval-v3`). Defines clear technical examples for Situation (system state/incident), Task (candidate's specific duty/ownership), Action (investigation/profiling/indexing/caching/code changes), and Result (latency reduction, recovery, metrics, lessons).
+  - **Canonical STAR Instructions (`StarSemantics.CanonicalInstructions`)**: Unified single source of truth embedded in both `interview.answer.evaluate` (`interview-eval-v6`) and `star.evaluate` (`star-eval-v3`). Defines clear technical examples for Situation (system state/incident), Task (candidate's specific duty/ownership), Action (investigation/profiling/indexing/caching/code changes), and Result (latency reduction, recovery, metrics, lessons).
   - **Question-Focus Detachment**: Evaluator must scan the entire answer for all four components. Phrasing of the interview question must not constrain component detection.
   - **Evidence-First Extraction**: For every component:
     - If concrete evidence exists: `detected = true`, `evidence = "<exact quote>"`, `score = 1..100`.

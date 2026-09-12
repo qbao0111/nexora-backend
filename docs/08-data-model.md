@@ -73,6 +73,8 @@ B13 adds no persisted model. `GET /api/v1/progress/dashboard` composes the exist
 
 ### Interview session state machine
 
+Each `interview_sessions` row stores the normalized, immutable `InterviewLanguage` (`vi-VN` or `en-US`). New sessions default to `vi-VN` when the request omits `language`; the database migration also defaults existing rows safely to `vi-VN`. Interview question, follow-up, evaluation and report AI contexts use this persisted value rather than inferring language from role, CV, JD, answer or transcript.
+
 ```text
 draft -> starting -> active -> completing -> completed
 starting -> failed

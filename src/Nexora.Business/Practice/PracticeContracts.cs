@@ -17,6 +17,37 @@ public static class PracticeValues
     public const string Completing = "completing";
 }
 
+public static class InterviewLanguageValues
+{
+    public const string Vietnamese = "vi-VN";
+    public const string English = "en-US";
+
+    public static bool TryNormalize(string? value, out string normalized)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            normalized = Vietnamese;
+            return true;
+        }
+
+        var candidate = value.Trim();
+        if (string.Equals(candidate, Vietnamese, StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = Vietnamese;
+            return true;
+        }
+
+        if (string.Equals(candidate, English, StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = English;
+            return true;
+        }
+
+        normalized = string.Empty;
+        return false;
+    }
+}
+
 /// <summary>
 /// Server-owned semantics for interview questions. Sequence is ordering only;
 /// it never determines whether a question is a follow-up.
@@ -314,7 +345,8 @@ public interface IResumeContextBuilder
         string? jobDescription,
         ResumeProfile? profile,
         int questionSequence = 1,
-        string? questionTopic = null);
+        string? questionTopic = null,
+        string interviewLanguage = InterviewLanguageValues.Vietnamese);
     string BuildAnswerEvaluationContext(
         string role,
         string seniority,
@@ -326,9 +358,22 @@ public interface IResumeContextBuilder
         int questionSequence = 1,
         bool isFollowUp = false,
         IReadOnlyCollection<string>? followupTargetElements = null,
-        string? questionTopic = null);
-    string BuildFollowupQuestionContext(string role, string seniority, string interviewType, string? jobDescription, string question, string answer, StarEvaluation? star, ResumeProfile? profile);
-    string BuildReportContext(string transcript, ResumeProfile? profile);
+        string? questionTopic = null,
+        string interviewLanguage = InterviewLanguageValues.Vietnamese);
+    string BuildFollowupQuestionContext(
+        string role,
+        string seniority,
+        string interviewType,
+        string? jobDescription,
+        string question,
+        string answer,
+        StarEvaluation? star,
+        ResumeProfile? profile,
+        string interviewLanguage = InterviewLanguageValues.Vietnamese);
+    string BuildReportContext(
+        string transcript,
+        ResumeProfile? profile,
+        string interviewLanguage = InterviewLanguageValues.Vietnamese);
 }
 
 public sealed record ResumeView(
@@ -373,7 +418,8 @@ public sealed record StartInterviewCommand(
     string InterviewType,
     string Difficulty,
     Guid? ResumeId,
-    Guid? JobDescriptionId);
+    Guid? JobDescriptionId,
+    string? InterviewLanguage = null);
 
 public sealed record QuestionView(
     Guid Id,

@@ -132,6 +132,12 @@ entitlement before AI, keeps the same session and idempotency identity, and
 creates a policy-selected primary; an explicit follow-up is allowed only for a
 paid behavioral question whose evaluation has missing STAR evidence.
 
+Interview creation accepts optional `language`, normalized to `vi-VN` or
+`en-US`; omitted language defaults to `vi-VN`. The normalized value is persisted
+on the session and remains immutable. All interview question, follow-up,
+evaluation and report AI operations use that server-owned language and never
+infer it from role, CV, job description, answer or transcript.
+
 `docs/08-data-model.md` owns the canonical persisted interview state names and transitions, subject to the formal behavior and business rules in `docs/SRS.md`; API and design documents reference them.
 
 ## 11. AI integration contract

@@ -24,10 +24,11 @@ public sealed class InterviewQuestionContractTests
     [Fact]
     public void FirstQuestionPromptTreatsServerOwnedTopicAsAuthoritative()
     {
-        Assert.Equal("interview-first-question-v3", AiOperations.InterviewFirstQuestion.PromptVersion);
+        Assert.Equal("interview-first-question-v4", AiOperations.InterviewFirstQuestion.PromptVersion);
         Assert.Contains("question-topic", AiOperations.InterviewFirstQuestion.Instructions, StringComparison.Ordinal);
         Assert.Contains("authoritative", AiOperations.InterviewFirstQuestion.Instructions, StringComparison.Ordinal);
         Assert.Contains("never infer semantic topic", AiOperations.InterviewFirstQuestion.Instructions, StringComparison.Ordinal);
+        Assert.Contains("interview language supplied in context", AiOperations.InterviewFirstQuestion.Instructions, StringComparison.Ordinal);
     }
 
     [Theory]

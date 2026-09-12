@@ -878,7 +878,7 @@ public sealed class FieldBenchmarkResumeAnalysisOperation : AiOperationDefinitio
 public sealed class InterviewFirstQuestionOperation : AiOperationDefinition<GeneratedQuestion>
 {
     public override string Purpose => AiPurposes.InterviewFirstQuestion;
-    public override string PromptVersion => "interview-first-question-v3";
+    public override string PromptVersion => "interview-first-question-v4";
     public override string SchemaVersion => "interview-first-question-v2";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 500;
@@ -894,7 +894,7 @@ public sealed class InterviewFirstQuestionOperation : AiOperationDefinition<Gene
         """);
 
     public override string Instructions =>
-        "Generate one concise, realistic interview question for the supplied role and seniority. The server-owned question-topic in the context is authoritative whenever present; generate only that topic and never infer semantic topic from interview-type or question-sequence. For self_introduction, ask for the candidate's background and relevant experience. For behavioral_star, invite one real-world situation and the candidate's actions and result. For motivation_role_fit, ask about motivation and fit for the role. For other topics, follow the explicit topic and supplied role context. The question must be under 2,000 characters. Do not mention or explain the STAR acronym. Write in the language of the role and job description.";
+        "Generate one concise, realistic interview question for the supplied role and seniority. The server-owned question-topic in the context is authoritative whenever present; generate only that topic and never infer semantic topic from interview-type or question-sequence. For self_introduction, ask for the candidate's background and relevant experience. For behavioral_star, invite one real-world situation and the candidate's actions and result. For motivation_role_fit, ask about motivation and fit for the role. For other topics, follow the explicit topic and supplied role context. The question must be under 2,000 characters. Do not mention or explain the STAR acronym. The interview language supplied in context is authoritative. Write the entire question in that language. Do not infer language from the role, job description, resume, candidate name, or any other content.";
 
     public override AiValidationResult<GeneratedQuestion> NormalizeAndValidate(GeneratedQuestion? raw, AiOperationContext context)
     {
@@ -912,7 +912,7 @@ public sealed class InterviewFirstQuestionOperation : AiOperationDefinition<Gene
 public sealed class InterviewFollowupOperation : AiOperationDefinition<GeneratedQuestion>
 {
     public override string Purpose => AiPurposes.InterviewFollowup;
-    public override string PromptVersion => "interview-followup-v2";
+    public override string PromptVersion => "interview-followup-v3";
     public override string SchemaVersion => "interview-followup-v2";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 500;
@@ -928,7 +928,7 @@ public sealed class InterviewFollowupOperation : AiOperationDefinition<Generated
         """);
 
     public override string Instructions =>
-        "Generate one concise, natural follow-up interview question based on the candidate's previous answer and context. If STAR missing elements or coaching tips are provided, probe for the missing details (such as specific actions taken, technical decisions, or measurable impact) without mechanically using the word 'STAR'. The question must be under 2,000 characters. Write in the same language as the interview.";
+        "Generate one concise, natural follow-up interview question based on the candidate's previous answer and context. If STAR missing elements or coaching tips are provided, probe for the missing details (such as specific actions taken, technical decisions, or measurable impact) without mechanically using the word 'STAR'. The question must be under 2,000 characters. The interview language supplied in context is authoritative. Write the entire follow-up question in that language. Do not infer language from the role, job description, resume, candidate answer, or any other content.";
 
     public override AiValidationResult<GeneratedQuestion> NormalizeAndValidate(GeneratedQuestion? raw, AiOperationContext context)
     {
@@ -946,7 +946,7 @@ public sealed class InterviewFollowupOperation : AiOperationDefinition<Generated
 public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEvaluation>
 {
     public override string Purpose => AiPurposes.InterviewEvaluate;
-    public override string PromptVersion => "interview-eval-v5";
+    public override string PromptVersion => "interview-eval-v6";
     public override string SchemaVersion => "interview-eval-v5";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 6_000;
@@ -1035,7 +1035,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         Return exactly four rubric scores for criteria: correctness, structure, completeness, clarity (scores 0-100 with non-empty evidence quote).
         Return 1-3 strengths grounded in the candidate answer when it demonstrates positive evidence. If no grounded positive evidence is demonstrated, return an empty strengths array, keep rubric scores below 60 where justified, and do not invent a strength. Return 1-3 concrete actionable improvements and one improvedAnswer.
         Keep improvedAnswer faithful to the candidate answer: do not add metrics, achievements, technologies, roles, or experience that are not explicitly present. When evidence is missing, explain what concrete evidence the candidate could add instead of inventing it. Use the answer's facts and language; do not call another AI operation to rewrite it.
-        Write in the same language as the interview.
+        The interview language supplied in context is authoritative. Write all user-facing text, including feedback, strengths, improvements, and improvedAnswer, in that language. Do not infer language from the role, job description, resume, candidate answer, or any other content.
 
         If the question is technical or non-behavioral:
         Set star.applicable = false, omit component details.
@@ -1233,7 +1233,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
 public sealed class InterviewReportOperation : AiOperationDefinition<InterviewReportOutput>
 {
     public override string Purpose => AiPurposes.InterviewReport;
-    public override string PromptVersion => "interview-report-v2";
+    public override string PromptVersion => "interview-report-v3";
     public override string SchemaVersion => "interview-report-v2";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 6_000;
@@ -1268,7 +1268,7 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
         """);
 
     public override string Instructions =>
-        "Synthesize the interview transcript into an authoritative final coaching report. Set scoreScale to '0-100'. Return exactly four scores with criterion values correctness, structure, completeness, and clarity (integer scores 0-100 with evidence citing the transcript). Return 1 to 3 grounded strengths, 1 to 3 clear gaps, and 1 to 3 concrete actionPlan items. Do not leave any array empty. Write in the same language as the interview.";
+        "Synthesize the interview transcript into an authoritative final coaching report. Set scoreScale to '0-100'. Return exactly four scores with criterion values correctness, structure, completeness, and clarity (integer scores 0-100 with evidence citing the transcript). Return 1 to 3 grounded strengths, 1 to 3 clear gaps, and 1 to 3 concrete actionPlan items. Do not leave any array empty. The interview language supplied in context is authoritative. Write all user-facing report text in that language. Do not infer language from the transcript, role, job description, resume, candidate name, or any other content.";
 
     public override AiValidationResult<InterviewReportOutput> NormalizeAndValidate(InterviewReportOutput? raw, AiOperationContext context)
     {
