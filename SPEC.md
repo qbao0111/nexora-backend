@@ -132,6 +132,12 @@ entitlement before AI, keeps the same session and idempotency identity, and
 creates a policy-selected primary; an explicit follow-up is allowed only for a
 paid behavioral question whose evaluation has missing STAR evidence.
 
+All user-facing AI-generated natural-language output is Vietnamese-only in the
+MVP. Input/source content may be in any language; technical names and proper
+nouns may remain unchanged, while machine keys, enums, statuses, versions,
+score scales and codes remain canonical. Localization and language selection
+are out of scope; the canonical rule is in the [AI output language policy](docs/09-ai-integration-spec.md#ai-output-language--vietnamese-mvp).
+
 `docs/08-data-model.md` owns the canonical persisted interview state names and transitions, subject to the formal behavior and business rules in `docs/SRS.md`; API and design documents reference them.
 
 ## 11. AI integration contract

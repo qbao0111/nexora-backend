@@ -119,7 +119,14 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
     }
 
     public string BuildFollowupQuestionContext(
-        string role, string seniority, string interviewType, string? jobDescription, string question, string answer, StarEvaluation? star, ResumeProfile? profile)
+        string role,
+        string seniority,
+        string interviewType,
+        string? jobDescription,
+        string question,
+        string answer,
+        StarEvaluation? star,
+        ResumeProfile? profile)
     {
         // Section priority:
         // 1. Previous Question

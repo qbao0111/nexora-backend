@@ -612,13 +612,13 @@ public sealed class ProductPlatformApiTests
             Assert.Contains("Fintech", fieldAnalysis.ContextJson, StringComparison.Ordinal);
             Assert.NotNull(fieldAnalysis.ProfileSnapshot);
             Assert.Equal("test-gemini-model", fieldAnalysis.ProfileModelVersion);
-            Assert.Equal("resume-profile-v2", fieldAnalysis.ProfilePromptVersion);
+            Assert.Equal("resume-profile-v3", fieldAnalysis.ProfilePromptVersion);
             Assert.Equal("resume-profile-v2", fieldAnalysis.ProfileSchemaVersion);
-            Assert.Equal("resume-analysis-field-benchmark-v2", fieldAnalysis.PromptVersion);
+            Assert.Equal("resume-analysis-field-benchmark-v3", fieldAnalysis.PromptVersion);
             Assert.Equal("analysis-field-benchmark-v2", fieldAnalysis.RubricVersion);
             Assert.Equal("resume-analysis-field-benchmark-v2", fieldAnalysis.SchemaVersion);
             var readyResume = await firstDb.Resumes.SingleAsync(item => item.Id == resumeId);
-            Assert.Equal("resume-profile-v2", readyResume.ProfilePromptVersion);
+            Assert.Equal("resume-profile-v3", readyResume.ProfilePromptVersion);
             Assert.Equal("resume-profile-v2", readyResume.ProfileSchemaVersion);
         }
 
@@ -669,7 +669,7 @@ public sealed class ProductPlatformApiTests
         Assert.All(analyses, item =>
         {
             Assert.Equal("test-gemini-model", item.ProfileModelVersion);
-            Assert.Equal("resume-profile-v2", item.ProfilePromptVersion);
+            Assert.Equal("resume-profile-v3", item.ProfilePromptVersion);
             Assert.Equal("resume-profile-v2", item.ProfileSchemaVersion);
         });
         var feature = await finalDb.EntitlementFeatures.Include(item => item.Entitlement).SingleAsync(

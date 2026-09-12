@@ -217,7 +217,7 @@ public sealed partial class GeminiAiProvider(
         Return only JSON matching the supplied response schema.
         Keep evidence and list items concise.
         Do not invent candidate achievements. Evidence must be grounded in the supplied input; describe missing evidence as a suggestion.
-        Language requirement: Write all feedback, evidence quotations, questions, strengths, gaps, recommendations, and coaching tips in the exact same language as the candidate input and question (default to Vietnamese if input is Vietnamese).
+        {AiLanguagePolicy.VietnameseUserFacingInstruction}
         """;
 
     private static Task DelayBeforeRetryAsync(GeminiOptions configuration, int attempt, CancellationToken cancellationToken)
