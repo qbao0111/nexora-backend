@@ -29,6 +29,8 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/auth/refresh` | Xoay refresh token trong cookie. |
 | POST | `/me/password` | Đổi mật khẩu với current password; yêu cầu Bearer và revoke toàn bộ session sau khi thành công. |
 | GET | `/me` | Profile và entitlement hiện hành. |
+| PUT | `/me/primary-resume` | Chọn hoặc thay thế Primary Resume của owner sau khi CV ở trạng thái `ready`. |
+| GET | `/me/career-profile` | Đọc aggregate Career Profile computed của owner. |
 | GET | `/me/export` | Export allowlisted core profile/billing/practice data của owner; không trả storage key, credential hoặc provider secret. |
 | POST | `/me/deletion-requests` | Yêu cầu xoá bất đồng bộ; bắt buộc `Idempotency-Key`, revoke session ngay và trả `202`. |
 | GET | `/plans` | Gói, giá, quyền lợi từ server. |
@@ -182,6 +184,12 @@ Response thành công dùng envelope chuẩn và trả `data` là `null` khi pat
 Khi có ứng viên, response chỉ gồm `reason`, `activityType`, nullable `resourceId`, `estimatedMinutes` và `priority`. Chỉ activity `pending` được xét; `completed`, `obsolete`, và numeric activity không còn là gap hiện tại của B10 (không có competency match hoặc score >= 75) bị loại. Scenario chỉ trả resource ID đã có trong B11; `external_learning` và activity không có resource trả `resourceId: null`.
 
 Ranking rule deterministic theo thứ tự: `priority` tăng dần; `EvidenceCount` giảm dần; `LastPracticeAt` tăng dần; score tăng dần; milestone `SortOrder`; activity `SortOrder`; activity ID. Với competency, `LastPracticeAt` là thời điểm mới nhất giữa B10 `LatestEvidenceAt` và `CompletedAt` của activity B11 đã completed cùng competency. Với qualitative resume improvement không có competency code, ranking chỉ dùng timestamp ổn định của Learning Path và `EvidenceCount = 0`/không có score để làm fallback. `estimatedMinutes` là server policy: scenario 20, star_drill 15, interview 20, resume_improvement 15, external_learning 20. `reason` được tạo deterministic từ tên activity/competency, priority, evidence count và tín hiệu recency; không chứa raw CV, answer, STAR hoặc AI output.
+
+### Primary Resume and Career Profile
+
+`PUT /api/v1/me/primary-resume` requires Bearer authentication and accepts `{ "resumeId": "..." }`. The resume must belong to the authenticated user and have status `ready`; missing, foreign, or unavailable resumes are rejected without revealing ownership. The mutation updates one nullable `primaryResumeId` in `user_profiles` inside a transaction, so selecting the same resume is safe and replacing the previous resume never creates multiple primary rows. The MVP does not auto-select the first resume; the client selects it explicitly after extraction completes. There is currently no standalone resume-delete API; a database delete clears the reference through the foreign key `SET NULL` action.
+
+`GET /api/v1/me/career-profile` is a computed, owner-scoped aggregate read model. Its standard envelope contains `profile`, nullable `primaryResume` (file metadata plus the latest analysis for that resume only), nullable `activeCareerGoal`, `skillProfileSummary` (at most five competencies and five weakness signals), nullable `learningPath` for the active goal, and `onboarding`. `onboarding.isComplete` currently means only Primary Resume plus active Career Goal. Career Goal, Resume, Skill Profile, and Learning Path remain separate resources; this endpoint does not create or refresh data and never returns raw CV, answer, transcript, AI payload, storage key, or provider metadata.
 
 ### Progress Dashboard v2
 

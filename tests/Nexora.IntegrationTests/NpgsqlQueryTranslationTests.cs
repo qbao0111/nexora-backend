@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Nexora.Business.Billing;
+using Nexora.Business.Career;
+using Nexora.Business.Learning;
 using Nexora.Business.Practice;
 using Nexora.Data.Persistence;
 
@@ -116,5 +118,58 @@ public sealed class NpgsqlQueryTranslationTests
         _ = orders.ToQueryString();
         _ = interviews.ToQueryString();
         _ = reports.ToQueryString();
+    }
+
+    [Fact]
+    public void CareerProfileQueriesTranslateWithNpgsqlWithoutConnectingToAStore()
+    {
+        var options = new DbContextOptionsBuilder<NexoraDbContext>()
+            .UseNpgsql("Host=localhost;Database=translation_probe;Username=probe;Password=probe")
+            .Options;
+        using var db = new NexoraDbContext(options);
+        var userId = Guid.NewGuid();
+        var primaryResumeId = Guid.NewGuid();
+        var careerGoalId = Guid.NewGuid();
+        var pathId = Guid.NewGuid();
+
+        var account = db.Users.AsNoTracking()
+            .Where(item => item.Id == userId && item.IsActive && item.DeletionRequestedAt == null && item.DeletedAt == null)
+            .Select(item => new
+            {
+                item.Id,
+                item.Email,
+                DisplayName = item.Profile == null ? null : item.Profile.DisplayName,
+                PrimaryResumeId = item.Profile == null ? null : item.Profile.PrimaryResumeId
+            });
+        var primaryResume = db.Resumes.AsNoTracking()
+            .Where(item => item.Id == primaryResumeId && item.UserId == userId && item.Status == PracticeValues.Ready)
+            .Select(item => new PrimaryResumeSummary(item.Id, item.StoredFile.FileName, item.Status, item.CreatedAt));
+        var latestAnalysis = db.ResumeAnalyses.AsNoTracking()
+            .Where(item => item.UserId == userId && item.ResumeId == primaryResumeId)
+            .OrderByDescending(item => item.CreatedAt)
+            .ThenByDescending(item => item.Id)
+            .Select(item => new ResumeAnalysisSummary(item.Id, item.Mode, item.Status, item.CreatedAt));
+        var activeGoal = db.CareerGoals.AsNoTracking()
+            .Where(item => item.UserId == userId && item.Active && item.DeletedAt == null)
+            .Select(item => new CareerProfileGoalView(
+                item.Id, item.TargetRole, item.Seniority, item.Industry, item.TargetCompany, item.TargetDate, item.Active));
+        var path = db.LearningPaths.AsNoTracking()
+            .Where(item => item.UserId == userId && item.CareerGoalId == careerGoalId)
+            .Select(item => new { item.Id, item.Status });
+        var pathCounts = db.LearningPathActivities.AsNoTracking()
+            .Where(item => item.LearningPathId == pathId)
+            .GroupBy(item => item.LearningPathId)
+            .Select(group => new
+            {
+                Pending = group.Count(item => item.Status == LearningPathValues.Pending),
+                Completed = group.Count(item => item.Status == LearningPathValues.Completed)
+            });
+
+        _ = account.ToQueryString();
+        _ = primaryResume.ToQueryString();
+        _ = latestAnalysis.ToQueryString();
+        _ = activeGoal.ToQueryString();
+        _ = path.ToQueryString();
+        _ = pathCounts.ToQueryString();
     }
 }

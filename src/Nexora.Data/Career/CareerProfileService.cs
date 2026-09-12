@@ -1,0 +1,191 @@
+using System.Data;
+using Microsoft.EntityFrameworkCore;
+using Nexora.Business.Career;
+using Nexora.Business.Common;
+using Nexora.Business.Learning;
+using Nexora.Business.Practice;
+using Nexora.Business.Skills;
+using Nexora.Data.Identity;
+using Nexora.Data.Persistence;
+
+namespace Nexora.Data.Career;
+
+public sealed class CareerProfileService(
+    NexoraDbContext dbContext,
+    ISkillProfileService skillProfileService,
+    TimeProvider timeProvider) : ICareerProfileService
+{
+    private const int MaximumSummaryItems = 5;
+
+    public async Task<PrimaryResumeSummary> SetPrimaryResumeAsync(
+        Guid userId,
+        Guid resumeId,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(
+            dbContext.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable,
+            cancellationToken);
+        await LockUserAsync(userId, cancellationToken);
+
+        var resume = await dbContext.Resumes.AsNoTracking()
+            .Where(item => item.Id == resumeId && item.UserId == userId)
+            .Select(item => new PrimaryResumeRow(item.Id, item.StoredFile.FileName, item.Status, item.CreatedAt))
+            .SingleOrDefaultAsync(cancellationToken)
+            ?? throw NotFound();
+        if (!string.Equals(resume.Status, PracticeValues.Ready, StringComparison.Ordinal))
+            throw new BusinessException("RESUME_NOT_READY", "CV chưa sẵn sàng để chọn làm CV chính.", BusinessErrorKind.Conflict);
+
+        var now = timeProvider.GetUtcNow();
+        var profile = await dbContext.UserProfiles
+            .SingleOrDefaultAsync(item => item.UserId == userId, cancellationToken);
+        if (profile is null)
+        {
+            profile = new UserProfile
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            dbContext.UserProfiles.Add(profile);
+        }
+
+        profile.PrimaryResumeId = resume.Id;
+        profile.UpdatedAt = now;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return await LoadPrimaryResumeAsync(resume.Id, userId, cancellationToken)
+            ?? throw NotFound();
+    }
+
+    public async Task<CareerProfileView> GetAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var account = await dbContext.Users.AsNoTracking()
+            .Where(item => item.Id == userId && item.IsActive && item.DeletionRequestedAt == null && item.DeletedAt == null)
+            .Select(item => new AccountRow(
+                item.Id,
+                item.Email,
+                item.Profile == null ? null : item.Profile.DisplayName,
+                item.Profile == null ? null : item.Profile.PrimaryResumeId))
+            .SingleOrDefaultAsync(cancellationToken)
+            ?? throw NotFound();
+
+        var primaryResume = await LoadPrimaryResumeAsync(account.PrimaryResumeId, userId, cancellationToken);
+        var activeCareerGoal = await dbContext.CareerGoals.AsNoTracking()
+            .Where(item => item.UserId == userId && item.Active && item.DeletedAt == null)
+            .Select(item => new CareerProfileGoalView(
+                item.Id,
+                item.TargetRole,
+                item.Seniority,
+                item.Industry,
+                item.TargetCompany,
+                item.TargetDate,
+                item.Active))
+            .SingleOrDefaultAsync(cancellationToken);
+
+        var skillProfile = await skillProfileService.GetAsync(userId, cancellationToken);
+        var skillSummary = new CareerProfileSkillSummary(
+            skillProfile.Competencies
+                .OrderByDescending(item => item.Score)
+                .ThenByDescending(item => item.EvidenceCount)
+                .ThenBy(item => item.Code, StringComparer.Ordinal)
+                .ThenBy(item => item.Name, StringComparer.Ordinal)
+                .Take(MaximumSummaryItems)
+                .ToArray(),
+            skillProfile.WeaknessSignals
+                .OrderByDescending(item => item.LatestEvidenceAt)
+                .ThenBy(item => item.SourceType, StringComparer.Ordinal)
+                .ThenBy(item => item.Label, StringComparer.Ordinal)
+                .Take(MaximumSummaryItems)
+                .ToArray());
+
+        var learningPath = activeCareerGoal is null
+            ? null
+            : await LoadLearningPathSummaryAsync(userId, activeCareerGoal.Id, cancellationToken);
+        var onboarding = new CareerProfileOnboardingSummary(
+            primaryResume is not null,
+            activeCareerGoal is not null,
+            primaryResume is not null && activeCareerGoal is not null);
+
+        return new CareerProfileView(
+            new CareerProfileIdentityView(account.Id, account.Email ?? string.Empty, account.DisplayName, AvatarUrl: null),
+            primaryResume,
+            activeCareerGoal,
+            skillSummary,
+            learningPath,
+            onboarding);
+    }
+
+    private async Task<PrimaryResumeSummary?> LoadPrimaryResumeAsync(
+        Guid? primaryResumeId,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        if (primaryResumeId is not { } resumeId) return null;
+
+        var resume = await dbContext.Resumes.AsNoTracking()
+            .Where(item => item.Id == resumeId && item.UserId == userId && item.Status == PracticeValues.Ready)
+            .Select(item => new PrimaryResumeRow(item.Id, item.StoredFile.FileName, item.Status, item.CreatedAt))
+            .SingleOrDefaultAsync(cancellationToken);
+        if (resume is null) return null;
+
+        var analysisQuery = dbContext.ResumeAnalyses.AsNoTracking()
+            .Where(item => item.UserId == userId && item.ResumeId == resume.Id)
+            .Select(item => new ResumeAnalysisSummary(item.Id, item.Mode, item.Status, item.CreatedAt));
+        var latestAnalysis = dbContext.Database.IsNpgsql()
+            ? await analysisQuery
+                .OrderByDescending(item => item.CreatedAt)
+                .ThenByDescending(item => item.Id)
+                .FirstOrDefaultAsync(cancellationToken)
+            : (await analysisQuery.ToArrayAsync(cancellationToken))
+                .OrderByDescending(item => item.CreatedAt)
+                .ThenByDescending(item => item.Id)
+                .FirstOrDefault();
+
+        return new PrimaryResumeSummary(resume.Id, resume.FileName, resume.Status, resume.CreatedAt, latestAnalysis);
+    }
+
+    private async Task<CareerProfileLearningPathSummary?> LoadLearningPathSummaryAsync(
+        Guid userId,
+        Guid careerGoalId,
+        CancellationToken cancellationToken)
+    {
+        var path = await dbContext.LearningPaths.AsNoTracking()
+            .Where(item => item.UserId == userId && item.CareerGoalId == careerGoalId)
+            .Select(item => new LearningPathRow(item.Id, item.Status))
+            .SingleOrDefaultAsync(cancellationToken);
+        if (path is null) return null;
+
+        var counts = await dbContext.LearningPathActivities.AsNoTracking()
+            .Where(item => item.LearningPathId == path.Id)
+            .GroupBy(item => item.LearningPathId)
+            .Select(group => new LearningPathCounts(
+                group.Count(item => item.Status == LearningPathValues.Pending),
+                group.Count(item => item.Status == LearningPathValues.Completed)))
+            .SingleOrDefaultAsync(cancellationToken);
+
+        return new CareerProfileLearningPathSummary(
+            path.Id,
+            path.Status,
+            counts?.PendingActivityCount ?? 0,
+            counts?.CompletedActivityCount ?? 0);
+    }
+
+    private async Task LockUserAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = dbContext.Database.IsNpgsql()
+            ? await dbContext.Users.FromSqlInterpolated($"SELECT * FROM asp_net_users WHERE \"Id\" = {userId} FOR UPDATE")
+                .SingleOrDefaultAsync(cancellationToken)
+            : await dbContext.Users.SingleOrDefaultAsync(item => item.Id == userId, cancellationToken);
+        if (user is null) throw NotFound();
+    }
+
+    private static BusinessException NotFound() =>
+        new("NOT_FOUND", "Không tìm thấy tài nguyên.", BusinessErrorKind.NotFound);
+
+    private sealed record AccountRow(Guid Id, string? Email, string? DisplayName, Guid? PrimaryResumeId);
+    private sealed record PrimaryResumeRow(Guid Id, string FileName, string Status, DateTimeOffset CreatedAt);
+    private sealed record LearningPathRow(Guid Id, string Status);
+    private sealed record LearningPathCounts(int PendingActivityCount, int CompletedActivityCount);
+}
