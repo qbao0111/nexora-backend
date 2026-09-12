@@ -41,6 +41,18 @@ public sealed class NpgsqlQueryTranslationTests
         _ = recentInterviews.ToQueryString();
         _ = recentScenarioAttempts.ToQueryString();
         _ = recentStarAttempts.ToQueryString();
+
+        var scenarioPattern = "%flash%";
+        var scenarios = db.Scenarios.AsNoTracking()
+            .Where(item => item.Status == PracticeFeatureValues.Published)
+            .Where(item => EF.Functions.ILike(item.Title, scenarioPattern, "\\") ||
+                           EF.Functions.ILike(item.Summary, scenarioPattern, "\\"))
+            .OrderBy(item => item.SortOrder)
+            .ThenBy(item => item.Title)
+            .Take(20)
+            .Select(item => item.Id);
+
+        _ = scenarios.ToQueryString();
     }
 
     [Fact]
