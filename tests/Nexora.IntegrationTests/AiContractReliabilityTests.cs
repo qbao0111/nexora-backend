@@ -401,9 +401,10 @@ public sealed class AiContractReliabilityTests
     }
 
     [Fact]
-    public async Task InsufficientAnswerFailsValidationBeforeAiEvaluation()
+    public async Task LowInformationAnswerPersistsEmptyStrengthsWithoutRetry()
     {
         var aiProvider = new TestAiProvider();
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, LowInformationEvaluation());
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
@@ -411,26 +412,27 @@ public sealed class AiContractReliabilityTests
         await SeedEntitlementAsync(factory, account.UserId, 5);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
 
-        var interviewId = await StartInterviewAsync(client, "technical", "short-answer-validation");
+        var interviewId = await StartInterviewAsync(client, "technical", "low-information-answer");
         await ProcessJobsAsync(factory);
         var questionId = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
 
         using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/answers")
         {
-            Content = JsonContent.Create(new { questionId, content = "idk", durationSeconds = 30 })
+            Content = JsonContent.Create(new { questionId, content = "I don't know", durationSeconds = 30 })
         };
-        request.Headers.Add("Idempotency-Key", "short-answer-validation");
+        request.Headers.Add("Idempotency-Key", "low-information-answer");
         using var response = await client.SendAsync(request);
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("VALIDATION_ERROR", body, StringComparison.Ordinal);
-        Assert.DoesNotContain("AI_OUTPUT_INVALID", body, StringComparison.Ordinal);
-        Assert.Equal(0, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var data = await DataAsync(response);
+        var evaluation = data.GetProperty("answer").GetProperty("evaluation");
+        Assert.Empty(evaluation.GetProperty("strengths").EnumerateArray());
+        Assert.NotEmpty(evaluation.GetProperty("improvements").EnumerateArray());
+        Assert.Equal(1, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        Assert.Equal(0, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
+        Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
     }
 
     [Fact]
@@ -697,6 +699,20 @@ public sealed class AiContractReliabilityTests
         AiOperations.ScoreScale,
         ["Grounded answer"],
         ["Add one concrete example if available."],
+        "Keep the same answer and add concrete evidence if available.");
+
+    private static AnswerEvaluation LowInformationEvaluation() => new(
+        [
+            new RubricScore("correctness", 20, "No positive evidence is demonstrated in the answer."),
+            new RubricScore("structure", 10, "No answer structure is demonstrated."),
+            new RubricScore("completeness", 10, "The answer provides no supporting detail."),
+            new RubricScore("clarity", 20, "The answer is too limited to demonstrate clarity.")
+        ],
+        "No positive evidence was demonstrated.",
+        new StarEvaluation(false, null, null, null, null, null, [], [], []),
+        AiOperations.ScoreScale,
+        [],
+        ["Add one concrete example from your experience."],
         "Keep the same answer and add concrete evidence if available.");
 
     private static AnswerEvaluation EvaluationWithStar(StarEvaluation star) => new(

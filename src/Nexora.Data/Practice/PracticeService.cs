@@ -37,7 +37,6 @@ public sealed partial class PracticeService(
     private static string ProfileSchemaVersion => AiOperations.ResumeProfile.SchemaVersion;
     private const string RubricVersion = "interview-rubric-star-v2";
     private const string Disclaimer = "Điểm số chỉ là ước lượng phục vụ coaching, không phải đánh giá tuyển dụng.";
-    private const int MinimumAnswerWordCount = 2;
     private const int MinimumReportAnswers = 2;
     private const string ResumeExtractionFailureMessage = "Không thể đọc nội dung CV. Vui lòng thử lại với file PDF hoặc DOCX rõ hơn.";
     private static readonly JsonDocument EmptySchema = JsonDocument.Parse("{}");
@@ -435,8 +434,7 @@ public sealed partial class PracticeService(
         Guid userId, Guid interviewId, Guid questionId, string content, int? durationSeconds, string idempotencyKey, CancellationToken cancellationToken)
     {
         var normalizedContent = content?.Trim() ?? string.Empty;
-        var answerWordCount = normalizedContent.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
-        if (normalizedContent.Length is 0 or > 12_000 || answerWordCount < MinimumAnswerWordCount || durationSeconds is < 0 or > 7200)
+        if (normalizedContent.Length is 0 or > 12_000 || durationSeconds is < 0 or > 7200)
             throw Validation("Câu trả lời không hợp lệ.");
         var key = RequireKey(idempotencyKey);
         var fingerprint = Fingerprint(interviewId, questionId, normalizedContent, durationSeconds);

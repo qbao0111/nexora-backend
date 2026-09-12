@@ -170,7 +170,7 @@ does not consume another interview reservation.
   - `recurringIssues` is recomputed from the merged components (`detected = false` or `score < 60`); raw per-answer `missingElements` are never unioned, so a follow-up can resolve an earlier missing component. Coaching priorities use feedback attached to the selected merged/weak component evidence, in deterministic weakness order, distinct and capped at three; historical `coachingTips` are not concatenated.
   - **Per-answer coaching (`interview.evaluate`)**:
     - The same structured call returns rubric scores, feedback, STAR (when applicable), `strengths`, `improvements` and `improvedAnswer`; no second rewrite call is made.
-    - `strengths` and `improvements` contain 1–3 nonblank items (maximum 500 characters each); improvements must be actionable. `improvedAnswer` is nonblank and capped at 4,000 characters.
+    - `strengths` contains 1–3 nonblank grounded items when the answer demonstrates positive evidence, or an empty collection when no grounded positive evidence is demonstrated and all rubric scores are below 60. `improvements` contains 1–3 nonblank actionable items (maximum 500 characters each). `improvedAnswer` is nonblank and capped at 4,000 characters.
     - When the original answer is available to Business validation, strengths and the improved answer must retain meaningful evidence from it. New numeric values, technologies, achievements or experience are rejected; missing evidence is described as a suggestion to add it, never fabricated. The normalized coaching is persisted with the answer evaluation and remains provider-neutral.
   - **Context Budgeting**:
   - `ResumeContextBuilder` prioritizes candidate answer text, question text, and metadata above background context.
