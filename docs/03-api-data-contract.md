@@ -29,7 +29,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/auth/refresh` | Xoay refresh token trong cookie. |
 | POST | `/me/password` | Đổi mật khẩu với current password; yêu cầu Bearer và revoke toàn bộ session sau khi thành công. |
 | GET | `/me` | Profile và entitlement hiện hành. |
-| PUT | `/me/primary-resume` | Chọn hoặc thay thế Primary Resume của owner sau khi CV ở trạng thái `ready`. |
+| PUT | `/me/primary-resume` | Chọn, thay thế hoặc bỏ chọn Primary Resume của owner. CV được chọn phải ở trạng thái `ready`. |
 | GET | `/me/career-profile` | Đọc aggregate Career Profile computed của owner. |
 | GET | `/me/export` | Export allowlisted core profile/billing/practice data của owner; không trả storage key, credential hoặc provider secret. |
 | POST | `/me/deletion-requests` | Yêu cầu xoá bất đồng bộ; bắt buộc `Idempotency-Key`, revoke session ngay và trả `202`. |
@@ -41,6 +41,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/webhooks/payments/sepay` | Nhận SePay Sandbox IPN JSON với `X-Secret-Key`, trả `{ "success": true }` khi callback hợp lệ hoặc trùng. |
 | POST | `/uploads/presign` | Cấp signed URL upload CV/avatar. |
 | POST | `/resumes` | Ghi metadata file sau upload. |
+| GET | `/resumes` | Liệt kê CV của owner theo thứ tự mới nhất. |
 | GET | `/resumes/:id` | Đọc trạng thái xử lý CV và lỗi an toàn của owner. |
 | POST | `/resume-analyses` | Tạo job phân tích CV theo mode `job_targeted` hoặc `field_benchmark`. |
 | GET | `/resume-analyses/:id` | Trạng thái/kết quả phân tích. |
@@ -187,7 +188,9 @@ Ranking rule deterministic theo thứ tự: `priority` tăng dần; `EvidenceCou
 
 ### Primary Resume and Career Profile
 
-`PUT /api/v1/me/primary-resume` requires Bearer authentication and accepts `{ "resumeId": "..." }`. The resume must belong to the authenticated user and have status `ready`; missing, foreign, or unavailable resumes are rejected without revealing ownership. The mutation updates one nullable `primaryResumeId` in `user_profiles` inside a transaction, so selecting the same resume is safe and replacing the previous resume never creates multiple primary rows. The MVP does not auto-select the first resume; the client selects it explicitly after extraction completes. There is currently no standalone resume-delete API; a database delete clears the reference through the foreign key `SET NULL` action.
+`GET /api/v1/resumes` requires Bearer authentication and returns `{ "data": [ ... ] }` containing only the authenticated user's `ResumeView` metadata (`id`, `fileName`, `contentType`, `size`, `status`, `createdAt`, and safe failure fields). Results are ordered by `createdAt` descending and then `id` descending. The response never includes extracted CV text, structured profile, storage key, or provider fields; an account with no resumes receives an empty array.
+
+`PUT /api/v1/me/primary-resume` requires Bearer authentication and accepts `{ "resumeId": "..." }` or `{ "resumeId": null }`. A non-null resume must belong to the authenticated user and have status `ready`; missing, foreign, or unavailable resumes are rejected without revealing ownership. Sending `null` clears the current Primary Resume and returns `200` with `{ "data": null }`; the operation is idempotent and does not change career goals, skill evidence, learning-path history, or resume records. The mutation updates one nullable `primaryResumeId` in `user_profiles` inside a transaction, so selecting the same resume is safe and replacing the previous resume never creates multiple primary rows. The MVP does not auto-select the first resume; the client selects it explicitly after extraction completes. There is currently no standalone resume-delete API; a database delete clears the reference through the foreign key `SET NULL` action.
 
 `GET /api/v1/me/career-profile` is a computed, owner-scoped aggregate read model. Its standard envelope contains `profile`, nullable `primaryResume` (file metadata plus the latest analysis for that resume only), nullable `activeCareerGoal`, `skillProfileSummary` (at most five competencies and five weakness signals), nullable `learningPath` for the active goal, and `onboarding`. `onboarding.isComplete` currently means only Primary Resume plus active Career Goal. Career Goal, Resume, Skill Profile, and Learning Path remain separate resources; this endpoint does not create or refresh data and never returns raw CV, answer, transcript, AI payload, storage key, or provider metadata.
 

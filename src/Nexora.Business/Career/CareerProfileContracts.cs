@@ -55,9 +55,9 @@ public sealed record CareerProfileView(
 
 public interface ICareerProfileService
 {
-    Task<PrimaryResumeSummary> SetPrimaryResumeAsync(
+    Task<PrimaryResumeSummary?> SetPrimaryResumeAsync(
         Guid userId,
-        Guid resumeId,
+        Guid? resumeId,
         CancellationToken cancellationToken);
 
     Task<CareerProfileView> GetAsync(

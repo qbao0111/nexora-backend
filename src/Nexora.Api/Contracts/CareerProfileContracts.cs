@@ -1,6 +1,6 @@
 namespace Nexora.Api.Contracts;
 
-public sealed record SetPrimaryResumeRequest(Guid ResumeId);
+public sealed record SetPrimaryResumeRequest(Guid? ResumeId);
 
 public sealed record PrimaryResumeResponse(
     Guid Id,

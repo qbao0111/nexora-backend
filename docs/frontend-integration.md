@@ -79,6 +79,10 @@ For password recovery, call `POST /auth/forgot-password` with `{ "email": "..." 
 
    `failed` includes `errorCode: "RESUME_EXTRACTION_FAILED"` and the safe message `Không thể đọc nội dung CV. Vui lòng thử lại với file PDF hoặc DOCX rõ hơn.`. Local text PDFs/DOCX use PdfPig/OpenXML; only suspicious/failed local extraction invokes the single Gemini document fallback.
 
+   To show the user's saved CVs, call `GET /resumes` with the Bearer token. It returns the same safe `ResumeView` metadata in newest-first order and returns `data: []` when the user has no CVs. It never returns extracted text, structured profile, storage keys or provider fields.
+
+   After a resume reaches `ready`, set it as the current CV with `PUT /me/primary-resume` and `{ "resumeId": "..." }`. To clear the current choice, send `{ "resumeId": null }`; the API returns `200` with `data: null` and leaves goals, skills, learning history and resume records unchanged. A missing/foreign resume is `404`; a resume that is not `ready` is `409 RESUME_NOT_READY`.
+
 6. `POST /job-descriptions` (`201`):
 
    ```json

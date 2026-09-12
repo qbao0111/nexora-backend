@@ -58,6 +58,50 @@ public sealed class CareerProfileApiTests
     }
 
     [Fact]
+    public async Task ResumeListIsOwnerScopedNewestFirstAndOmitsPrivateFields()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var ownerClient = factory.CreateHttpsClient();
+        using var otherClient = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(ownerClient, "Resume list owner");
+        var other = await RegisterAsync(otherClient, "Resume list other");
+        Authorize(ownerClient, owner);
+        Authorize(otherClient, other);
+
+        var oldestId = await SeedResumeAsync(factory, owner.UserId, PracticeValues.Ready, At(1), "oldest.pdf");
+        var tiedLowerId = await SeedResumeAsync(
+            factory, owner.UserId, PracticeValues.Ready, At(2), "tied-lower.pdf",
+            Guid.Parse("10000000-0000-0000-0000-000000000001"));
+        var tiedHigherId = await SeedResumeAsync(
+            factory, owner.UserId, PracticeValues.Failed, At(2), "tied-higher.pdf",
+            Guid.Parse("10000000-0000-0000-0000-000000000002"));
+        var foreignId = await SeedResumeAsync(factory, other.UserId, PracticeValues.Ready, At(3), "foreign.pdf");
+
+        using var response = await ownerClient.GetAsync("/api/v1/resumes");
+        var resumes = await DataAsync(response);
+        var items = resumes.EnumerateArray().ToArray();
+
+        Assert.Equal(3, items.Length);
+        Assert.Equal(tiedHigherId, items[0].GetProperty("id").GetGuid());
+        Assert.Equal(tiedLowerId, items[1].GetProperty("id").GetGuid());
+        Assert.Equal(oldestId, items[2].GetProperty("id").GetGuid());
+        Assert.DoesNotContain(foreignId, items.Select(item => item.GetProperty("id").GetGuid()));
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("extractedText", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("structuredProfile", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("storageKey", body, StringComparison.Ordinal);
+        Assert.Equal("RESUME_EXTRACTION_FAILED", items[0].GetProperty("errorCode").GetString());
+
+        using var emptyClient = factory.CreateHttpsClient();
+        var empty = await RegisterAsync(emptyClient, "Empty resume list");
+        Authorize(emptyClient, empty);
+        using var emptyResponse = await emptyClient.GetAsync("/api/v1/resumes");
+        Assert.Empty((await DataAsync(emptyResponse)).EnumerateArray());
+    }
+
+    [Fact]
     public async Task PrimaryResumeIsOwnerScopedIdempotentAndNotAutoSelected()
     {
         using var factory = new NexoraApiFactory();
@@ -102,6 +146,29 @@ public sealed class CareerProfileApiTests
             var data = await DataAsync(profile);
             Assert.Equal(secondResumeId, data.GetProperty("primaryResume").GetProperty("id").GetGuid());
             Assert.Equal(secondAnalysisId, data.GetProperty("primaryResume").GetProperty("latestAnalysis").GetProperty("id").GetGuid());
+        }
+
+        using (var clear = await ownerClient.PutAsJsonAsync(
+                   "/api/v1/me/primary-resume", new { resumeId = (Guid?)null }))
+        {
+            Assert.Equal(HttpStatusCode.OK, clear.StatusCode);
+            using var document = JsonDocument.Parse(await clear.Content.ReadAsStringAsync());
+            Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("data").ValueKind);
+        }
+
+        using (var afterClear = await ownerClient.GetAsync("/api/v1/me/career-profile"))
+        {
+            var data = await DataAsync(afterClear);
+            Assert.Equal(JsonValueKind.Null, data.GetProperty("primaryResume").ValueKind);
+            Assert.False(data.GetProperty("onboarding").GetProperty("hasPrimaryResume").GetBoolean());
+        }
+
+        using (var repeatedClear = await ownerClient.PutAsJsonAsync(
+                   "/api/v1/me/primary-resume", new { resumeId = (Guid?)null }))
+        {
+            Assert.Equal(HttpStatusCode.OK, repeatedClear.StatusCode);
+            using var document = JsonDocument.Parse(await repeatedClear.Content.ReadAsStringAsync());
+            Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("data").ValueKind);
         }
 
         using (var otherProfile = await otherClient.GetAsync("/api/v1/me/career-profile"))
@@ -217,6 +284,25 @@ public sealed class CareerProfileApiTests
         Assert.True(data.GetProperty("onboarding").GetProperty("hasActiveCareerGoal").GetBoolean());
         Assert.True(data.GetProperty("onboarding").GetProperty("isComplete").GetBoolean());
 
+        using (var clear = await client.PutAsJsonAsync(
+                   "/api/v1/me/primary-resume", new { resumeId = (Guid?)null }))
+        {
+            Assert.Equal(HttpStatusCode.OK, clear.StatusCode);
+            using var clearDocument = JsonDocument.Parse(await clear.Content.ReadAsStringAsync());
+            Assert.Equal(JsonValueKind.Null, clearDocument.RootElement.GetProperty("data").ValueKind);
+        }
+
+        using (var afterClear = await client.GetAsync("/api/v1/me/career-profile"))
+        {
+            var cleared = await DataAsync(afterClear);
+            Assert.Equal(JsonValueKind.Null, cleared.GetProperty("primaryResume").ValueKind);
+            Assert.Equal(goalId, cleared.GetProperty("activeCareerGoal").GetProperty("id").GetGuid());
+            Assert.Equal("active", cleared.GetProperty("learningPath").GetProperty("status").GetString());
+            Assert.True(cleared.GetProperty("onboarding").GetProperty("hasActiveCareerGoal").GetBoolean());
+            Assert.False(cleared.GetProperty("onboarding").GetProperty("isComplete").GetBoolean());
+            Assert.Equal(competencies.Length, cleared.GetProperty("skillProfileSummary").GetProperty("topCompetencies").GetArrayLength());
+        }
+
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Equal(1, await db.LearningPaths.CountAsync(item => item.UserId == account.UserId));
@@ -250,7 +336,8 @@ public sealed class CareerProfileApiTests
         Guid userId,
         string status,
         DateTimeOffset createdAt,
-        string fileName)
+        string fileName,
+        Guid? resumeId = null)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
@@ -267,7 +354,7 @@ public sealed class CareerProfileApiTests
         };
         var resume = new ResumeRecord
         {
-            Id = Guid.NewGuid(),
+            Id = resumeId ?? Guid.NewGuid(),
             UserId = userId,
             StoredFileId = file.Id,
             Status = status,

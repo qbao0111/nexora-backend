@@ -17,9 +17,9 @@ public sealed class CareerProfileService(
 {
     private const int MaximumSummaryItems = 5;
 
-    public async Task<PrimaryResumeSummary> SetPrimaryResumeAsync(
+    public async Task<PrimaryResumeSummary?> SetPrimaryResumeAsync(
         Guid userId,
-        Guid resumeId,
+        Guid? resumeId,
         CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(
@@ -27,17 +27,29 @@ public sealed class CareerProfileService(
             cancellationToken);
         await LockUserAsync(userId, cancellationToken);
 
+        var now = timeProvider.GetUtcNow();
+        var profile = await dbContext.UserProfiles
+            .SingleOrDefaultAsync(item => item.UserId == userId, cancellationToken);
+        if (resumeId is null)
+        {
+            if (profile is not null)
+            {
+                profile.PrimaryResumeId = null;
+                profile.UpdatedAt = now;
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+            await transaction.CommitAsync(cancellationToken);
+            return null;
+        }
+
         var resume = await dbContext.Resumes.AsNoTracking()
-            .Where(item => item.Id == resumeId && item.UserId == userId)
+            .Where(item => item.Id == resumeId.Value && item.UserId == userId)
             .Select(item => new PrimaryResumeRow(item.Id, item.StoredFile.FileName, item.Status, item.CreatedAt))
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw NotFound();
         if (!string.Equals(resume.Status, PracticeValues.Ready, StringComparison.Ordinal))
             throw new BusinessException("RESUME_NOT_READY", "CV chưa sẵn sàng để chọn làm CV chính.", BusinessErrorKind.Conflict);
 
-        var now = timeProvider.GetUtcNow();
-        var profile = await dbContext.UserProfiles
-            .SingleOrDefaultAsync(item => item.UserId == userId, cancellationToken);
         if (profile is null)
         {
             profile = new UserProfile

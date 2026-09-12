@@ -16,6 +16,11 @@ public sealed class ResumesController(IPracticeService practiceService) : Contro
         return StatusCode(201, new ApiResponse<ResumeView>(resume));
     }
 
+    [HttpGet]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<ResumeView>>>> List(CancellationToken cancellationToken) =>
+        Ok(new ApiResponse<IReadOnlyList<ResumeView>>(
+            await practiceService.GetResumesAsync(User.GetRequiredUserId(), cancellationToken)));
+
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<ApiResponse<ResumeView>>> Get(Guid id, CancellationToken cancellationToken) =>
         Ok(new ApiResponse<ResumeView>(await practiceService.GetResumeAsync(User.GetRequiredUserId(), id, cancellationToken)));
