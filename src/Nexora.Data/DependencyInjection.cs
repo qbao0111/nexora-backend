@@ -85,6 +85,7 @@ public static class DependencyInjection
         services.AddScoped<IProgressService, ScenarioStarService>();
         services.AddScoped<IScenarioStarJobProcessor, ScenarioStarService>();
         services.AddScoped<ICareerGoalService, CareerGoalService>();
+        services.AddScoped<ICareerProfileService, CareerProfileService>();
         services.AddScoped<ISkillProfileService, SkillProfileService>();
         services.AddScoped<ILearningPathService, LearningPathService>();
         services.AddScoped<INextPracticeRecommendationService, NextPracticeRecommendationService>();

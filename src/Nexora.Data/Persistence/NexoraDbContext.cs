@@ -90,9 +90,12 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.ToTable("user_profiles");
             entity.HasKey(profile => profile.Id);
             entity.HasIndex(profile => profile.UserId).IsUnique();
+            entity.HasIndex(profile => profile.PrimaryResumeId);
             entity.Property(profile => profile.DisplayName).HasMaxLength(120);
             entity.HasOne(profile => profile.User).WithOne(user => user.Profile)
                 .HasForeignKey<UserProfile>(profile => profile.UserId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(profile => profile.PrimaryResume).WithMany()
+                .HasForeignKey(profile => profile.PrimaryResumeId).OnDelete(DeleteBehavior.SetNull);
         });
         builder.Entity<RefreshToken>(entity =>
         {
