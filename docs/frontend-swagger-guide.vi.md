@@ -158,9 +158,11 @@ Dùng cùng tài khoản/token cho toàn bộ luồng.
 | 1 | POST `/uploads/presign` | `200`; lưu `data.token`, `data.uploadUrl`. |
 | 2 | PUT `/uploads/{token}` | Gửi raw file; `204`, không có JSON body. |
 | 3 | POST `/resumes` | `201`; lưu `data.id` thành resumeId. |
-| 4 | POST `/job-descriptions` | `201`; lưu `data.id` thành jobDescriptionId. Trong flow phối hợp, gửi cùng `Idempotency-Key` với bước 5. |
-| 5 | POST `/resume-analyses` | Có Idempotency-Key; `201`; lưu analysisId. |
-| 6 | GET `/resume-analyses/{id}` | `200`; poll đến `completed` hoặc `failed`. |
+| 4 | GET `/resumes` | `200`; danh sách CV của chính user, mới nhất trước. |
+| 5 | PUT `/me/primary-resume` | Gửi `{ "resumeId": "..." }` sau khi CV `ready`; dùng `{ "resumeId": null }` để bỏ chọn. |
+| 6 | POST `/job-descriptions` | `201`; lưu `data.id` thành jobDescriptionId. Trong flow phối hợp, gửi cùng `Idempotency-Key` với bước 7. |
+| 7 | POST `/resume-analyses` | Có Idempotency-Key; `201`; lưu analysisId. |
+| 8 | GET `/resume-analyses/{id}` | `200`; poll đến `completed` hoặc `failed`. |
 
 Các route ngắn trong bảng đều có prefix `/api/v1`.
 
@@ -209,6 +211,16 @@ Nếu cần dùng Postman: PUT `http://localhost:5088{uploadUrl}`, Body → bina
 ```
 
 Thay placeholder bằng token thật. CV ban đầu là `uploaded`; Worker sẽ xử lý bằng extractor thật cho PDF/DOCX. Poll `GET /api/v1/resumes/{id}`: `uploaded → extracting → ready`; tài liệu cần fallback sẽ hiện `ocr_fallback`; lỗi cuối là `failed` kèm `errorCode = RESUME_EXTRACTION_FAILED` và thông báo an toàn.
+
+### Bước 3b — Danh sách và CV chính
+
+`GET /api/v1/resumes` trả `data` là mảng CV của tài khoản đang đăng nhập, sắp xếp `createdAt` giảm dần rồi `id` giảm dần. Chỉ có metadata an toàn, không có `extractedText`, `structuredProfile` hoặc `storageKey`. Khi CV đã `ready`, chọn bằng:
+
+```json
+{ "resumeId": "UUID_CV" }
+```
+
+Gửi `PUT /api/v1/me/primary-resume`. Muốn bỏ chọn CV chính, gửi `{ "resumeId": null }`; kỳ vọng `200` với `data: null`. CV khác user trả `404`, CV chưa `ready` trả `409` với mã `RESUME_NOT_READY`.
 
 ### Bước 4 — Tạo JD
 

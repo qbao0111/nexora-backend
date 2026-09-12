@@ -154,6 +154,30 @@ public sealed partial class PracticeService(
         return MapResume(resume);
     }
 
+    public async Task<IReadOnlyList<ResumeView>> GetResumesAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var query = dbContext.Resumes.AsNoTracking()
+            .Where(item => item.UserId == userId)
+            .Select(item => new ResumeView(
+                item.Id,
+                item.StoredFile.FileName,
+                item.StoredFile.ContentType,
+                item.StoredFile.Size,
+                item.Status,
+                item.CreatedAt,
+                item.Status == PracticeValues.Failed ? "RESUME_EXTRACTION_FAILED" : null,
+                item.Status == PracticeValues.Failed ? ResumeExtractionFailureMessage : null));
+
+        return dbContext.Database.IsNpgsql()
+            ? await query.OrderByDescending(item => item.CreatedAt)
+                .ThenByDescending(item => item.Id)
+                .ToArrayAsync(cancellationToken)
+            : (await query.ToArrayAsync(cancellationToken))
+                .OrderByDescending(item => item.CreatedAt)
+                .ThenByDescending(item => item.Id)
+                .ToArray();
+    }
+
     private async Task WaitForResumeReadyAsync(Guid resumeId, CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < 30; attempt++)

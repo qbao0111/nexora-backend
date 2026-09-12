@@ -10,13 +10,13 @@ namespace Nexora.Api.Controllers;
 public sealed class CareerProfileController(ICareerProfileService careerProfileService) : ControllerBase
 {
     [HttpPut("primary-resume")]
-    public async Task<ActionResult<ApiResponse<PrimaryResumeResponse>>> SetPrimaryResume(
+    public async Task<ActionResult<ApiResponse<PrimaryResumeResponse?>>> SetPrimaryResume(
         SetPrimaryResumeRequest request,
         CancellationToken cancellationToken)
     {
         var primaryResume = await careerProfileService.SetPrimaryResumeAsync(
             User.GetRequiredUserId(), request.ResumeId, cancellationToken);
-        return Ok(new ApiResponse<PrimaryResumeResponse>(Map(primaryResume)));
+        return Ok(new ApiResponse<PrimaryResumeResponse?>(primaryResume is null ? null : Map(primaryResume)));
     }
 
     [HttpGet("career-profile")]
