@@ -401,6 +401,39 @@ public sealed class AiContractReliabilityTests
     }
 
     [Fact]
+    public async Task InsufficientAnswerFailsValidationBeforeAiEvaluation()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 5);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var interviewId = await StartInterviewAsync(client, "technical", "short-answer-validation");
+        await ProcessJobsAsync(factory);
+        var questionId = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/answers")
+        {
+            Content = JsonContent.Create(new { questionId, content = "idk", durationSeconds = 30 })
+        };
+        request.Headers.Add("Idempotency-Key", "short-answer-validation");
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("VALIDATION_ERROR", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("AI_OUTPUT_INVALID", body, StringComparison.Ordinal);
+        Assert.Equal(0, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(0, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
+    }
+
+    [Fact]
     public async Task NullRubricItemMapsToSafe503AndDoesNotPersistAnswer()
     {
         var aiProvider = new TestAiProvider();

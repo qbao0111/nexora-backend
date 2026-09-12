@@ -37,6 +37,7 @@ public sealed partial class PracticeService(
     private static string ProfileSchemaVersion => AiOperations.ResumeProfile.SchemaVersion;
     private const string RubricVersion = "interview-rubric-star-v2";
     private const string Disclaimer = "Điểm số chỉ là ước lượng phục vụ coaching, không phải đánh giá tuyển dụng.";
+    private const int MinimumAnswerWordCount = 2;
     private const int MinimumReportAnswers = 2;
     private const string ResumeExtractionFailureMessage = "Không thể đọc nội dung CV. Vui lòng thử lại với file PDF hoặc DOCX rõ hơn.";
     private static readonly JsonDocument EmptySchema = JsonDocument.Parse("{}");
@@ -433,10 +434,12 @@ public sealed partial class PracticeService(
     public async Task<AnswerResult> SubmitAnswerAsync(
         Guid userId, Guid interviewId, Guid questionId, string content, int? durationSeconds, string idempotencyKey, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(content) || content.Trim().Length > 12_000 || durationSeconds is < 0 or > 7200)
+        var normalizedContent = content?.Trim() ?? string.Empty;
+        var answerWordCount = normalizedContent.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+        if (normalizedContent.Length is 0 or > 12_000 || answerWordCount < MinimumAnswerWordCount || durationSeconds is < 0 or > 7200)
             throw Validation("Câu trả lời không hợp lệ.");
         var key = RequireKey(idempotencyKey);
-        var fingerprint = Fingerprint(interviewId, questionId, content.Trim(), durationSeconds);
+        var fingerprint = Fingerprint(interviewId, questionId, normalizedContent, durationSeconds);
         var prior = await FindIdempotentAsync(userId, "interview.answer", key, fingerprint, cancellationToken);
         if (prior is not null) return await MapExistingAnswerAsync(userId, interviewId, prior.ResourceId, cancellationToken);
 
@@ -488,7 +491,7 @@ public sealed partial class PracticeService(
             snapshot.InterviewType,
             snapshot.JobDescription?.Content,
             question.Content,
-            content.Trim(),
+            normalizedContent,
             profile,
             question.Sequence,
             isFollowUp,
@@ -520,7 +523,7 @@ public sealed partial class PracticeService(
                     userId,
                     ExpectedStar: isBehavioral,
                     Metadata: metadata,
-                    CandidateAnswer: content.Trim()),
+                    CandidateAnswer: normalizedContent),
                 cancellationToken);
             evaluation = evalResult.Value;
 
@@ -570,7 +573,7 @@ public sealed partial class PracticeService(
             UserId = userId,
             InterviewSessionId = session.Id,
             QuestionId = question.Id,
-            Content = content.Trim(),
+            Content = normalizedContent,
             DurationSeconds = durationSeconds,
             Evaluation = JsonSerializer.Serialize(evaluation, JsonOptions),
             CreatedAt = now
