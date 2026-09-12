@@ -42,6 +42,13 @@ public sealed class ScenarioV2ApiTests
             Assert.Equal("banking", item.GetProperty("categorySlug").GetString());
             Assert.Equal("hard", item.GetProperty("difficulty").GetString());
         });
+
+        using var searchResponse = await client.GetAsync("/api/v1/scenarios?search=BANKING");
+        Assert.Equal(HttpStatusCode.OK, searchResponse.StatusCode);
+        var searchPage = await DataAsync(searchResponse);
+        Assert.Equal(1, searchPage.GetProperty("total").GetInt32());
+        var searchItem = Assert.Single(searchPage.GetProperty("items").EnumerateArray());
+        Assert.Equal("banking", searchItem.GetProperty("categorySlug").GetString());
     }
 
     [Fact]

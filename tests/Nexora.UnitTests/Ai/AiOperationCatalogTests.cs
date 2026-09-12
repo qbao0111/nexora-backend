@@ -342,6 +342,54 @@ public sealed class AiOperationCatalogTests
         Assert.Contains("debugged the API", result.NormalizedValue.ImprovedAnswer);
     }
 
+    [Theory]
+    [InlineData("khom")]
+    [InlineData("không biết")]
+    [InlineData("em chưa rõ")]
+    [InlineData("idk")]
+    [InlineData("I don't know")]
+    public void InterviewEvaluateAllowsEmptyStrengthsWhenNoPositiveEvidenceIsGrounded(string candidateAnswer)
+    {
+        var raw = new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 20, "No positive evidence is demonstrated in the answer."),
+                new RubricScore("structure", 10, "No answer structure is demonstrated."),
+                new RubricScore("completeness", 10, "The answer provides no supporting detail."),
+                new RubricScore("clarity", 20, "The answer is too limited to demonstrate clarity.")
+            ],
+            "No positive evidence was demonstrated.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            [],
+            ["Add one concrete example from your experience."],
+            "Keep the same answer and add concrete evidence if available.");
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            raw,
+            new AiOperationContext("coaching-no-positive-evidence", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.True(result.IsValid, result.FailureReason);
+        Assert.NotNull(result.NormalizedValue);
+        var normalized = result.NormalizedValue!;
+        Assert.NotNull(normalized.Strengths);
+        Assert.Empty(normalized.Strengths!);
+        Assert.All(normalized.Scores, score => Assert.InRange(score.Score, 0, 59));
+        Assert.NotNull(normalized.Improvements);
+        Assert.Contains("Add", Assert.Single(normalized.Improvements!), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildRepairInstructionsForUngroundedStrengthsAllowsExplicitEmptyCollection()
+    {
+        var validation = AiValidationResult<AnswerEvaluation>.Failure("interview.strengths_ungrounded", "semantic", repairable: true);
+
+        var repairInstructions = AiOperations.InterviewEvaluate.BuildRepairInstructions(validation, "Evaluate the interview answer.");
+
+        Assert.Contains("\"strengths\": []", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("below 60", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("Do not invent", repairInstructions, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void InterviewEvaluateRejectsFabricatedImprovedAnswerFacts()
     {

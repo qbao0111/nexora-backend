@@ -118,6 +118,7 @@ public static class CanonicalRubricValidator
 
 public static class AnswerCoachingValidator
 {
+    private const int NoPositiveEvidenceScoreThreshold = 60;
     private static readonly HashSet<string> StopWords = new(StringComparer.OrdinalIgnoreCase)
     {
         "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in", "is", "it", "of", "on", "or", "that", "the", "to", "was", "with",
@@ -188,13 +189,19 @@ public static class AnswerCoachingValidator
         IReadOnlyCollection<string>? rawStrengths,
         IReadOnlyCollection<string>? rawImprovements,
         string? rawImprovedAnswer,
-        string? candidateAnswer)
+        string? candidateAnswer,
+        IReadOnlyCollection<RubricScore> rubricScores)
     {
-        var strengths = NormalizeList(rawStrengths, "strengths", out var strengthsFailure);
+        // An empty strengths collection is an explicit absence signal only when
+        // every rubric score is below the existing 60-point coaching threshold.
+        // Non-empty strengths continue through the grounding checks below.
+        var allowEmptyStrengths = rubricScores.Count > 0 &&
+            rubricScores.All(score => score.Score < NoPositiveEvidenceScoreThreshold);
+        var strengths = NormalizeList(rawStrengths, "strengths", allowEmptyStrengths, out var strengthsFailure);
         if (strengths is null)
             return AiValidationResult<AnswerCoachingOutput>.Failure(strengthsFailure!, "semantic", repairable: true);
 
-        var improvements = NormalizeList(rawImprovements, "improvements", out var improvementsFailure);
+        var improvements = NormalizeList(rawImprovements, "improvements", allowEmpty: false, out var improvementsFailure);
         if (improvements is null)
             return AiValidationResult<AnswerCoachingOutput>.Failure(improvementsFailure!, "semantic", repairable: true);
 
@@ -243,10 +250,11 @@ public static class AnswerCoachingValidator
     private static string[]? NormalizeList(
         IReadOnlyCollection<string>? values,
         string name,
+        bool allowEmpty,
         out string? failure)
     {
         failure = null;
-        if (values is null || values.Count is < 1 or > 3)
+        if (values is null || values.Count > 3 || (!allowEmpty && values.Count < 1))
         {
             failure = $"interview.{name}_invalid";
             return null;
@@ -961,7 +969,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
               }
             },
             "feedback": { "type": "string" },
-            "strengths": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+            "strengths": { "type": "array", "minItems": 0, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
             "improvements": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
             "improvedAnswer": { "type": "string", "minLength": 1, "maxLength": 4000 },
             "star": {
@@ -1025,7 +1033,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         Evaluate the candidate's answer against the job and question requirements.
         Set scoreScale to '0-100'.
         Return exactly four rubric scores for criteria: correctness, structure, completeness, clarity (scores 0-100 with non-empty evidence quote).
-        Return 1-3 strengths grounded in the candidate answer, 1-3 concrete actionable improvements, and one improvedAnswer.
+        Return 1-3 strengths grounded in the candidate answer when it demonstrates positive evidence. If no grounded positive evidence is demonstrated, return an empty strengths array, keep rubric scores below 60 where justified, and do not invent a strength. Return 1-3 concrete actionable improvements and one improvedAnswer.
         Keep improvedAnswer faithful to the candidate answer: do not add metrics, achievements, technologies, roles, or experience that are not explicitly present. When evidence is missing, explain what concrete evidence the candidate could add instead of inventing it. Use the answer's facts and language; do not call another AI operation to rewrite it.
         Write in the same language as the interview.
 
@@ -1127,7 +1135,8 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
             raw.Strengths,
             raw.Improvements,
             raw.ImprovedAnswer,
-            context.CandidateAnswer);
+            context.CandidateAnswer,
+            rubricResult.NormalizedValue!);
         if (!coachingResult.IsValid)
             return AiValidationResult<AnswerEvaluation>.Failure(coachingResult.FailureReason!, coachingResult.ValidationStage!, coachingResult.Repairable);
 
@@ -1154,6 +1163,20 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                 Return exactly four rubric items: one each for correctness, structure, completeness, and clarity.
                 Include every criterion exactly once; there must be no duplicate or missing criteria.
                 Each item must have an integer score from 0 to 100 and non-blank evidence grounded in the ORIGINAL candidate answer.
+                Return a completely corrected object matching the schema.
+                """;
+        }
+
+        if (priorResult.FailureReason is "interview.strengths_ungrounded" or "interview.strengths_blank")
+        {
+            return $"""
+                {originalInstructions}
+
+                IMPORTANT COACHING CORRECTION INSTRUCTION:
+                The previous structured evaluation failed validation because its strengths were not grounded in the ORIGINAL candidate answer: '{priorResult.FailureReason}'
+                If the ORIGINAL candidate answer demonstrates no positive evidence, return "strengths": [] (an empty strengths collection), use rubric scores below 60 where justified, and do not invent a strength.
+                If positive evidence is present, return 1-3 strengths only when each one is directly grounded in the ORIGINAL candidate answer.
+                In both cases, return 1-3 concrete actionable improvements and a faithful improvedAnswer. Do not invent facts, experience, technologies, achievements, or metrics.
                 Return a completely corrected object matching the schema.
                 """;
         }

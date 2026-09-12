@@ -40,9 +40,13 @@ public sealed partial class ScenarioStarService(
         if (!string.IsNullOrWhiteSpace(competency)) q = q.Where(item => item.Competency == competency.Trim());
         if (!string.IsNullOrWhiteSpace(search))
         {
-#pragma warning disable CA1862
-            q = q.Where(item => item.Title.ToUpperInvariant().Contains(search.Trim().ToUpperInvariant()) || item.Summary.ToUpperInvariant().Contains(search.Trim().ToUpperInvariant()));
-#pragma warning restore CA1862
+            var pattern = $"%{EscapeLikePattern(search.Trim())}%";
+            const string escapeCharacter = "\\";
+            q = dbContext.Database.IsNpgsql()
+                ? q.Where(item => EF.Functions.ILike(item.Title, pattern, escapeCharacter) ||
+                                  EF.Functions.ILike(item.Summary, pattern, escapeCharacter))
+                : q.Where(item => EF.Functions.Like(item.Title, pattern, escapeCharacter) ||
+                                  EF.Functions.Like(item.Summary, pattern, escapeCharacter));
         }
         var total = await q.CountAsync(cancellationToken);
         var p = Math.Max(1, page ?? 1);
@@ -862,6 +866,10 @@ public sealed partial class ScenarioStarService(
         : aiProvider.ModelVersion.Trim();
 
     private static string Bound(string? value) => string.IsNullOrEmpty(value) ? string.Empty : value[..Math.Min(value.Length, 20_000)];
+    private static string EscapeLikePattern(string value) => value
+        .Replace("\\", "\\\\", StringComparison.Ordinal)
+        .Replace("%", "\\%", StringComparison.Ordinal)
+        .Replace("_", "\\_", StringComparison.Ordinal);
     private static string RequireKey(string value) => string.IsNullOrWhiteSpace(value) || value.Trim().Length > 128
         ? throw new BusinessException("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key hợp lệ là bắt buộc.", BusinessErrorKind.Validation)
         : value.Trim();

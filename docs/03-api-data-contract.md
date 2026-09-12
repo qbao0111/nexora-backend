@@ -378,8 +378,10 @@ key khác payload trả `409 IDEMPOTENCY_CONFLICT`.
 }
 ```
 
-`strengths` và `improvements` có 1–3 phần tử, mỗi phần tử không rỗng và tối đa
-500 ký tự; `improvedAnswer` không rỗng và tối đa 4.000 ký tự. Improvements phải
+`strengths` có 1–3 phần tử có bằng chứng khi câu trả lời thể hiện điểm tích cực,
+hoặc là collection rỗng khi không có bằng chứng tích cực có thể ground và mọi
+điểm rubric đều dưới 60. `improvements` có 1–3 phần tử, mỗi phần tử không rỗng
+và tối đa 500 ký tự; `improvedAnswer` không rỗng và tối đa 4.000 ký tự. Improvements phải
 actionable. Khi có answer gốc, validator yêu cầu coaching có overlap có ý nghĩa
 với answer, giữ nguyên mọi số liệu/công nghệ/thành tích đã có và từ chối facts
 mới (bao gồm số chưa xuất hiện trong answer). Khi thiếu bằng chứng, AI phải
