@@ -220,7 +220,7 @@ public sealed partial class IdentityAuthService(
         return await MapUserAsync(user);
     }
 
-    public async Task<UserProfileView> UpdateProfileAsync(
+    public async Task<AuthenticatedUser> UpdateProfileAsync(
         Guid userId,
         string? displayName,
         int? yearsOfExperience,
@@ -248,11 +248,7 @@ public sealed partial class IdentityAuthService(
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
-        return new UserProfileView(
-            user.Id,
-            user.Email ?? string.Empty,
-            user.Profile?.DisplayName,
-            user.Profile?.YearsOfExperience);
+        return await MapUserAsync(user);
     }
 
     public async Task ChangePasswordAsync(Guid userId, string currentPassword, string newPassword, CancellationToken cancellationToken)
@@ -424,7 +420,7 @@ public sealed partial class IdentityAuthService(
     }
 
     private async Task<AuthenticatedUser> MapUserAsync(ApplicationUser user) =>
-        new(user.Id, user.Email ?? string.Empty, user.Profile?.DisplayName, (await userManager.GetRolesAsync(user)).ToArray());
+        new(user.Id, user.Email ?? string.Empty, user.Profile?.DisplayName, (await userManager.GetRolesAsync(user)).ToArray(), user.Profile?.YearsOfExperience);
     private static string HashToken(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token ?? string.Empty)));
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
     private static string? NormalizeDisplayName(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

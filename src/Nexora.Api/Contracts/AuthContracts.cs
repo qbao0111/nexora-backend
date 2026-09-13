@@ -42,8 +42,13 @@ public sealed class ChangePasswordRequest
     [Required, MaxLength(128)] public string CurrentPassword { get; init; } = string.Empty;
     [Required, MinLength(8), MaxLength(128)] public string NewPassword { get; init; } = string.Empty;
 }
-public sealed record UserResponse(Guid Id, string Email, string? DisplayName, IReadOnlyCollection<string> Roles, BillingSummaryResponse? Billing = null);
-public sealed record UserProfileResponse(Guid UserId, string Email, string? DisplayName, int? YearsOfExperience);
+public sealed record UserResponse(
+    Guid Id,
+    string Email,
+    string? DisplayName,
+    IReadOnlyCollection<string> Roles,
+    BillingSummaryResponse? Billing = null,
+    int? YearsOfExperience = null);
 public sealed record AuthSessionResponse(string AccessToken, DateTimeOffset AccessTokenExpiresAt, UserResponse User);
 public sealed record RegistrationResponse(string Email, bool VerificationRequired);
 public sealed record EmailVerificationResponse(string Email, bool AlreadyVerified);

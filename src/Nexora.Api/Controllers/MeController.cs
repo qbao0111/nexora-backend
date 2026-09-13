@@ -21,20 +21,16 @@ public sealed class MeController(IAuthService authService, IBillingService billi
     }
 
     [HttpPatch("profile")]
-    public async Task<ActionResult<ApiResponse<UserProfileResponse>>> UpdateProfile(
+    public async Task<ActionResult<ApiResponse<UserResponse>>> UpdateProfile(
         UpdateProfileRequest request,
         CancellationToken cancellationToken)
     {
-        var profile = await authService.UpdateProfileAsync(
+        var user = await authService.UpdateProfileAsync(
             User.GetRequiredUserId(),
             request.DisplayName,
             request.YearsOfExperience,
             cancellationToken);
-        return Ok(new ApiResponse<UserProfileResponse>(new UserProfileResponse(
-            profile.UserId,
-            profile.Email,
-            profile.DisplayName,
-            profile.YearsOfExperience)));
+        return Ok(new ApiResponse<UserResponse>(Map(user)));
     }
 
     [HttpPost("password")]
@@ -54,7 +50,7 @@ public sealed class MeController(IAuthService authService, IBillingService billi
             User.GetRequiredUserId(), Request.Headers["Idempotency-Key"].ToString(), cancellationToken)));
 
     private static UserResponse Map(AuthenticatedUser user, BillingSummaryResponse? billing = null) =>
-        new(user.Id, user.Email, user.DisplayName, user.Roles, billing);
+        new(user.Id, user.Email, user.DisplayName, user.Roles, billing, user.YearsOfExperience);
 
     private static BillingSummaryResponse MapBilling(BillingSummary summary) => new(
         summary.Entitlement is null ? null : new EntitlementResponse(

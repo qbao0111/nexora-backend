@@ -84,19 +84,22 @@ public sealed class CareerProfileApiTests
             userId = other.UserId
         });
         var displayData = await DataAsync(displayUpdate);
-        Assert.Equal(owner.UserId, displayData.GetProperty("userId").GetGuid());
+        Assert.Equal(owner.UserId, displayData.GetProperty("id").GetGuid());
         Assert.Equal(owner.Email, displayData.GetProperty("email").GetString());
         Assert.Equal("Updated profile owner", displayData.GetProperty("displayName").GetString());
-        Assert.Null(displayData.GetProperty("yearsOfExperience").GetString());
-        Assert.DoesNotContain("roles", displayData.EnumerateObject().Select(item => item.Name), StringComparer.Ordinal);
+        Assert.Equal(JsonValueKind.Null, displayData.GetProperty("yearsOfExperience").ValueKind);
+        Assert.Equal(JsonValueKind.Array, displayData.GetProperty("roles").ValueKind);
+        Assert.Equal(JsonValueKind.Null, displayData.GetProperty("billing").ValueKind);
 
         using var yearsUpdate = await ownerClient.PatchAsJsonAsync(
             "/api/v1/me/profile", new { yearsOfExperience = 2 });
         var yearsData = await DataAsync(yearsUpdate);
-        Assert.Equal(owner.UserId, yearsData.GetProperty("userId").GetGuid());
+        Assert.Equal(owner.UserId, yearsData.GetProperty("id").GetGuid());
         Assert.Equal(owner.Email, yearsData.GetProperty("email").GetString());
         Assert.Equal("Updated profile owner", yearsData.GetProperty("displayName").GetString());
         Assert.Equal(2, yearsData.GetProperty("yearsOfExperience").GetInt32());
+        Assert.Equal(JsonValueKind.Array, yearsData.GetProperty("roles").ValueKind);
+        Assert.Equal(JsonValueKind.Null, yearsData.GetProperty("billing").ValueKind);
 
         using var otherProfile = await otherClient.GetAsync("/api/v1/me/career-profile");
         var otherData = await DataAsync(otherProfile);
