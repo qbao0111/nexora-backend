@@ -121,6 +121,29 @@ Candidate browser -> Nexora frontend -> Nexora .NET API -> PostgreSQL
 | FR-INT-04 | Report hiển thị rubric scores, evidence từ transcript, strengths, gaps và action plan. | Must | Report không chỉ có điểm tổng; rubric fields bắt buộc. |
 | FR-INT-05 | Audio/video và speech metrics là opt-in; consent được lưu trước khi bắt đầu recording. | Could | Không tạo recording khi chưa consent. |
 
+#### Candidate loop extensions
+
+The first three free primary topics are server-owned and deterministic. Q1 is
+`self_introduction`; Q2 reflects the selected interview type; Q3 keeps that
+mode or uses the available JD/CV targeting fallback defined by the interview
+topic policy. The selected mode must be meaningfully exposed before the free
+question limit, and the AI provider never selects the topic.
+
+| ID | Requirement | Priority | Verification |
+| --- | --- | --- | --- |
+| FR-INT-06 | `POST /interviews` may resolve missing role, seniority, JD and resume context from an owner Career Goal and Primary Resume; the resolved snapshot is stored on the session. | Must | Goal ownership, ready-resume/JD validation and immutable historical snapshot tests. |
+| FR-INT-07 | `POST /interviews/{id}/practice-again` creates a new owner-scoped interview from a completed source report, optionally focused on a source question, rubric weakness or recommendation. | Must | New ID, source/report immutability, canonical focus and idempotency tests. |
+| FR-DASH-02 | Owner-scoped interview, resume-analysis and Job Description history reads provide bounded deterministic pagination or navigation without raw answer/CV/provider payloads. | Must | Auth, isolation, ordering, pagination and no-leak tests. |
+
+Career Goal and Primary Resume are context sources, not replacements for their
+domain resources. Explicit start fields remain backward compatible and may
+override goal defaults only after owner/ready validation. Practice-again uses a
+new interview quota reservation under the normal ledger rules; it never refunds
+or mutates the source session/report. Recommendation responses may include
+nullable actionable `practice_again` metadata (`sourceInterviewId`,
+`sourceQuestionId`, `focusTopic`, `suggestedInterviewType` and canonical reason)
+so the client does not reconstruct domain joins.
+
 ### 6.5 Practice, dashboard and support
 
 | ID | Requirement | Priority | Verification |

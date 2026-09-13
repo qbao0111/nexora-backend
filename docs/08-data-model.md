@@ -89,15 +89,29 @@ while `followup` questions require `parent_question_id` pointing to an earlier
 question in the same session. A follow-up keeps the parent's `topic`; malformed
 kind, topic or parent relationships are rejected before mapping or evaluation.
 
-The reserved free primary topics are ordered as `self_introduction`,
-`behavioral_star`, then `motivation_role_fit`. A7 generates exactly these
-primaries for the free portion; after Q3 the session remains `active` and its
+The free primary topics are selected by the deterministic
+`FreePrimaryTopicForSequence(interviewType, sequence, hasResume, hasJobDescription)`
+policy. Q1 is always `self_introduction`; Q2 is the selected mode (with
+`behavioral` mapped to `behavioral_star`); Q3 keeps the selected mode, with
+technical sessions preferring `jd_targeted`, then `cv_targeted`, when context
+exists, and behavioral sessions using `motivation_role_fit` after the Q2 STAR
+probe. The `self_introduction` mode uses `motivation_role_fit` for Q2 and
+prefers JD/CV targeting for Q3. After Q3 the session remains `active` and its
 continuation policy exposes finish-now versus upgrade-and-continue without
 adding a `paywalled` session state. A paid continuation stays in the same
 session and creates a server-selected paid `primary` topic; a `followup` is
 created only when a paid behavioral evaluation has genuine missing STAR
 evidence, with an explicit parent. The question-limit feature is a policy
 snapshot and is separate from the interview session quota/reservation ledger.
+
+Interview sessions may persist nullable `CareerGoalId` plus the resolved role,
+seniority, resume and job-description references used at start time. Practice-
+again sessions additionally persist nullable `SourceInterviewId`,
+`SourceQuestionId`, `PracticeReason` (`repeat_question`, `rubric_weakness`,
+`recommendation` or `manual`) and canonical `FocusTopic`. These are traceability
+links only: the source interview/report remains immutable, and restrictive
+foreign keys prevent accidental history deletion. Privacy deletion clears the
+links inside its explicit deletion transaction before removing the sessions.
 
 ### Usage event shape
 

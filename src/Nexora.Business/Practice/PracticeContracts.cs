@@ -40,17 +40,53 @@ public static class InterviewQuestionValues
         string.Equals(kind, Primary, StringComparison.Ordinal) ||
         string.Equals(kind, Followup, StringComparison.Ordinal);
 
-    /// <summary>
-    /// Canonical topics reserved for the first three free primary questions.
-    /// A6 defines the contract; A7 owns when these questions are generated.
-    /// </summary>
-    public static string PrimaryTopicForSequence(int sequence) => sequence switch
+    public static bool IsSupportedInterviewType(string? interviewType) => interviewType?.Trim().ToLowerInvariant() switch
     {
-        1 => SelfIntroduction,
-        2 => BehavioralStar,
-        3 => MotivationRoleFit,
-        _ => SelfIntroduction
+        "technical" or "behavioral" or "scenario" or "cv_targeted" or "jd_targeted" or
+        "motivation_role_fit" or "self_introduction" => true,
+        _ => false
     };
+
+    /// <summary>
+    /// Selects the canonical topic for one of the first three free primary
+    /// questions. The server owns this deterministic policy; the AI provider
+    /// only generates content for the selected topic.
+    /// </summary>
+    public static string FreePrimaryTopicForSequence(
+        string interviewType,
+        int sequence,
+        bool hasResume,
+        bool hasJobDescription)
+    {
+        var normalizedType = interviewType.Trim().ToLowerInvariant();
+        return sequence switch
+        {
+            1 => SelfIntroduction,
+            2 => normalizedType switch
+            {
+                "technical" => Technical,
+                "behavioral" => BehavioralStar,
+                "scenario" => Scenario,
+                "cv_targeted" => CvTargeted,
+                "jd_targeted" => JdTargeted,
+                "motivation_role_fit" => MotivationRoleFit,
+                "self_introduction" => MotivationRoleFit,
+                _ => SelfIntroduction
+            },
+            3 => normalizedType switch
+            {
+                "technical" => hasJobDescription ? JdTargeted : hasResume ? CvTargeted : Technical,
+                "behavioral" => MotivationRoleFit,
+                "scenario" => Scenario,
+                "cv_targeted" => CvTargeted,
+                "jd_targeted" => JdTargeted,
+                "motivation_role_fit" => MotivationRoleFit,
+                "self_introduction" => hasJobDescription ? JdTargeted : hasResume ? CvTargeted : Behavioral,
+                _ => SelfIntroduction
+            },
+            _ => SelfIntroduction
+        };
+    }
 
     /// <summary>
     /// Maps the current interview type to a stable topic for the first question
@@ -91,6 +127,26 @@ public static class InterviewContinuationValues
     public const string InProgress = "in_progress";
     public const string UpgradeRequired = "upgrade_required";
     public const string MaxQuestionsReached = "max_questions_reached";
+}
+
+public static class InterviewPracticeValues
+{
+    public const string RepeatQuestion = "repeat_question";
+    public const string RubricWeakness = "rubric_weakness";
+    public const string Recommendation = "recommendation";
+    public const string Manual = "manual";
+
+    public static bool IsSupportedReason(string? reason) => reason switch
+    {
+        RepeatQuestion or RubricWeakness or Recommendation or Manual => true,
+        _ => false
+    };
+
+    public static bool IsSupportedRubricFocus(string? focus) => focus?.Trim().ToLowerInvariant() switch
+    {
+        "correctness" or "structure" or "completeness" or "clarity" => true,
+        _ => false
+    };
 }
 
 public enum ResumeAnalysisMode
@@ -368,12 +424,58 @@ public sealed record ResumeAnalysisView(
 public sealed record DevelopmentResumeAnalysisView(ResumeView Resume, JobDescriptionView JobDescription, ResumeAnalysisView Analysis);
 
 public sealed record StartInterviewCommand(
+    string? Role,
+    string? Seniority,
+    string InterviewType,
+    string Difficulty,
+    Guid? ResumeId,
+    Guid? JobDescriptionId,
+    Guid? CareerGoalId = null);
+
+public sealed record InterviewHistoryPage(
+    IReadOnlyCollection<InterviewHistoryItem> Items,
+    int Page,
+    int PageSize,
+    int TotalCount,
+    bool HasNextPage);
+
+public sealed record InterviewHistoryItem(
+    Guid Id,
+    string Status,
     string Role,
     string Seniority,
     string InterviewType,
     string Difficulty,
-    Guid? ResumeId,
-    Guid? JobDescriptionId);
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset? CompletedAt,
+    int AnsweredQuestionCount,
+    int IssuedQuestionCount,
+    bool ReportAvailable,
+    Guid? CareerGoalId,
+    Guid? SourceInterviewId,
+    Guid? SourceQuestionId,
+    string? PracticeReason,
+    string? FocusTopic);
+
+public sealed record ResumeAnalysisHistoryPage(
+    IReadOnlyCollection<ResumeAnalysisHistoryItem> Items,
+    int Page,
+    int PageSize,
+    int TotalCount,
+    bool HasNextPage);
+
+public sealed record ResumeAnalysisHistoryItem(
+    Guid Id,
+    Guid ResumeId,
+    string Mode,
+    string Status,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? CompletedAt,
+    ResumeAnalysisContextView? Context,
+    string? ErrorCode);
+
+public sealed record PracticeAgainCommand(Guid? QuestionId, string? Focus, string? Reason = null);
 
 public sealed record QuestionView(
     Guid Id,
@@ -456,10 +558,15 @@ public interface IPracticeService
     Task<IReadOnlyList<ResumeView>> GetResumesAsync(Guid userId, CancellationToken cancellationToken);
     Task<ResumeView> GetResumeAsync(Guid userId, Guid resumeId, CancellationToken cancellationToken);
     Task<JobDescriptionView> CreateJobDescriptionAsync(Guid userId, string title, string content, CancellationToken cancellationToken, string? idempotencyKey = null);
+    Task<IReadOnlyList<JobDescriptionView>> GetJobDescriptionsAsync(Guid userId, CancellationToken cancellationToken);
+    Task<JobDescriptionView> GetJobDescriptionAsync(Guid userId, Guid jobDescriptionId, CancellationToken cancellationToken);
     Task<ResumeAnalysisView> StartResumeAnalysisAsync(Guid userId, StartResumeAnalysisCommand command, string idempotencyKey, CancellationToken cancellationToken);
     Task<ResumeAnalysisView> GetResumeAnalysisAsync(Guid userId, Guid analysisId, CancellationToken cancellationToken);
+    Task<ResumeAnalysisHistoryPage> GetResumeAnalysisHistoryAsync(Guid userId, int page, int pageSize, CancellationToken cancellationToken);
     Task<InterviewView> StartInterviewAsync(Guid userId, StartInterviewCommand command, string idempotencyKey, CancellationToken cancellationToken);
+    Task<InterviewHistoryPage> GetInterviewHistoryAsync(Guid userId, int page, int pageSize, CancellationToken cancellationToken);
     Task<InterviewView> GetInterviewAsync(Guid userId, Guid interviewId, CancellationToken cancellationToken);
+    Task<InterviewView> PracticeAgainAsync(Guid userId, Guid interviewId, PracticeAgainCommand command, string idempotencyKey, CancellationToken cancellationToken);
     Task<AnswerResult> SubmitAnswerAsync(Guid userId, Guid interviewId, Guid questionId, string content, int? durationSeconds, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> ContinueInterviewAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> CompleteInterviewAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);

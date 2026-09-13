@@ -271,6 +271,15 @@ public sealed partial class PrivacyService(
         dbContext.InterviewReports.RemoveRange(dbContext.InterviewReports.Where(item => item.UserId == request.UserId));
         dbContext.InterviewAnswers.RemoveRange(dbContext.InterviewAnswers.Where(item => item.UserId == request.UserId));
         dbContext.InterviewQuestions.RemoveRange(dbContext.InterviewQuestions.Where(item => sessionIds.Contains(item.InterviewSessionId)));
+        // Practice-again sessions use restrictive self-references so normal
+        // history cannot be deleted accidentally. Clear those links first as
+        // part of the user's explicit privacy deletion workflow.
+        foreach (var session in sessions)
+        {
+            session.CareerGoalId = null;
+            session.SourceInterviewId = null;
+            session.SourceQuestionId = null;
+        }
         dbContext.InterviewSessions.RemoveRange(sessions);
         dbContext.ResumeAnalyses.RemoveRange(dbContext.ResumeAnalyses.Where(item => item.UserId == request.UserId));
         dbContext.LearningPathActivities.RemoveRange(dbContext.LearningPathActivities.Where(item => learningPathIds.Contains(item.LearningPathId)));

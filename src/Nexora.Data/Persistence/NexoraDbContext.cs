@@ -486,16 +486,24 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.ToTable("interview_sessions");
             entity.HasKey(session => session.Id);
             entity.HasIndex(session => new { session.UserId, session.CreatedAt });
+            entity.HasIndex(session => session.CareerGoalId);
+            entity.HasIndex(session => session.SourceInterviewId);
+            entity.HasIndex(session => session.SourceQuestionId);
             entity.HasIndex(session => session.ReservationEventId).IsUnique();
             entity.Property(session => session.Role).HasMaxLength(160).IsRequired();
             entity.Property(session => session.Seniority).HasMaxLength(40).IsRequired();
             entity.Property(session => session.InterviewType).HasMaxLength(40).IsRequired();
             entity.Property(session => session.Difficulty).HasMaxLength(40).IsRequired();
             entity.Property(session => session.Status).HasMaxLength(20).IsRequired();
+            entity.Property(session => session.PracticeReason).HasMaxLength(40);
+            entity.Property(session => session.FocusTopic).HasMaxLength(80);
             entity.Property(session => session.Version).IsConcurrencyToken();
             entity.HasOne(session => session.User).WithMany().HasForeignKey(session => session.UserId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(session => session.Resume).WithMany().HasForeignKey(session => session.ResumeId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(session => session.JobDescription).WithMany().HasForeignKey(session => session.JobDescriptionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<CareerGoal>().WithMany().HasForeignKey(session => session.CareerGoalId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<InterviewSession>().WithMany().HasForeignKey(session => session.SourceInterviewId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<InterviewQuestion>().WithMany().HasForeignKey(session => session.SourceQuestionId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(session => session.ReservationEvent).WithOne().HasForeignKey<InterviewSession>(session => session.ReservationEventId).OnDelete(DeleteBehavior.Restrict);
         });
         builder.Entity<InterviewQuestion>(entity =>

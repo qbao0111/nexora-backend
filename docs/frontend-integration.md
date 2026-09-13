@@ -99,6 +99,68 @@ Career Goals are user-owned target context shared by future skill, learning and 
 
 For destructive removal, render a separate `Xóa` action from reversible `Lưu trữ` behavior. Confirm with exactly `Bạn có chắc muốn xóa mục tiêu này? Hành động này không thể hoàn tác.` before sending `DELETE /api/v1/career-goals/{id}` with a unique `Idempotency-Key`. Disable only the affected delete action while pending; on `204`, remove the card from local/cache state without a full-list refetch before rendering. If the request fails, restore the card and show the API error. For archive/reactivate PATCH actions, apply the returned Career Goal to local/cache state immediately, mark any other active goal inactive, and revalidate in the background when useful.
 
+## Candidate practice loop navigation
+
+Use these owner-scoped read endpoints to build the history and setup screens:
+
+```text
+GET /api/v1/interviews?page=1&pageSize=20
+GET /api/v1/resume-analyses?page=1&pageSize=20
+GET /api/v1/job-descriptions
+GET /api/v1/job-descriptions/{id}
+```
+
+History lists return summary metadata only and use `{ items, page, pageSize,
+totalCount, hasNextPage }`. They are newest-first with a deterministic ID
+tie-break; `pageSize` is bounded by the server (maximum 100). Do not expect raw
+answers, transcripts, CV extraction or provider payloads in these responses.
+Foreign detail resources return the normal owner-scoped 404.
+
+To start from a Career Goal, send only the goal-backed context that the user
+explicitly chose:
+
+```json
+{
+  "careerGoalId": "...",
+  "interviewType": "technical",
+  "difficulty": "medium"
+}
+```
+
+The server resolves missing role/seniority from the undeleted owner goal,
+missing JD from `targetJobDescriptionId`, and missing resume from the owner's
+Primary Resume. Explicit role, seniority, resume and JD values override those
+defaults only after owner/ready validation. The resolved values are snapshotted
+on the new interview, so editing the goal later cannot rewrite history. A
+`careerGoalId` is optional, so the legacy explicit start body remains supported.
+
+The first three free primary topics are server-owned and deterministic: Q1 is
+`self_introduction`; Q2 reflects the selected mode; Q3 stays in that mode when
+possible, with technical mode preferring JD then CV context and self mode using
+JD then CV then behavioral when context exists. Behavioral Q2 is
+`behavioral_star` and Q3 is `motivation_role_fit`. The free limit and quota
+semantics do not change.
+
+After a completed interview has a report, launch a focused new session with a
+new idempotency key:
+
+```json
+POST /api/v1/interviews/{id}/practice-again
+{
+  "questionId": "...",
+  "focus": "correctness",
+  "reason": "repeat_question"
+}
+```
+
+`questionId` is optional. Valid canonical reasons are `repeat_question`,
+`rubric_weakness`, `recommendation` and `manual`; a question retry derives the
+question's canonical topic, while a rubric focus is resolved from the source
+report/evidence. The result is a new interview with a new normal quota
+reservation and nullable source traceability fields. The source interview and
+report are never mutated. Reusing the same key and payload replays the same
+session; reusing it with a different payload returns `409 IDEMPOTENCY_CONFLICT`.
+
 ## Skill Profile
 
 Call `GET /api/v1/skill-profile` with the user's Bearer token after practice evidence is available. The response is a computed read model with `data.competencies` and optional `data.weaknessSignals`; it is empty with `200` when there is no valid scored evidence. Each competency contains `code`, `name`, `category`, integer `score`, `evidenceCount`, `latestEvidenceAt` and deterministic `sources` summaries. Competencies are sorted by category then code.
@@ -123,7 +185,7 @@ To complete an activity, send PATCH /api/v1/learning-path/activities/{activityId
 
 ## Next Practice Recommendation
 
-Call `GET /api/v1/recommendations/next` with the user's Bearer token after the Learning Path exists. The endpoint is owner-scoped and read-only: it consumes the current user's persisted Learning Path and computed Skill Profile, does not call AI, and does not create or refresh path data. The response is `{ "data": { "reason", "activityType", "resourceId", "estimatedMinutes", "priority" } }`; `resourceId` may be `null` for `external_learning` or other activities without a real resource.
+Call `GET /api/v1/recommendations/next` with the user's Bearer token after the Learning Path exists. The endpoint is owner-scoped and read-only: it consumes the current user's persisted Learning Path and computed Skill Profile, does not call AI, and does not create or refresh path data. The response is `{ "data": { "reason", "activityType", "resourceId", "estimatedMinutes", "priority", "action" } }`; `resourceId` may be `null` for `external_learning` or other activities without a real resource. For an interview recommendation, nullable `action` contains canonical launch metadata such as `type: "practice_again"`, `reason: "recommendation"`, `sourceInterviewId`, `sourceQuestionId`, `focusTopic` and `suggestedInterviewType` when a completed source interview/report is available.
 
 Only pending activities can be selected. Completed/obsolete activities and stale numeric competency gaps are excluded. Selection is deterministic: lower B11 priority, stronger B10 evidence, less recent practice, weaker current score, Learning Path order, then activity ID. Recent practice is the newer of B10 `latestEvidenceAt` and completed B11 activity timestamps for the same competency. If a valid path has no pending candidate, the API returns `200` with `data: null`. If no active goal/path exists, handle the existing B11 `ACTIVE_CAREER_GOAL_REQUIRED`/`LEARNING_PATH_NOT_FOUND` errors. The duration is server-owned: scenario/interview/external learning 20 minutes, star drill/resume improvement 15 minutes.
 
@@ -189,6 +251,10 @@ Only pending activities can be selected. Completed/obsolete activities and stale
    ```
 
    `GET /interviews/{id}` (`200`) moves `starting → active` or `failed`. Render questions only when `active`.
+
+   The legacy explicit body remains valid. To start from a Career Goal, send
+   `careerGoalId` with `interviewType` and `difficulty`; role, seniority, resume
+   and JD may be omitted and are resolved server-side as documented above.
 
 3. For each question, `POST /interviews/{id}/answers` (`200`, new idempotency key):
 

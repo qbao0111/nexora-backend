@@ -100,6 +100,11 @@ public sealed class InterviewSession
     public Guid UserId { get; set; }
     public Guid? ResumeId { get; set; }
     public Guid? JobDescriptionId { get; set; }
+    public Guid? CareerGoalId { get; set; }
+    public Guid? SourceInterviewId { get; set; }
+    public Guid? SourceQuestionId { get; set; }
+    public string? PracticeReason { get; set; }
+    public string? FocusTopic { get; set; }
     public Guid ReservationEventId { get; set; }
     public string Role { get; set; } = string.Empty;
     public string Seniority { get; set; } = string.Empty;

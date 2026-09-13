@@ -1043,7 +1043,7 @@ public sealed class PracticeApiTests
     }
 
     [Fact]
-    public async Task TechnicalInterviewReportIncludesOnlyCanonicalStarQuestion()
+    public async Task TechnicalInterviewReportDoesNotIncludeStarQuestions()
     {
         using var factory = new NexoraApiFactory();
         factory.InitializeDatabase();
@@ -1068,7 +1068,7 @@ public sealed class PracticeApiTests
         Assert.Equal(HttpStatusCode.OK, reportResponse.StatusCode);
         var report = await DataAsync(reportResponse);
 
-        Assert.Equal(1, report.GetProperty("starSummary").GetProperty("applicableAnswers").GetInt32());
+        Assert.Equal(JsonValueKind.Null, report.GetProperty("starSummary").ValueKind);
     }
 
     [Fact]
