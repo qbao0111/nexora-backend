@@ -6,12 +6,45 @@ namespace Nexora.UnitTests.Practice;
 public sealed class InterviewQuestionContractTests
 {
     [Theory]
-    [InlineData(1, InterviewQuestionValues.SelfIntroduction)]
-    [InlineData(2, InterviewQuestionValues.BehavioralStar)]
-    [InlineData(3, InterviewQuestionValues.MotivationRoleFit)]
-    public void FreePrimaryQuestionTopicsAreExplicit(int sequence, string expectedTopic)
+    [InlineData("technical", false, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.Technical, InterviewQuestionValues.Technical)]
+    [InlineData("technical", true, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.Technical, InterviewQuestionValues.CvTargeted)]
+    [InlineData("technical", false, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.Technical, InterviewQuestionValues.JdTargeted)]
+    [InlineData("technical", true, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.Technical, InterviewQuestionValues.JdTargeted)]
+    [InlineData("behavioral", false, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.BehavioralStar, InterviewQuestionValues.MotivationRoleFit)]
+    [InlineData("behavioral", true, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.BehavioralStar, InterviewQuestionValues.MotivationRoleFit)]
+    [InlineData("behavioral", false, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.BehavioralStar, InterviewQuestionValues.MotivationRoleFit)]
+    [InlineData("behavioral", true, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.BehavioralStar, InterviewQuestionValues.MotivationRoleFit)]
+    [InlineData("scenario", false, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.Scenario, InterviewQuestionValues.Scenario)]
+    [InlineData("scenario", true, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.Scenario, InterviewQuestionValues.Scenario)]
+    [InlineData("scenario", false, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.Scenario, InterviewQuestionValues.Scenario)]
+    [InlineData("scenario", true, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.Scenario, InterviewQuestionValues.Scenario)]
+    [InlineData("cv_targeted", false, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.CvTargeted, InterviewQuestionValues.CvTargeted)]
+    [InlineData("cv_targeted", true, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.CvTargeted, InterviewQuestionValues.CvTargeted)]
+    [InlineData("cv_targeted", false, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.CvTargeted, InterviewQuestionValues.CvTargeted)]
+    [InlineData("cv_targeted", true, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.CvTargeted, InterviewQuestionValues.CvTargeted)]
+    [InlineData("jd_targeted", false, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.JdTargeted, InterviewQuestionValues.JdTargeted)]
+    [InlineData("jd_targeted", true, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.JdTargeted, InterviewQuestionValues.JdTargeted)]
+    [InlineData("jd_targeted", false, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.JdTargeted, InterviewQuestionValues.JdTargeted)]
+    [InlineData("jd_targeted", true, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.JdTargeted, InterviewQuestionValues.JdTargeted)]
+    [InlineData("motivation_role_fit", false, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.MotivationRoleFit, InterviewQuestionValues.MotivationRoleFit)]
+    [InlineData("motivation_role_fit", true, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.MotivationRoleFit, InterviewQuestionValues.MotivationRoleFit)]
+    [InlineData("motivation_role_fit", false, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.MotivationRoleFit, InterviewQuestionValues.MotivationRoleFit)]
+    [InlineData("motivation_role_fit", true, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.MotivationRoleFit, InterviewQuestionValues.MotivationRoleFit)]
+    [InlineData("self_introduction", false, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.MotivationRoleFit, InterviewQuestionValues.Behavioral)]
+    [InlineData("self_introduction", true, false, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.MotivationRoleFit, InterviewQuestionValues.CvTargeted)]
+    [InlineData("self_introduction", false, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.MotivationRoleFit, InterviewQuestionValues.JdTargeted)]
+    [InlineData("self_introduction", true, true, InterviewQuestionValues.SelfIntroduction, InterviewQuestionValues.MotivationRoleFit, InterviewQuestionValues.JdTargeted)]
+    public void FreePrimaryQuestionTopicsFollowTheSelectedInterviewTypeAndContext(
+        string interviewType,
+        bool hasResume,
+        bool hasJobDescription,
+        string expectedQ1,
+        string expectedQ2,
+        string expectedQ3)
     {
-        Assert.Equal(expectedTopic, InterviewQuestionValues.PrimaryTopicForSequence(sequence));
+        Assert.Equal(expectedQ1, InterviewQuestionValues.FreePrimaryTopicForSequence(interviewType, 1, hasResume, hasJobDescription));
+        Assert.Equal(expectedQ2, InterviewQuestionValues.FreePrimaryTopicForSequence(interviewType, 2, hasResume, hasJobDescription));
+        Assert.Equal(expectedQ3, InterviewQuestionValues.FreePrimaryTopicForSequence(interviewType, 3, hasResume, hasJobDescription));
     }
 
     [Fact]

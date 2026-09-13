@@ -1,14 +1,24 @@
 using Nexora.Business.Learning;
+using Nexora.Business.Practice;
 using Nexora.Business.Skills;
 
 namespace Nexora.Business.Recommendations;
+
+public sealed record NextPracticeActionView(
+    string Type,
+    string Reason,
+    Guid? SourceInterviewId,
+    Guid? SourceQuestionId,
+    string? FocusTopic,
+    string? SuggestedInterviewType);
 
 public sealed record NextPracticeRecommendationView(
     string Reason,
     string ActivityType,
     Guid? ResourceId,
     int EstimatedMinutes,
-    int Priority);
+    int Priority,
+    NextPracticeActionView? Action = null);
 
 public interface INextPracticeRecommendationService
 {
@@ -112,7 +122,16 @@ public static class NextPracticeRecommendationPolicy
             selected.Activity.Type,
             selected.Activity.ResourceId,
             selected.EstimatedMinutes,
-            selected.Activity.Priority);
+            selected.Activity.Priority,
+            selected.Activity.Type == LearningPathValues.Interview
+                ? new NextPracticeActionView(
+                    "practice_again",
+                    InterviewPracticeValues.Recommendation,
+                    selected.Activity.ResourceId,
+                    null,
+                    FocusTopicForInterviewCompetency(selected.CompetencyCode),
+                    null)
+                : null);
     }
 
     private static Candidate? CreateCandidate(
@@ -184,5 +203,26 @@ public static class NextPracticeRecommendationPolicy
         var separator = code.IndexOf('.', StringComparison.Ordinal);
         if (separator <= 0 || separator == code.Length - 1) return null;
         return SkillProfileTaxonomy.CreateCode(code[..separator], code[(separator + 1)..]);
+    }
+
+    private static string? FocusTopicForInterviewCompetency(string? competencyCode)
+    {
+        if (string.IsNullOrWhiteSpace(competencyCode)) return null;
+        var separator = competencyCode.IndexOf('.', StringComparison.Ordinal);
+        if (separator < 0 || separator == competencyCode.Length - 1) return null;
+        var focus = competencyCode[(separator + 1)..].ToLowerInvariant();
+        return focus switch
+        {
+            InterviewQuestionValues.SelfIntroduction or
+            InterviewQuestionValues.BehavioralStar or
+            InterviewQuestionValues.MotivationRoleFit or
+            InterviewQuestionValues.Technical or
+            InterviewQuestionValues.Behavioral or
+            InterviewQuestionValues.CvTargeted or
+            InterviewQuestionValues.JdTargeted or
+            InterviewQuestionValues.Scenario or
+            "correctness" or "structure" or "completeness" or "clarity" => focus,
+            _ => null
+        };
     }
 }

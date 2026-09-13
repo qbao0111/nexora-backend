@@ -20,6 +20,13 @@ public sealed class RecommendationsController(INextPracticeRecommendationService
                 recommendation.ActivityType,
                 recommendation.ResourceId,
                 recommendation.EstimatedMinutes,
-                recommendation.Priority)));
+                recommendation.Priority,
+                recommendation.Action is null ? null : new NextPracticeActionResponse(
+                    recommendation.Action.Type,
+                    recommendation.Action.Reason,
+                    recommendation.Action.SourceInterviewId,
+                    recommendation.Action.SourceQuestionId,
+                    recommendation.Action.FocusTopic,
+                    recommendation.Action.SuggestedInterviewType))));
     }
 }

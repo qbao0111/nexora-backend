@@ -258,6 +258,38 @@ Nếu `201`, lưu `data.id`.
 
 Với Development, kết quả phân tích được tạo bởi Gemini thật và nhận text trích xuất thật từ PDF/DOCX. PDF scan hoặc tài liệu có text local không đủ chất lượng sẽ tự vào `ocr_fallback`; Gemini trả text + profile trong một lần document-understanding. Nếu fallback vẫn không usable, dừng ở `failed` và hiển thị lỗi an toàn.
 
+## Practice loop navigation contract
+
+Sau khi co Career Goal, FE co the goi `POST /api/v1/interviews` voi
+`careerGoalId`, `interviewType` va `difficulty`; role, seniority, resumeId va
+jobDescriptionId duoc server resolve tu goal/Primary Resume/JD va snapshot vao
+session. Gia tri explicit neu co se override sau khi server kiem tra owner va
+ready. Body start cu van tuong thich.
+
+History owner-scoped:
+
+```text
+GET /api/v1/interviews?page=1&pageSize=20
+GET /api/v1/resume-analyses?page=1&pageSize=20
+GET /api/v1/job-descriptions
+GET /api/v1/job-descriptions/{id}
+```
+
+Ba cau hoi free dau tien dung topic policy server-owned: Q1
+`self_introduction`; Q2 phan anh interviewType; Q3 tiep tuc mode da chon khi
+co the. Free limit va quota khong thay doi.
+
+Voi interview da completed va co report, nut Practice again goi
+`POST /api/v1/interviews/{id}/practice-again` voi Idempotency-Key moi. Body co
+the co `questionId`, `focus` va reason canonical (`repeat_question`,
+`rubric_weakness`, `recommendation`, `manual`). Day la session moi, dat quota
+normal, khong sua interview/report cu. Replay cung key va cung payload tra lai
+session cu; payload khac tra `409 IDEMPOTENCY_CONFLICT`.
+
+Recommendation interview co the tra them `action` nullable voi
+`type=practice_again`, `reason`, `sourceInterviewId`, `sourceQuestionId`,
+`focusTopic` va `suggestedInterviewType` de FE mo dung flow.
+
 ## 8. Test plan, fake payment và interview bằng Gemini
 
 1. `GET /api/v1/plans` → lấy `prices[].id` của gói trả phí từ server.

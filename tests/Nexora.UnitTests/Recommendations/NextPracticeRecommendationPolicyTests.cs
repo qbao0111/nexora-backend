@@ -1,4 +1,5 @@
 using Nexora.Business.Learning;
+using Nexora.Business.Practice;
 using Nexora.Business.Recommendations;
 using Nexora.Business.Skills;
 
@@ -123,6 +124,28 @@ public sealed class NextPracticeRecommendationPolicyTests
             result.Reason);
     }
 
+    [Fact]
+    public void InterviewRecommendationIncludesPracticeAgainActionMetadata()
+    {
+        var sourceInterviewId = Guid.Parse("70000000-0000-0000-0000-000000000099");
+        var result = NextPracticeRecommendationPolicy.Select(
+            Path(Activity(
+                "interview.correctness",
+                "Correctness",
+                priority: 1,
+                id: 1,
+                type: LearningPathValues.Interview,
+                resourceId: sourceInterviewId)),
+            new SkillProfileView([Competency("interview.correctness", "Correctness", 40, 1, OldEvidence)], []));
+
+        Assert.Equal(LearningPathValues.Interview, result!.ActivityType);
+        Assert.NotNull(result.Action);
+        Assert.Equal("practice_again", result.Action!.Type);
+        Assert.Equal(InterviewPracticeValues.Recommendation, result.Action.Reason);
+        Assert.Equal(sourceInterviewId, result.Action.SourceInterviewId);
+        Assert.Equal("correctness", result.Action.FocusTopic);
+    }
+
     [Theory]
     [InlineData(LearningPathValues.Scenario, 20)]
     [InlineData(LearningPathValues.StarDrill, 15)]
@@ -166,14 +189,15 @@ public sealed class NextPracticeRecommendationPolicyTests
         int id,
         int sortOrder = 0,
         string status = LearningPathValues.Pending,
-        string type = LearningPathValues.ResumeImprovement) =>
+        string type = LearningPathValues.ResumeImprovement,
+        Guid? resourceId = null) =>
         new(
             Guid.Parse($"70000000-0000-0000-0000-{id:000000000012}"),
             type,
             title,
             title,
             competencyCode,
-            null,
+            resourceId,
             null,
             priority,
             status,

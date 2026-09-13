@@ -172,4 +172,73 @@ public sealed class NpgsqlQueryTranslationTests
         _ = path.ToQueryString();
         _ = pathCounts.ToQueryString();
     }
+
+    [Fact]
+    public void PracticeHistoryAndRecommendationQueriesTranslateWithNpgsqlWithoutConnectingToAStore()
+    {
+        var options = new DbContextOptionsBuilder<NexoraDbContext>()
+            .UseNpgsql("Host=localhost;Database=translation_probe;Username=probe;Password=probe")
+            .Options;
+        using var db = new NexoraDbContext(options);
+        var userId = Guid.NewGuid();
+
+        var interviews = db.InterviewSessions.AsNoTracking()
+            .Where(item => item.UserId == userId)
+            .Select(item => new
+            {
+                item.Id,
+                item.Status,
+                item.Role,
+                item.Seniority,
+                item.InterviewType,
+                item.Difficulty,
+                item.CreatedAt,
+                item.UpdatedAt,
+                item.CompletedAt,
+                item.CareerGoalId,
+                item.SourceInterviewId,
+                item.SourceQuestionId,
+                item.PracticeReason,
+                item.FocusTopic
+            })
+            .OrderByDescending(item => item.CreatedAt)
+            .ThenByDescending(item => item.Id)
+            .Skip(20)
+            .Take(20);
+        var analyses = db.ResumeAnalyses.AsNoTracking()
+            .Where(item => item.UserId == userId)
+            .Select(item => new
+            {
+                item.Id,
+                item.ResumeId,
+                item.Mode,
+                item.Status,
+                item.CreatedAt,
+                item.CompletedAt,
+                item.ContextJson,
+                item.ErrorCode
+            })
+            .OrderByDescending(item => item.CreatedAt)
+            .ThenByDescending(item => item.Id)
+            .Take(20);
+        var jobDescriptions = db.JobDescriptions.AsNoTracking()
+            .Where(item => item.UserId == userId)
+            .Select(item => new { item.Id, item.Title, item.Content, item.CreatedAt })
+            .OrderByDescending(item => item.CreatedAt)
+            .ThenByDescending(item => item.Id);
+        var completedSource = db.InterviewSessions.AsNoTracking()
+            .Where(item => item.UserId == userId &&
+                           item.Status == PracticeValues.Completed &&
+                           db.InterviewReports.Any(report =>
+                               report.UserId == userId && report.InterviewSessionId == item.Id))
+            .OrderByDescending(item => item.CreatedAt)
+            .ThenByDescending(item => item.Id)
+            .Select(item => new { item.Id, item.InterviewType, item.CreatedAt })
+            .Take(1);
+
+        _ = interviews.ToQueryString();
+        _ = analyses.ToQueryString();
+        _ = jobDescriptions.ToQueryString();
+        _ = completedSource.ToQueryString();
+    }
 }

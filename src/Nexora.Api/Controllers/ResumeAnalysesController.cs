@@ -10,6 +10,34 @@ namespace Nexora.Api.Controllers;
 [ApiController, Authorize, Route("api/v1/resume-analyses")]
 public sealed class ResumeAnalysesController(IPracticeService practiceService) : ControllerBase
 {
+    [HttpGet]
+    public async Task<ActionResult<ApiResponse<ResumeAnalysisHistoryResponse>>> List(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var history = await practiceService.GetResumeAnalysisHistoryAsync(
+            User.GetRequiredUserId(), page, pageSize, cancellationToken);
+        return Ok(new ApiResponse<ResumeAnalysisHistoryResponse>(new ResumeAnalysisHistoryResponse(
+            history.Items.Select(item => new ResumeAnalysisHistoryItemResponse(
+                item.Id,
+                item.ResumeId,
+                item.Mode,
+                item.Status,
+                item.CreatedAt,
+                item.CompletedAt,
+                item.Context is null ? null : new ResumeAnalysisContextResponse(
+                    item.Context.Mode,
+                    item.Context.Industry,
+                    item.Context.TargetRole,
+                    item.Context.Seniority),
+                item.ErrorCode)).ToArray(),
+            history.Page,
+            history.PageSize,
+            history.TotalCount,
+            history.HasNextPage)));
+    }
+
     [HttpPost, EnableRateLimiting(RateLimitPolicies.AiJob)]
     public async Task<ActionResult<ApiResponse<ResumeAnalysisView>>> Create(CreateResumeAnalysisRequest request, CancellationToken cancellationToken)
     {

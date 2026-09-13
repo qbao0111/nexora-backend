@@ -57,12 +57,17 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | PATCH | `/learning-path/activities/:activityId` | Đánh dấu activity owner là completed. |
 | GET | `/recommendations/next` | Đọc một hoạt động pending được chọn deterministic từ Learning Path hiện tại. |
 | POST | `/interviews` | Tạo và bắt đầu phiên phỏng vấn. |
+| GET | `/interviews` | Lịch sử interview owner-scoped, phân trang bounded, chỉ metadata an toàn. |
 | GET | `/interviews/:id` | Đọc session state/question hiện tại của owner. |
+| POST | `/interviews/:id/practice-again` | Tạo session luyện lại mới từ interview/report đã hoàn thành; yêu cầu idempotency. |
 | POST | `/interviews/:id/answers` | Lưu câu trả lời, đánh giá và mở câu hỏi tiếp theo theo policy server. |
 | POST | `/interviews/:id/continue` | Sau khi đạt giới hạn Free, kiểm tra entitlement hiện tại và idempotently tạo câu hỏi trả phí tiếp theo trong cùng session. |
 | POST | `/interviews/:id/complete` | Kết thúc, tạo report. |
 | POST | `/interviews/:id/report/retry` | Retry report đang `completing`, không charge thêm interview quota. |
 | GET | `/interviews/:id/report` | Đọc report immutable của owner khi completed. |
+| GET | `/job-descriptions` | Liệt kê Job Description của owner cho setup/history. |
+| GET | `/job-descriptions/:id` | Đọc Job Description của owner. |
+| GET | `/resume-analyses` | Lịch sử phân tích CV owner-scoped, phân trang bounded, không trả payload riêng tư. |
 | GET | `/dashboard` | Tiến độ, lịch sử và quota. |
 | GET | `/health/operations` | Vendor-neutral aggregate operational state (`Healthy`/`Degraded`), không trả count hay resource ID mặc định. |
 
@@ -99,6 +104,75 @@ Frontend gửi `userId`, `token` và `newPassword` tới `POST /api/v1/auth/rese
 ### Export và xoá dữ liệu cá nhân
 
 `GET /api/v1/me/export` chỉ trả core data thuộc owner. `POST /api/v1/me/deletion-requests` tạo audit state `queued → processing → completed|failed`; cùng user và `Idempotency-Key` trả request gốc. Sau khi accepted, access/refresh session hiện tại không còn hợp lệ. Worker xoá private object và personal practice records rồi anonymize Identity account; billing/usage ledger được giữ làm audit theo retention được phê duyệt. Thời hạn retention production vẫn do DEC-03 quyết định.
+
+### Candidate practice loop navigation
+
+The owner-scoped navigation endpoints are:
+
+```text
+GET /api/v1/interviews?page=1&pageSize=20
+GET /api/v1/resume-analyses?page=1&pageSize=20
+GET /api/v1/job-descriptions
+GET /api/v1/job-descriptions/{id}
+```
+
+Interview and resume-analysis history responses use `{ items, page, pageSize,
+totalCount, hasNextPage }`, are newest-first by `createdAt` with an ID
+tie-break, and cap `pageSize` at 100. Interview items contain only state,
+resolved context metadata, timestamps, answer/question counts, report
+availability and nullable practice-again traceability IDs/reason/focus. Resume
+analysis items contain mode/status/timestamps, safe context metadata and a safe
+error code only. Job Description navigation is owner-scoped; its title and
+content are returned because they are required for setup and Career Goal
+editing. Foreign resources return 404 and no endpoint returns raw answer,
+transcript, CV extraction or provider payloads in history lists.
+
+`POST /api/v1/interviews` keeps the existing explicit body contract and also
+accepts:
+
+```json
+{
+  "careerGoalId": "01J...",
+  "interviewType": "technical",
+  "difficulty": "medium"
+}
+```
+
+When `careerGoalId` is present, it must be an undeleted owner goal. Missing role
+and seniority come from the goal; missing Job Description comes from
+`targetJobDescriptionId`; missing resume comes from the owner's selected
+Primary Resume. Explicit role, seniority, resume and JD values override those
+defaults only after the same owner/ready checks. The resolved values are
+snapshotted on the interview session, so later goal edits do not rewrite
+history. A null `careerGoalId` preserves the legacy explicit-start behavior.
+
+`POST /api/v1/interviews/{id}/practice-again` requires a new
+`Idempotency-Key` and accepts nullable `questionId`, `focus` and canonical
+`reason` (`recommendation`, `rubric_weakness`, `repeat_question` or `manual`).
+The source must belong to the caller, be `completed` and have a report. A
+source question retry requires an answered source question and derives its
+canonical topic; a rubric focus derives the weakest matching topic from the
+immutable report/answer evidence. The endpoint creates a new interview and a
+new normal quota reservation, records source links and never mutates the source
+interview or report. The same key/payload replays the same new session; a
+different payload returns `409 IDEMPOTENCY_CONFLICT`.
+
+For an interview recommendation, `GET /api/v1/recommendations/next` may add a
+nullable `action` object:
+
+```json
+{
+  "type": "practice_again",
+  "reason": "recommendation",
+  "sourceInterviewId": "01J...",
+  "sourceQuestionId": null,
+  "focusTopic": "correctness",
+  "suggestedInterviewType": "behavioral"
+}
+```
+
+The action is only emitted when a completed source interview/report can be
+resolved; its fields are canonical metadata, not free-form semantic input.
 
 ### Career Goal / Target Role
 

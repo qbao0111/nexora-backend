@@ -138,7 +138,7 @@ public sealed class AiContractReliabilityTests
         Assert.False(string.IsNullOrWhiteSpace(nextQuestionContent));
         Assert.True(nextQuestionContent!.Length <= 2_000);
         Assert.Equal(InterviewQuestionValues.Primary, nextQuestionElement.GetProperty("kind").GetString());
-        Assert.Equal(InterviewQuestionValues.BehavioralStar, nextQuestionElement.GetProperty("topic").GetString());
+        Assert.Equal(InterviewQuestionValues.Technical, nextQuestionElement.GetProperty("topic").GetString());
         Assert.Equal(0, aiProvider.GetCallCount(AiPurposes.InterviewFollowup));
 
         // Verify in DB that answer was persisted

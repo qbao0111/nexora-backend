@@ -124,13 +124,18 @@ active → abandoned
 - Optimistic concurrency/versioning prevents duplicate answers and transitions.
 - `completed`, `failed` and `abandoned` are immutable terminal states except explicit audited administrative/recovery procedures.
 
-The free interview trial issues exactly three primary questions in the
-server-owned topic order `self_introduction`, `behavioral_star`,
-`motivation_role_fit`. After Q3, `continuation` exposes finish-now versus
-upgrade-required without adding a session state. A paid `/continue` re-checks
-entitlement before AI, keeps the same session and idempotency identity, and
-creates a policy-selected primary; an explicit follow-up is allowed only for a
-paid behavioral question whose evaluation has missing STAR evidence.
+The free interview trial issues exactly three primary questions under a
+server-owned policy. Q1 is always `self_introduction`; Q2 reflects the selected
+interview type (`technical`, `behavioral_star`, `scenario`, `cv_targeted`,
+`jd_targeted` or `motivation_role_fit`). Q3 continues the selected mode, except
+that technical sessions prefer `jd_targeted`, then `cv_targeted`, when context
+exists, and behavioral sessions use `motivation_role_fit` after the Q2 STAR
+probe. The `self_introduction` mode uses `motivation_role_fit` for Q2 and
+prefers JD/CV targeting for Q3. After Q3, `continuation` exposes finish-now
+versus upgrade-required without adding a session state. A paid `/continue`
+re-checks entitlement before AI, keeps the same session and idempotency identity,
+and creates a policy-selected primary; an explicit follow-up is allowed only
+for a paid behavioral question whose evaluation has missing STAR evidence.
 
 All user-facing AI-generated natural-language output is Vietnamese-only in the
 MVP. Input/source content may be in any language; technical names and proper
