@@ -292,10 +292,10 @@ public sealed partial class PracticeService(
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        var normalized = NormalizeAnalysisCommand(command);
         var key = RequireKey(idempotencyKey);
+        var normalized = await ResolveResumeAnalysisCommandAsync(userId, command, cancellationToken);
         var fingerprint = Fingerprint(
-            command.ResumeId,
+            normalized.ResumeId,
             normalized.ModeWire,
             normalized.JobDescriptionId,
             normalized.Industry,
@@ -303,7 +303,7 @@ public sealed partial class PracticeService(
             normalized.Seniority);
         var prior = await FindIdempotentAsync(userId, "resume-analysis.create", key, fingerprint, cancellationToken);
         if (prior is not null) return await GetResumeAnalysisAsync(userId, prior.ResourceId, cancellationToken);
-        var resume = await dbContext.Resumes.AsNoTracking().SingleOrDefaultAsync(item => item.Id == command.ResumeId && item.UserId == userId, cancellationToken)
+        var resume = await dbContext.Resumes.AsNoTracking().SingleOrDefaultAsync(item => item.Id == normalized.ResumeId && item.UserId == userId, cancellationToken)
             ?? throw NotFound();
         if (resume.Status != PracticeValues.Ready) throw Conflict("RESUME_NOT_READY", "CV chưa sẵn sàng để phân tích.");
         var jd = normalized.JobDescriptionId is null
@@ -2494,10 +2494,85 @@ public sealed partial class PracticeService(
         return context with { Mode = persistedMode.ToWireValue() };
     }
 
-    private static NormalizedResumeAnalysisCommand NormalizeAnalysisCommand(StartResumeAnalysisCommand command)
+    private async Task<ResolvedResumeAnalysisCommand> ResolveResumeAnalysisCommandAsync(
+        Guid userId,
+        StartResumeAnalysisCommand command,
+        CancellationToken cancellationToken)
     {
         if (command.ResumeId == Guid.Empty)
             throw Validation("Resume không hợp lệ.", "RESUME_ANALYSIS_CONTEXT_INVALID");
+
+        var normalized = NormalizeAnalysisCommand(command);
+        ResumeAnalysisGoalContext? goal = null;
+        if (command.CareerGoalId is { } careerGoalId)
+        {
+            goal = await dbContext.CareerGoals.AsNoTracking()
+                .Where(item => item.Id == careerGoalId && item.UserId == userId && item.DeletedAt == null)
+                .Select(item => new ResumeAnalysisGoalContext(
+                    item.TargetRole,
+                    item.Seniority,
+                    item.Industry,
+                    item.TargetJobDescriptionId))
+                .SingleOrDefaultAsync(cancellationToken)
+                ?? throw CareerGoalNotFound();
+        }
+        else
+        {
+            goal = await dbContext.CareerGoals.AsNoTracking()
+                .Where(item => item.UserId == userId && item.Active && item.DeletedAt == null)
+                .Select(item => new ResumeAnalysisGoalContext(
+                    item.TargetRole,
+                    item.Seniority,
+                    item.Industry,
+                    item.TargetJobDescriptionId))
+                .SingleOrDefaultAsync(cancellationToken);
+        }
+
+        var resumeId = command.ResumeId;
+        if (resumeId is null)
+        {
+            resumeId = await dbContext.UserProfiles.AsNoTracking()
+                .Where(item => item.UserId == userId)
+                .Select(item => item.PrimaryResumeId)
+                .SingleOrDefaultAsync(cancellationToken);
+            if (resumeId is null || resumeId == Guid.Empty)
+                throw NotFound();
+        }
+
+        if (normalized.Mode == ResumeAnalysisMode.JobTargeted)
+        {
+            var jobDescriptionId = normalized.JobDescriptionId ?? goal?.TargetJobDescriptionId;
+            if (jobDescriptionId is null)
+                throw Validation("Job-targeted analysis yêu cầu JobDescription và không nhận ngữ cảnh benchmark.", "RESUME_ANALYSIS_CONTEXT_INVALID");
+
+            return new(
+                normalized.Mode,
+                normalized.ModeWire,
+                resumeId.Value,
+                jobDescriptionId,
+                null,
+                null,
+                null);
+        }
+
+        var industry = normalized.Industry ?? NormalizeOptional(goal?.Industry, 160);
+        var targetRole = normalized.TargetRole ?? NormalizeOptional(goal?.TargetRole, 160);
+        var seniority = normalized.Seniority ?? NormalizeOptional(goal?.Seniority, 80);
+        if (industry is null || targetRole is null || seniority is null)
+            throw Validation("Field-benchmark analysis yêu cầu industry, targetRole và seniority; không nhận JobDescription.", "RESUME_ANALYSIS_CONTEXT_INVALID");
+
+        return new(
+            normalized.Mode,
+            normalized.ModeWire,
+            resumeId.Value,
+            null,
+            industry,
+            targetRole,
+            seniority);
+    }
+
+    private static NormalizedResumeAnalysisCommand NormalizeAnalysisCommand(StartResumeAnalysisCommand command)
+    {
         if (!ResumeAnalysisModes.TryParse(command.Mode, out var mode))
             throw Validation("Mode phân tích CV không hợp lệ.", "RESUME_ANALYSIS_MODE_INVALID");
 
@@ -2509,16 +2584,13 @@ public sealed partial class PracticeService(
             command.Seniority is not null && seniority is null)
             throw Validation("Ngữ cảnh phân tích CV quá dài.", "RESUME_ANALYSIS_CONTEXT_INVALID");
 
-        if (mode == ResumeAnalysisMode.JobTargeted)
-        {
-            if (command.JobDescriptionId is null || industry is not null || targetRole is not null || seniority is not null)
-                throw Validation("Job-targeted analysis yêu cầu JobDescription và không nhận ngữ cảnh benchmark.", "RESUME_ANALYSIS_CONTEXT_INVALID");
-            return new(mode, mode.ToWireValue(), command.JobDescriptionId, null, null, null);
-        }
+        if (mode == ResumeAnalysisMode.JobTargeted && (industry is not null || targetRole is not null || seniority is not null))
+            throw Validation("Job-targeted analysis yêu cầu JobDescription và không nhận ngữ cảnh benchmark.", "RESUME_ANALYSIS_CONTEXT_INVALID");
 
-        if (command.JobDescriptionId is not null || industry is null || targetRole is null || seniority is null)
+        if (mode == ResumeAnalysisMode.FieldBenchmark && command.JobDescriptionId is not null)
             throw Validation("Field-benchmark analysis yêu cầu industry, targetRole và seniority; không nhận JobDescription.", "RESUME_ANALYSIS_CONTEXT_INVALID");
-        return new(mode, mode.ToWireValue(), null, industry, targetRole, seniority);
+
+        return new(mode, mode.ToWireValue(), command.JobDescriptionId, industry, targetRole, seniority);
     }
 
     private static string? NormalizeOptional(string? value, int maxLength)
@@ -2536,8 +2608,24 @@ public sealed partial class PracticeService(
         string? TargetRole,
         string? Seniority);
 
+    private sealed record ResolvedResumeAnalysisCommand(
+        ResumeAnalysisMode Mode,
+        string ModeWire,
+        Guid ResumeId,
+        Guid? JobDescriptionId,
+        string? Industry,
+        string? TargetRole,
+        string? Seniority);
+
+    private sealed record ResumeAnalysisGoalContext(
+        string TargetRole,
+        string Seniority,
+        string? Industry,
+        Guid? TargetJobDescriptionId);
+
     private static BusinessException Validation(string message, string code = "VALIDATION_ERROR") => new(code, message, BusinessErrorKind.Validation);
     private static BusinessException NotFound() => new("NOT_FOUND", "Không tìm thấy tài nguyên.", BusinessErrorKind.NotFound);
+    private static BusinessException CareerGoalNotFound() => new("CAREER_GOAL_NOT_FOUND", "Không tìm thấy career goal.", BusinessErrorKind.NotFound);
     private static BusinessException Conflict(string code, string message) => new(code, message, BusinessErrorKind.Conflict);
     private static BusinessException InvalidState() => Conflict("INVALID_INTERVIEW_STATE", "Trạng thái interview không hợp lệ cho thao tác này.");
     private static BusinessException InterviewUpgradeRequired() =>

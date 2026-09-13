@@ -187,12 +187,13 @@ public static class ResumeAnalysisModes
 }
 
 public sealed record StartResumeAnalysisCommand(
-    Guid ResumeId,
+    Guid? ResumeId,
     string Mode,
     Guid? JobDescriptionId,
     string? Industry,
     string? TargetRole,
-    string? Seniority);
+    string? Seniority,
+    Guid? CareerGoalId = null);
 
 public sealed record ResumeAnalysisContext(
     ResumeAnalysisMode Mode,
