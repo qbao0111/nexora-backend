@@ -110,6 +110,7 @@ Candidate browser -> Nexora frontend -> Nexora .NET API -> PostgreSQL
 | FR-CV-02 | Upload qua signed URL ngắn hạn vào storage private; API chỉ lưu metadata sau upload. | Must | URL hết hạn và non-owner download bị từ chối. |
 | FR-CV-03 | Extract và analysis chạy job bất đồng bộ với state `queued/processing/completed/failed`. | Must | UI có thể poll state và retry theo rule. |
 | FR-CV-04 | Analysis lưu resume/JD version, model/prompt/schema version, result và timestamp. | Must | Có thể audit result về input/version. |
+| FR-CV-05 | `POST /resume-analyses` có thể kế thừa Primary Resume và Career Goal context cho các trường bị bỏ trống; explicit owner-scoped input được ưu tiên và context hiệu lực được snapshot khi tạo analysis. | Must | Default/override, ownership, readiness, idempotency và immutable snapshot integration tests. |
 
 ### 6.4 Mock interview and report
 

@@ -147,6 +147,414 @@ public sealed class PracticeLoopApiTests
     }
 
     [Fact]
+    public async Task ResumeAnalysisDefaultsToPrimaryResumeAndActiveCareerGoalForFieldBenchmark()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "CV inheritance candidate");
+        Authorize(client, account);
+
+        var resumeId = await SeedReadyResumeAsync(factory, account.UserId, "primary.pdf", At(1));
+        using (var selection = await client.PutAsJsonAsync("/api/v1/me/primary-resume", new { resumeId }))
+            Assert.Equal(HttpStatusCode.OK, selection.StatusCode);
+
+        var jobDescriptionId = await CreateJobDescriptionAsync(client, "Backend JD", "Private backend requirements.");
+        await CreateCareerGoalAsync(client, "Backend Engineer", "senior", jobDescriptionId, "Fintech");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new { mode = ResumeAnalysisModes.FieldBenchmark })
+        };
+        request.Headers.Add("Idempotency-Key", "resume-analysis-default-field");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var data = await DataAsync(response);
+        Assert.Equal(ResumeAnalysisModes.FieldBenchmark, data.GetProperty("mode").GetString());
+        Assert.Equal("Fintech", data.GetProperty("context").GetProperty("industry").GetString());
+        Assert.Equal("Backend Engineer", data.GetProperty("context").GetProperty("targetRole").GetString());
+        Assert.Equal("senior", data.GetProperty("context").GetProperty("seniority").GetString());
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("jobDescriptionVersion").ValueKind);
+
+        var firstAnalysisId = data.GetProperty("id").GetGuid();
+        using (var replay = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new { mode = ResumeAnalysisModes.FieldBenchmark })
+        })
+        {
+            replay.Headers.Add("Idempotency-Key", "resume-analysis-default-field");
+            using var replayResponse = await client.SendAsync(replay);
+            Assert.Equal(HttpStatusCode.Created, replayResponse.StatusCode);
+            Assert.Equal(firstAnalysisId, (await DataAsync(replayResponse)).GetProperty("id").GetGuid());
+        }
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var analysis = await db.ResumeAnalyses.AsNoTracking().SingleAsync(item => item.UserId == account.UserId);
+        Assert.Equal(resumeId, analysis.ResumeId);
+        Assert.Null(analysis.JobDescriptionId);
+    }
+
+    [Fact]
+    public async Task JobTargetedResumeAnalysisInheritsCanonicalCareerGoalJobDescription()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "Job targeted inheritance candidate");
+        Authorize(client, account);
+
+        var resumeId = await SeedReadyResumeAsync(factory, account.UserId, "primary.pdf", At(1));
+        using (var selection = await client.PutAsJsonAsync("/api/v1/me/primary-resume", new { resumeId }))
+            Assert.Equal(HttpStatusCode.OK, selection.StatusCode);
+        var jobDescriptionId = await CreateJobDescriptionAsync(client, "Platform JD", "Private platform requirements.");
+        await CreateCareerGoalAsync(client, "Platform Engineer", "mid", jobDescriptionId, "Technology");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new { mode = ResumeAnalysisModes.JobTargeted })
+        };
+        request.Headers.Add("Idempotency-Key", "resume-analysis-default-job");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var data = await DataAsync(response);
+        Assert.Equal(ResumeAnalysisModes.JobTargeted, data.GetProperty("mode").GetString());
+        Assert.Equal(1, data.GetProperty("jobDescriptionVersion").GetInt32());
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("context").GetProperty("industry").ValueKind);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var analysis = await db.ResumeAnalyses.AsNoTracking().SingleAsync(item => item.UserId == account.UserId);
+        Assert.Equal(resumeId, analysis.ResumeId);
+        Assert.Equal(jobDescriptionId, analysis.JobDescriptionId);
+    }
+
+    [Fact]
+    public async Task ExplicitJobDescriptionOverridesCareerGoalTargetJobDescription()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "Job description override candidate");
+        Authorize(client, account);
+
+        var resumeId = await SeedReadyResumeAsync(factory, account.UserId, "primary.pdf", At(1));
+        using (var selection = await client.PutAsJsonAsync("/api/v1/me/primary-resume", new { resumeId }))
+            Assert.Equal(HttpStatusCode.OK, selection.StatusCode);
+        var goalJobDescriptionId = await CreateJobDescriptionAsync(client, "Goal JD", "Goal requirements.");
+        var explicitJobDescriptionId = await CreateJobDescriptionAsync(client, "Explicit JD", "Explicit requirements.");
+        await CreateCareerGoalAsync(client, "Backend Engineer", "senior", goalJobDescriptionId);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new
+            {
+                mode = ResumeAnalysisModes.JobTargeted,
+                jobDescriptionId = explicitJobDescriptionId
+            })
+        };
+        request.Headers.Add("Idempotency-Key", "resume-analysis-explicit-jd");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var analysis = await db.ResumeAnalyses.AsNoTracking().SingleAsync(item => item.UserId == account.UserId);
+        Assert.Equal(explicitJobDescriptionId, analysis.JobDescriptionId);
+        Assert.NotEqual(goalJobDescriptionId, analysis.JobDescriptionId);
+    }
+
+    [Fact]
+    public async Task ExplicitCareerGoalOverridesTheActiveGoalWhenResolvingResumeAnalysis()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "Explicit CV goal candidate");
+        Authorize(client, account);
+
+        var resumeId = await SeedReadyResumeAsync(factory, account.UserId, "primary.pdf", At(1));
+        using (var selection = await client.PutAsJsonAsync("/api/v1/me/primary-resume", new { resumeId }))
+            Assert.Equal(HttpStatusCode.OK, selection.StatusCode);
+        var selectedGoalId = await CreateCareerGoalAsync(client, "Backend Engineer", "senior", industry: "Fintech");
+        await CreateCareerGoalAsync(client, "Product Manager", "mid", industry: "SaaS");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new
+            {
+                careerGoalId = selectedGoalId,
+                mode = ResumeAnalysisModes.FieldBenchmark
+            })
+        };
+        request.Headers.Add("Idempotency-Key", "resume-analysis-explicit-goal");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var data = await DataAsync(response);
+        Assert.Equal("Fintech", data.GetProperty("context").GetProperty("industry").GetString());
+        Assert.Equal("Backend Engineer", data.GetProperty("context").GetProperty("targetRole").GetString());
+        Assert.Equal("senior", data.GetProperty("context").GetProperty("seniority").GetString());
+    }
+
+    [Fact]
+    public async Task ResumeAnalysisExplicitGoalAndFieldsOverrideActiveDefaults()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "CV override candidate");
+        Authorize(client, account);
+
+        var primaryResumeId = await SeedReadyResumeAsync(factory, account.UserId, "primary.pdf", At(1));
+        var overrideResumeId = await SeedReadyResumeAsync(factory, account.UserId, "override.pdf", At(2));
+        using (var selection = await client.PutAsJsonAsync("/api/v1/me/primary-resume", new { resumeId = primaryResumeId }))
+            Assert.Equal(HttpStatusCode.OK, selection.StatusCode);
+        await CreateCareerGoalAsync(client, "Backend Engineer", "senior", industry: "Fintech");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new
+            {
+                resumeId = overrideResumeId,
+                mode = ResumeAnalysisModes.FieldBenchmark,
+                targetRole = "Product Strategy Lead",
+                seniority = "lead",
+                industry = "Marketplace"
+            })
+        };
+        request.Headers.Add("Idempotency-Key", "resume-analysis-explicit-overrides");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var data = await DataAsync(response);
+        Assert.Equal("Marketplace", data.GetProperty("context").GetProperty("industry").GetString());
+        Assert.Equal("Product Strategy Lead", data.GetProperty("context").GetProperty("targetRole").GetString());
+        Assert.Equal("lead", data.GetProperty("context").GetProperty("seniority").GetString());
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var analysis = await db.ResumeAnalyses.AsNoTracking().SingleAsync(item => item.UserId == account.UserId);
+        Assert.Equal(overrideResumeId, analysis.ResumeId);
+        Assert.NotEqual(primaryResumeId, analysis.ResumeId);
+    }
+
+    [Fact]
+    public async Task ResumeAnalysisDefaultsFailDeterministicallyWithoutPrimaryOrRequiredGoalContext()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "CV missing defaults candidate");
+        Authorize(client, account);
+
+        using (var missingResume = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new { mode = ResumeAnalysisModes.FieldBenchmark })
+        })
+        {
+            missingResume.Headers.Add("Idempotency-Key", "resume-analysis-missing-primary");
+            using var response = await client.SendAsync(missingResume);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+
+        var resumeId = await SeedReadyResumeAsync(factory, account.UserId, "ready.pdf", At(1));
+        using (var selection = await client.PutAsJsonAsync("/api/v1/me/primary-resume", new { resumeId }))
+            Assert.Equal(HttpStatusCode.OK, selection.StatusCode);
+        using (var missingGoal = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new { mode = ResumeAnalysisModes.FieldBenchmark })
+        })
+        {
+            missingGoal.Headers.Add("Idempotency-Key", "resume-analysis-missing-goal");
+            using var response = await client.SendAsync(missingGoal);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal("RESUME_ANALYSIS_CONTEXT_INVALID", await ErrorCodeAsync(response));
+        }
+    }
+
+    [Fact]
+    public async Task NonReadyPrimaryResumeCannotBeUsedForDefaultResumeAnalysis()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "CV not ready candidate");
+        Authorize(client, account);
+        var resumeId = await SeedReadyResumeAsync(factory, account.UserId, "pending.pdf", At(1));
+        using (var selection = await client.PutAsJsonAsync("/api/v1/me/primary-resume", new { resumeId }))
+            Assert.Equal(HttpStatusCode.OK, selection.StatusCode);
+        await CreateCareerGoalAsync(client, "Backend Engineer", "senior", industry: "Fintech");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var resume = await db.Resumes.SingleAsync(item => item.Id == resumeId);
+            resume.Status = PracticeValues.Uploaded;
+            await db.SaveChangesAsync();
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new { mode = ResumeAnalysisModes.FieldBenchmark })
+        };
+        request.Headers.Add("Idempotency-Key", "resume-analysis-primary-not-ready");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("RESUME_NOT_READY", await ErrorCodeAsync(response));
+    }
+
+    [Fact]
+    public async Task ResumeAnalysisExplicitReferencesAreOwnerScopedAndDoNotFallback()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var ownerClient = factory.CreateHttpsClient();
+        using var otherClient = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(ownerClient, "CV owner");
+        var other = await RegisterAsync(otherClient, "CV other");
+        Authorize(ownerClient, owner);
+        Authorize(otherClient, other);
+
+        var ownerResumeId = await SeedReadyResumeAsync(factory, owner.UserId, "owner.pdf", At(1));
+        var foreignResumeId = await SeedReadyResumeAsync(factory, other.UserId, "foreign.pdf", At(1));
+        using (var selection = await ownerClient.PutAsJsonAsync("/api/v1/me/primary-resume", new { resumeId = ownerResumeId }))
+            Assert.Equal(HttpStatusCode.OK, selection.StatusCode);
+        var ownerGoalId = await CreateCareerGoalAsync(ownerClient, "Backend Engineer", "senior", industry: "Fintech");
+        var foreignGoalId = await CreateCareerGoalAsync(otherClient, "Data Engineer", "senior", industry: "Data");
+        var foreignJdId = await CreateJobDescriptionAsync(otherClient, "Foreign JD", "Foreign private requirements.");
+
+        using (var foreignGoal = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new { careerGoalId = foreignGoalId, mode = ResumeAnalysisModes.FieldBenchmark })
+        })
+        {
+            foreignGoal.Headers.Add("Idempotency-Key", "resume-analysis-foreign-goal");
+            using var response = await ownerClient.SendAsync(foreignGoal);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            Assert.Equal("CAREER_GOAL_NOT_FOUND", await ErrorCodeAsync(response));
+        }
+
+        using (var foreignResume = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new
+            {
+                resumeId = foreignResumeId,
+                mode = ResumeAnalysisModes.FieldBenchmark,
+                industry = "Fintech",
+                targetRole = "Backend Engineer",
+                seniority = "senior"
+            })
+        })
+        {
+            foreignResume.Headers.Add("Idempotency-Key", "resume-analysis-foreign-resume");
+            using var response = await ownerClient.SendAsync(foreignResume);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+
+        using (var foreignJobDescription = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new
+            {
+                resumeId = ownerResumeId,
+                mode = ResumeAnalysisModes.JobTargeted,
+                jobDescriptionId = foreignJdId
+            })
+        })
+        {
+            foreignJobDescription.Headers.Add("Idempotency-Key", "resume-analysis-foreign-jd");
+            using var response = await ownerClient.SendAsync(foreignJobDescription);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+
+        Assert.NotEqual(ownerGoalId, foreignGoalId);
+    }
+
+    [Fact]
+    public async Task ResumeAnalysisSnapshotsInheritedContextAndRejectsChangedEffectiveIdempotencyInput()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "CV snapshot candidate");
+        Authorize(client, account);
+
+        var firstResumeId = await SeedReadyResumeAsync(factory, account.UserId, "first.pdf", At(1));
+        var secondResumeId = await SeedReadyResumeAsync(factory, account.UserId, "second.pdf", At(2));
+        using (var selection = await client.PutAsJsonAsync("/api/v1/me/primary-resume", new { resumeId = firstResumeId }))
+            Assert.Equal(HttpStatusCode.OK, selection.StatusCode);
+        var goalId = await CreateCareerGoalAsync(client, "Backend Engineer", "senior", industry: "Fintech");
+
+        const string key = "resume-analysis-inherited-snapshot";
+        using (var firstRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new { mode = ResumeAnalysisModes.FieldBenchmark })
+        })
+        {
+            firstRequest.Headers.Add("Idempotency-Key", key);
+            using var response = await client.SendAsync(firstRequest);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        }
+
+        using (var changedGoal = await PatchAsync(client, $"/api/v1/career-goals/{goalId}", new
+               {
+                   targetRole = "Principal Engineer",
+                   industry = "Cloud"
+               }))
+            Assert.Equal(HttpStatusCode.OK, changedGoal.StatusCode);
+        using (var changedPrimary = await client.PutAsJsonAsync("/api/v1/me/primary-resume", new { resumeId = secondResumeId }))
+            Assert.Equal(HttpStatusCode.OK, changedPrimary.StatusCode);
+
+        using (var replay = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new { mode = ResumeAnalysisModes.FieldBenchmark })
+        })
+        {
+            replay.Headers.Add("Idempotency-Key", key);
+            using var response = await client.SendAsync(replay);
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Equal("IDEMPOTENCY_CONFLICT", await ErrorCodeAsync(response));
+        }
+
+        using (var history = await client.GetAsync("/api/v1/resume-analyses?page=1&pageSize=20"))
+        {
+            Assert.Equal(HttpStatusCode.OK, history.StatusCode);
+            var item = Assert.Single((await DataAsync(history)).GetProperty("items").EnumerateArray());
+            Assert.Equal(firstResumeId, item.GetProperty("resumeId").GetGuid());
+            Assert.Equal("Backend Engineer", item.GetProperty("context").GetProperty("targetRole").GetString());
+            Assert.Equal("Fintech", item.GetProperty("context").GetProperty("industry").GetString());
+            Assert.DoesNotContain("extractedText", await history.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public async Task ExplicitResumeAnalysisRequestRemainsCompatibleWithoutCareerProfileDefaults()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "Legacy CV candidate");
+        Authorize(client, account);
+        var resumeId = await SeedReadyResumeAsync(factory, account.UserId, "legacy.pdf", At(1));
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new
+            {
+                resumeId,
+                mode = ResumeAnalysisModes.FieldBenchmark,
+                industry = "Fintech",
+                targetRole = "Backend Engineer",
+                seniority = "senior"
+            })
+        };
+        request.Headers.Add("Idempotency-Key", "resume-analysis-legacy-explicit");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
     public async Task GoalAndContextReferencesAreOwnerScoped()
     {
         using var factory = new NexoraApiFactory();
@@ -488,12 +896,18 @@ public sealed class PracticeLoopApiTests
         return (await DataAsync(response)).GetProperty("id").GetGuid();
     }
 
-    private static async Task<Guid> CreateCareerGoalAsync(HttpClient client, string targetRole, string seniority, Guid? jobDescriptionId = null)
+    private static async Task<Guid> CreateCareerGoalAsync(
+        HttpClient client,
+        string targetRole,
+        string seniority,
+        Guid? jobDescriptionId = null,
+        string? industry = null)
     {
         using var response = await client.PostAsJsonAsync("/api/v1/career-goals", new
         {
             targetRole,
             seniority,
+            industry,
             targetJobDescriptionId = jobDescriptionId
         });
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);

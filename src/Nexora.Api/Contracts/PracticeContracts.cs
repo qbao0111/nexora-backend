@@ -6,12 +6,13 @@ public sealed record PresignUploadRequest(string FileName, string ContentType, l
 public sealed record FinalizeResumeRequest(string UploadToken);
 public sealed record CreateJobDescriptionRequest(string Title, string Content);
 public sealed record CreateResumeAnalysisRequest(
-    Guid ResumeId,
+    Guid? ResumeId,
     string Mode,
     Guid? JobDescriptionId,
     string? Industry,
     string? TargetRole,
-    string? Seniority);
+    string? Seniority,
+    Guid? CareerGoalId = null);
 public sealed class DevelopmentResumeAnalysisRequest
 {
     [Required(ErrorMessage = "File là bắt buộc.")]

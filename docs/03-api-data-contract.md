@@ -334,11 +334,12 @@ Upload giữ giới hạn mặc định 10 MiB và kiểm tra cả kích thướ
 
 ### Resume analysis v2
 
-`POST /api/v1/resume-analyses` requires an `Idempotency-Key` and an explicit mode. The server accepts only these two contexts; it never infers the mode from whether `jobDescriptionId` is present:
+`POST /api/v1/resume-analyses` requires an `Idempotency-Key` and an explicit mode. `resumeId`, `careerGoalId`, the mode context fields and `jobDescriptionId` are optional request inputs; the server resolves missing values from the owner's selected Career Profile context without inferring the mode from whether `jobDescriptionId` is present:
 
 ```json
 {
   "resumeId": "01J...",
+  "careerGoalId": "01K...",
   "mode": "job_targeted",
   "jobDescriptionId": "01J..."
 }
@@ -346,19 +347,16 @@ Upload giữ giới hạn mặc định 10 MiB và kiểm tra cả kích thướ
 
 ```json
 {
-  "resumeId": "01J...",
   "mode": "field_benchmark",
-  "industry": "Fintech",
-  "targetRole": "Backend Engineer",
-  "seniority": "senior"
+  "careerGoalId": "01K..."
 }
 ```
 
-`job_targeted` requires an owner-owned job description and rejects benchmark fields. `field_benchmark` rejects a job description and requires `industry`, `targetRole` and `seniority` after server-side trimming and length checks. Both modes require a `ready` resume; ownership, entitlement and quota remain server-authoritative.
+The server resolves each missing value independently using this precedence: explicit request value, selected `careerGoalId` when supplied (otherwise the active non-deleted Career Goal), then the user's Primary Resume for `resumeId` where applicable. Career Goals have no canonical Resume relation, so resume fallback always uses `UserProfile.PrimaryResumeId`. A selected goal's canonical `TargetJobDescriptionId` is inherited only by `job_targeted`; `field_benchmark` continues to reject JD context and uses only the goal's `industry`, `targetRole` and `seniority`. `job_targeted` requires an owner-owned job description and rejects benchmark fields. `field_benchmark` rejects a job description and requires `industry`, `targetRole` and `seniority` after server-side trimming and length checks. Both modes require a `ready` resume; ownership, entitlement and quota remain server-authoritative.
 
-The `201` response contains the queued job's `mode`, context snapshot, resume/JD versions (the JD version is nullable for field benchmark), analysis model/prompt/schema/rubric versions and the cached profile's model/prompt/schema versions. Job-targeted results contain `matchScore` and the five required breakdown dimensions. Field-benchmark results contain `readinessScore` and the six required dimensions. Scores are integer 0-100 values; matched/missing skill arrays may be empty, while coaching and section-feedback arrays remain non-empty; mode mismatches, unknown dimensions and ungrounded content fail strict semantic validation after at most one repair attempt. `GET /resume-analyses/{id}` remains the authoritative status/result read.
+The resolved context is snapshotted when the analysis is created: the effective resume is stored in `ResumeId`, the effective JD/version is stored for job-targeted runs, and the effective benchmark fields are stored in `ContextJson`. Later Primary Resume or Career Goal changes do not rewrite that history. The `201` response contains the queued job's `mode`, context snapshot, resume/JD versions (the JD version is nullable for field benchmark), analysis model/prompt/schema/rubric versions and the cached profile's model/prompt/schema versions. Job-targeted results contain `matchScore` and the five required breakdown dimensions. Field-benchmark results contain `readinessScore` and the six required dimensions. Scores are integer 0-100 values; matched/missing skill arrays may be empty, while coaching and section-feedback arrays remain non-empty; mode mismatches, unknown dimensions and ungrounded content fail strict semantic validation after at most one repair attempt. `GET /resume-analyses/{id}` remains the authoritative status/result read.
 
-The idempotency fingerprint includes the resume, mode and every context field. Equivalent replays return the same analysis/outbox/reservation; reusing a key with another mode or context returns `409 IDEMPOTENCY_CONFLICT`. Worker retries reuse the cached profile and never create a second analysis or quota charge.
+The idempotency fingerprint includes the effective resolved resume, mode, JD and every effective context field. Equivalent replays return the same analysis/outbox/reservation; reusing a key after inherited defaults resolve to different effective input returns `409 IDEMPOTENCY_CONFLICT`. Worker retries reuse the cached profile and never create a second analysis or quota charge.
 
 Email verification provisions exactly one account-level Free `cv_analysis` allowance with limit `1`. The allowance is shared by `job_targeted` and `field_benchmark`, so using one mode exhausts the other; a second genuine analysis is rejected with `403 FEATURE_QUOTA_EXCEEDED` before an analysis, reservation or outbox job is persisted. The normal ledger remains immutable: reserve before enqueue, consume only after a usable result is persisted, and void a reservation when processing fails before a usable result. Equivalent idempotent replays return the original analysis and do not reserve or consume again; paid limits continue to come from the server-owned plan/entitlement snapshot.
 

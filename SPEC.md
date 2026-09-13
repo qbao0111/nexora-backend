@@ -96,7 +96,7 @@ Physical constraints and lifecycle ownership: [data model](docs/08-data-model.md
 - Client inputs never control user identity, price, plan, quota, entitlement or score.
 - Core routes cover `/me`, `/plans`, checkout/payment webhooks, upload/resume/analysis, interviews/answers/continuation/completion/report, and dashboard/history.
 - `PATCH /me/profile` updates only the optional display name and nullable years-of-experience field; `GET /me/career-profile` exposes the owner identity, Primary Resume, active Career Goal and computed summaries. Career Profile onboarding is complete only when display name, years of experience, Primary Resume and active Career Goal are all present.
-- `POST /resume-analyses` requires an explicit mode and idempotency key; `GET /resume-analyses/{id}` returns the mode-specific, strictly validated result and version metadata.
+- `POST /resume-analyses` requires an explicit mode and idempotency key; missing resume/context values resolve from the owner's Primary Resume and active Career Goal with server-owned precedence, while `GET /resume-analyses/{id}` returns the mode-specific, strictly validated result and version metadata.
 - User resources always require owner authorization; cross-user lookup should not leak metadata.
 - Response DTOs are allow-listed; EF/provider objects are never serialized directly.
 

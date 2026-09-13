@@ -49,7 +49,8 @@ public sealed class ResumeAnalysesController(IPracticeService practiceService) :
                 request.JobDescriptionId,
                 request.Industry,
                 request.TargetRole,
-                request.Seniority),
+                request.Seniority,
+                request.CareerGoalId),
             Request.Headers["Idempotency-Key"].ToString(),
             cancellationToken);
         return StatusCode(201, new ApiResponse<ResumeAnalysisView>(analysis));
