@@ -12,7 +12,7 @@ public static class PrivacyValues
     public const string Failed = "failed";
 }
 
-public sealed record ExportProfile(Guid Id, string Email, string? DisplayName, DateTimeOffset CreatedAt);
+public sealed record ExportProfile(Guid Id, string Email, string? DisplayName, int? YearsOfExperience, DateTimeOffset CreatedAt);
 public sealed record ExportResume(Guid Id, string FileName, string ContentType, long Size, string Status, DateTimeOffset CreatedAt);
 public sealed record ExportJobDescription(Guid Id, string Title, string Content, DateTimeOffset CreatedAt);
 public sealed record ExportCareerGoal(Guid Id, string TargetRole, string Seniority, string? Industry, string? TargetCompany,

@@ -220,16 +220,34 @@ public sealed partial class IdentityAuthService(
         return await MapUserAsync(user);
     }
 
-    public async Task<AuthenticatedUser> UpdateProfileAsync(Guid userId, string? displayName, CancellationToken cancellationToken)
+    public async Task<AuthenticatedUser> UpdateProfileAsync(
+        Guid userId,
+        string? displayName,
+        int? yearsOfExperience,
+        CancellationToken cancellationToken)
     {
+        var normalizedDisplayName = displayName is null ? null : NormalizeProvidedDisplayName(displayName);
+        if (yearsOfExperience is < 0 or > 60)
+            throw new BusinessException("YEARS_OF_EXPERIENCE_INVALID", "Số năm kinh nghiệm phải từ 0 đến 60.", BusinessErrorKind.Validation);
+
         var user = await dbContext.Users.Include(item => item.Profile)
             .SingleOrDefaultAsync(item => item.Id == userId && item.IsActive && item.DeletionRequestedAt == null && item.DeletedAt == null, cancellationToken) ?? throw UserNotFound();
-        var now = timeProvider.GetUtcNow();
-        user.Profile ??= new UserProfile { Id = Guid.NewGuid(), UserId = user.Id, CreatedAt = now };
-        user.Profile.DisplayName = NormalizeDisplayName(displayName);
-        user.Profile.UpdatedAt = now;
-        user.UpdatedAt = now;
-        await dbContext.SaveChangesAsync(cancellationToken);
+        var displayNameChanged = normalizedDisplayName is not null &&
+            !string.Equals(user.Profile?.DisplayName, normalizedDisplayName, StringComparison.Ordinal);
+        var yearsChanged = yearsOfExperience is not null && user.Profile?.YearsOfExperience != yearsOfExperience;
+        if (displayNameChanged || yearsChanged)
+        {
+            var now = timeProvider.GetUtcNow();
+            user.Profile ??= new UserProfile { Id = Guid.NewGuid(), UserId = user.Id, CreatedAt = now };
+            if (displayNameChanged)
+                user.Profile.DisplayName = normalizedDisplayName;
+            if (yearsChanged)
+                user.Profile.YearsOfExperience = yearsOfExperience;
+            user.Profile.UpdatedAt = now;
+            user.UpdatedAt = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
         return await MapUserAsync(user);
     }
 
@@ -402,10 +420,19 @@ public sealed partial class IdentityAuthService(
     }
 
     private async Task<AuthenticatedUser> MapUserAsync(ApplicationUser user) =>
-        new(user.Id, user.Email ?? string.Empty, user.Profile?.DisplayName, (await userManager.GetRolesAsync(user)).ToArray());
+        new(user.Id, user.Email ?? string.Empty, user.Profile?.DisplayName, (await userManager.GetRolesAsync(user)).ToArray(), user.Profile?.YearsOfExperience);
     private static string HashToken(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token ?? string.Empty)));
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
     private static string? NormalizeDisplayName(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    private static string NormalizeProvidedDisplayName(string value)
+    {
+        var normalized = value.Trim();
+        if (normalized.Length is 0)
+            throw new BusinessException("DISPLAY_NAME_REQUIRED", "Tên hiển thị không được để trống.", BusinessErrorKind.Validation);
+        if (normalized.Length > 120)
+            throw new BusinessException("DISPLAY_NAME_TOO_LONG", "Tên hiển thị không được vượt quá 120 ký tự.", BusinessErrorKind.Validation);
+        return normalized;
+    }
     private static BusinessException InvalidEmailVerification() =>
         new("EMAIL_VERIFICATION_INVALID", "Liên kết xác minh email không hợp lệ hoặc đã hết hạn.", BusinessErrorKind.Validation);
     private static BusinessException InvalidPasswordReset() =>

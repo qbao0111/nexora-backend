@@ -32,13 +32,23 @@ public sealed class ResetPasswordRequest
     [Required, MaxLength(2048)] public string Token { get; init; } = string.Empty;
     [Required, MinLength(8), MaxLength(128)] public string NewPassword { get; init; } = string.Empty;
 }
-public sealed class UpdateProfileRequest { [MaxLength(120)] public string? DisplayName { get; init; } }
+public sealed class UpdateProfileRequest
+{
+    [MaxLength(120)] public string? DisplayName { get; init; }
+    [Range(0, 60)] public int? YearsOfExperience { get; init; }
+}
 public sealed class ChangePasswordRequest
 {
     [Required, MaxLength(128)] public string CurrentPassword { get; init; } = string.Empty;
     [Required, MinLength(8), MaxLength(128)] public string NewPassword { get; init; } = string.Empty;
 }
-public sealed record UserResponse(Guid Id, string Email, string? DisplayName, IReadOnlyCollection<string> Roles, BillingSummaryResponse? Billing = null);
+public sealed record UserResponse(
+    Guid Id,
+    string Email,
+    string? DisplayName,
+    IReadOnlyCollection<string> Roles,
+    BillingSummaryResponse? Billing = null,
+    int? YearsOfExperience = null);
 public sealed record AuthSessionResponse(string AccessToken, DateTimeOffset AccessTokenExpiresAt, UserResponse User);
 public sealed record RegistrationResponse(string Email, bool VerificationRequired);
 public sealed record EmailVerificationResponse(string Email, bool AlreadyVerified);
