@@ -299,7 +299,7 @@ public sealed class PracticeLoopApiTests
     }
 
     [Fact]
-    public async Task PracticeAgainCreatesANewFocusedSessionAndReplaysByIdempotencyKey()
+    public async Task PracticeAgainCreatesANewFocusedSessionAndSupportsDistinctIdempotencyKeys()
     {
         var aiProvider = new TestAiProvider();
         using var factory = new NexoraApiFactory(aiProvider);
@@ -307,7 +307,7 @@ public sealed class PracticeLoopApiTests
         using var client = factory.CreateHttpsClient();
         var account = await RegisterAsync(client, "Practice again candidate");
         Authorize(client, account);
-        await SeedEntitlementAsync(factory, account.UserId, 2);
+        await SeedEntitlementAsync(factory, account.UserId, 3);
 
         var sourceInterviewId = await StartInterviewIdAsync(client, "practice-again-source");
         await ProcessJobsAsync(factory);
@@ -355,6 +355,41 @@ public sealed class PracticeLoopApiTests
             Assert.Equal(2, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Reserve));
         }
 
+        using var secondPracticeAgain = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{sourceInterviewId}/practice-again")
+        {
+            Content = JsonContent.Create(new
+            {
+                questionId = secondQuestionId,
+                focus = InterviewQuestionValues.BehavioralStar
+            })
+        };
+        secondPracticeAgain.Headers.Add("Idempotency-Key", "practice-again-repeat-question-second");
+        using var secondPracticeAgainResponse = await client.SendAsync(secondPracticeAgain);
+        Assert.Equal(HttpStatusCode.Created, secondPracticeAgainResponse.StatusCode);
+        var secondNewInterviewId = (await DataAsync(secondPracticeAgainResponse)).GetProperty("id").GetGuid();
+        Assert.NotEqual(newInterviewId, secondNewInterviewId);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var secondSession = await db.InterviewSessions.AsNoTracking().SingleAsync(item => item.Id == secondNewInterviewId);
+            Assert.Equal(account.UserId, secondSession.UserId);
+            Assert.Equal(sourceInterviewId, secondSession.SourceInterviewId);
+            Assert.Equal(secondQuestionId, secondSession.SourceQuestionId);
+            Assert.Equal(InterviewPracticeValues.RepeatQuestion, secondSession.PracticeReason);
+            Assert.Equal(InterviewQuestionValues.BehavioralStar, secondSession.FocusTopic);
+
+            var practiceReservationKeys = await db.UsageEvents.AsNoTracking()
+                .Where(item => item.UserId == account.UserId && item.Action == BillingValues.Reserve &&
+                    (item.SourceId == newInterviewId.ToString("N") || item.SourceId == secondNewInterviewId.ToString("N")))
+                .Select(item => item.IdempotencyKey)
+                .ToArrayAsync();
+            Assert.Equal(2, practiceReservationKeys.Length);
+            Assert.Contains("interview-practice:practice-again-repeat-question", practiceReservationKeys);
+            Assert.Contains("interview-practice:practice-again-repeat-question-second", practiceReservationKeys);
+            Assert.Equal(3, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Reserve));
+        }
+
         using var replay = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{sourceInterviewId}/practice-again")
         {
             Content = JsonContent.Create(new
@@ -367,6 +402,19 @@ public sealed class PracticeLoopApiTests
         using var replayResponse = await client.SendAsync(replay);
         Assert.Equal(HttpStatusCode.Created, replayResponse.StatusCode);
         Assert.Equal(newInterviewId, (await DataAsync(replayResponse)).GetProperty("id").GetGuid());
+
+        using var secondReplay = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{sourceInterviewId}/practice-again")
+        {
+            Content = JsonContent.Create(new
+            {
+                questionId = secondQuestionId,
+                focus = InterviewQuestionValues.BehavioralStar
+            })
+        };
+        secondReplay.Headers.Add("Idempotency-Key", "practice-again-repeat-question-second");
+        using var secondReplayResponse = await client.SendAsync(secondReplay);
+        Assert.Equal(HttpStatusCode.Created, secondReplayResponse.StatusCode);
+        Assert.Equal(secondNewInterviewId, (await DataAsync(secondReplayResponse)).GetProperty("id").GetGuid());
 
         using var conflict = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{sourceInterviewId}/practice-again")
         {
@@ -385,7 +433,32 @@ public sealed class PracticeLoopApiTests
         var sourceReportAfterData = await DataAsync(sourceReportAfter);
         Assert.Equal(sourceReportId, sourceReportAfterData.GetProperty("id").GetGuid());
         Assert.Equal(sourceScore, sourceReportAfterData.GetProperty("overallScore").GetInt32());
-        Assert.Equal(2, await CountSessionsAsync(factory, account.UserId));
+        Assert.Equal(3, await CountSessionsAsync(factory, account.UserId));
+    }
+
+    [Fact]
+    public async Task PracticeAgainInvalidReasonReturnsReadableVietnameseMessage()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "Practice validation candidate");
+        Authorize(client, account);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{Guid.NewGuid()}/practice-again")
+        {
+            Content = JsonContent.Create(new { reason = "unsupported" })
+        };
+        request.Headers.Add("Idempotency-Key", "practice-again-invalid-reason");
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("PRACTICE_REASON_INVALID", await ErrorCodeAsync(response));
+        var message = await ErrorMessageAsync(response);
+        Assert.Equal("Nguồn luyện tập không hợp lệ.", message);
+        Assert.DoesNotContain("Ã", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Â", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("á»", message, StringComparison.Ordinal);
     }
 
     private static void Authorize(HttpClient client, Account account) =>
@@ -595,6 +668,12 @@ public sealed class PracticeLoopApiTests
     {
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         return document.RootElement.GetProperty("error").GetProperty("code").GetString();
+    }
+
+    private static async Task<string?> ErrorMessageAsync(HttpResponseMessage response)
+    {
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return document.RootElement.GetProperty("error").GetProperty("message").GetString();
     }
 
     private static DateTimeOffset At(int day) => new(2026, 9, day, 0, 0, 0, TimeSpan.Zero);

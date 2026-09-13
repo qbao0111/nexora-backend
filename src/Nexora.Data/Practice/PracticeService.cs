@@ -495,7 +495,7 @@ public sealed partial class PracticeService(
             // when a client reuses an idempotency key across operations.
             IdempotencyKey = operation == "interview.start"
                 ? $"interview:{key}"
-                : $"interview-practice:{fingerprint}",
+                : $"interview-practice:{key}",
             CreatedAt = now
         };
         var session = new InterviewSession
@@ -689,7 +689,7 @@ public sealed partial class PracticeService(
         if (command.QuestionId is { } questionId)
         {
             if (normalizedReason is not null && normalizedReason != InterviewPracticeValues.RepeatQuestion)
-                throw Validation("Reason khÃ´ng khá»›p vá»›i luyá»‡n láº¡i cÃ¢u há»i.", "PRACTICE_REASON_INVALID");
+                throw Validation("Reason không khớp với yêu cầu luyện lại câu hỏi.", "PRACTICE_REASON_INVALID");
             var sourceQuestion = source.Questions.SingleOrDefault(item => item.Id == questionId)
                 ?? throw NotFound();
             if (!source.Answers.Any(item => item.QuestionId == questionId && !string.IsNullOrWhiteSpace(item.Content)))
@@ -706,21 +706,21 @@ public sealed partial class PracticeService(
         else if (normalizedFocus is not null && InterviewPracticeValues.IsSupportedRubricFocus(normalizedFocus))
         {
             if (normalizedReason == InterviewPracticeValues.RepeatQuestion)
-                throw Validation("Reason khÃ´ng khá»›p vá»›i luyá»‡n táº­p.", "PRACTICE_REASON_INVALID");
+                throw Validation("Reason không khớp với yêu cầu luyện tập.", "PRACTICE_REASON_INVALID");
             focusTopic = ResolveWeakestTopic(source, normalizedFocus);
             reason = normalizedReason ?? InterviewPracticeValues.RubricWeakness;
         }
         else if (normalizedFocus is not null)
         {
             if (normalizedReason == InterviewPracticeValues.RepeatQuestion)
-                throw Validation("Reason khÃ´ng khá»›p vá»›i luyá»‡n táº­p.", "PRACTICE_REASON_INVALID");
+                throw Validation("Reason không khớp với yêu cầu luyện tập.", "PRACTICE_REASON_INVALID");
             focusTopic = normalizedFocus;
             reason = normalizedReason ?? InterviewPracticeValues.Manual;
         }
         else
         {
             if (normalizedReason == InterviewPracticeValues.RepeatQuestion)
-                throw Validation("Reason khÃ´ng khá»›p vá»›i luyá»‡n táº­p.", "PRACTICE_REASON_INVALID");
+                throw Validation("Reason không khớp với yêu cầu luyện tập.", "PRACTICE_REASON_INVALID");
             focusTopic = ResolveWeakestTopic(source, criterion: null);
             reason = normalizedReason ?? InterviewPracticeValues.RubricWeakness;
         }
@@ -1899,7 +1899,7 @@ public sealed partial class PracticeService(
     {
         var normalized = TrimToNull(reason)?.ToLowerInvariant();
         if (normalized is not null && !InterviewPracticeValues.IsSupportedReason(normalized))
-            throw Validation("Nguá»“n luyá»‡n táº­p khÃ´ng há»£p lá»‡.", "PRACTICE_REASON_INVALID");
+            throw Validation("Nguồn luyện tập không hợp lệ.", "PRACTICE_REASON_INVALID");
         return normalized;
     }
 
