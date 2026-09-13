@@ -43,11 +43,17 @@ public sealed class CareerProfileApiTests
         using var response = await client.GetAsync("/api/v1/me/career-profile");
         var data = await DataAsync(response);
 
+        Assert.Equal(account.UserId, data.GetProperty("profile").GetProperty("userId").GetGuid());
+        Assert.Equal(account.Email, data.GetProperty("profile").GetProperty("email").GetString());
+        Assert.Equal("Empty career profile candidate", data.GetProperty("profile").GetProperty("displayName").GetString());
+        Assert.Null(data.GetProperty("profile").GetProperty("yearsOfExperience").GetString());
         Assert.Null(data.GetProperty("primaryResume").GetString());
         Assert.Null(data.GetProperty("activeCareerGoal").GetString());
         Assert.Empty(data.GetProperty("skillProfileSummary").GetProperty("topCompetencies").EnumerateArray());
         Assert.Empty(data.GetProperty("skillProfileSummary").GetProperty("topWeaknessSignals").EnumerateArray());
         Assert.Null(data.GetProperty("learningPath").GetString());
+        Assert.True(data.GetProperty("onboarding").GetProperty("hasDisplayName").GetBoolean());
+        Assert.False(data.GetProperty("onboarding").GetProperty("hasYearsOfExperience").GetBoolean());
         Assert.False(data.GetProperty("onboarding").GetProperty("hasPrimaryResume").GetBoolean());
         Assert.False(data.GetProperty("onboarding").GetProperty("hasActiveCareerGoal").GetBoolean());
         Assert.False(data.GetProperty("onboarding").GetProperty("isComplete").GetBoolean());
@@ -55,6 +61,116 @@ public sealed class CareerProfileApiTests
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Equal(0, await db.LearningPaths.CountAsync(item => item.UserId == account.UserId));
+        Assert.Null(await db.UserProfiles.Where(item => item.UserId == account.UserId)
+            .Select(item => item.YearsOfExperience).SingleAsync());
+    }
+
+    [Fact]
+    public async Task ProfilePatchUpdatesOnlySuppliedFieldsAndUsesAuthenticatedOwner()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var ownerClient = factory.CreateHttpsClient();
+        using var otherClient = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(ownerClient, "Profile owner");
+        var other = await RegisterAsync(otherClient, "Other profile owner");
+        Authorize(ownerClient, owner);
+        Authorize(otherClient, other);
+
+        using var displayUpdate = await ownerClient.PatchAsJsonAsync("/api/v1/me/profile", new
+        {
+            displayName = "  Updated profile owner  ",
+            email = "attacker@example.test",
+            userId = other.UserId
+        });
+        var displayData = await DataAsync(displayUpdate);
+        Assert.Equal(owner.UserId, displayData.GetProperty("userId").GetGuid());
+        Assert.Equal(owner.Email, displayData.GetProperty("email").GetString());
+        Assert.Equal("Updated profile owner", displayData.GetProperty("displayName").GetString());
+        Assert.Null(displayData.GetProperty("yearsOfExperience").GetString());
+        Assert.DoesNotContain("roles", displayData.EnumerateObject().Select(item => item.Name), StringComparer.Ordinal);
+
+        using var yearsUpdate = await ownerClient.PatchAsJsonAsync(
+            "/api/v1/me/profile", new { yearsOfExperience = 2 });
+        var yearsData = await DataAsync(yearsUpdate);
+        Assert.Equal(owner.UserId, yearsData.GetProperty("userId").GetGuid());
+        Assert.Equal(owner.Email, yearsData.GetProperty("email").GetString());
+        Assert.Equal("Updated profile owner", yearsData.GetProperty("displayName").GetString());
+        Assert.Equal(2, yearsData.GetProperty("yearsOfExperience").GetInt32());
+
+        using var otherProfile = await otherClient.GetAsync("/api/v1/me/career-profile");
+        var otherData = await DataAsync(otherProfile);
+        Assert.Equal(other.UserId, otherData.GetProperty("profile").GetProperty("userId").GetGuid());
+        Assert.Equal("Other profile owner", otherData.GetProperty("profile").GetProperty("displayName").GetString());
+        Assert.Null(otherData.GetProperty("profile").GetProperty("yearsOfExperience").GetString());
+    }
+
+    [Fact]
+    public async Task ProfilePatchRejectsInvalidValues()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "Profile validation candidate");
+        Authorize(client, account);
+
+        using var negativeYears = await client.PatchAsJsonAsync(
+            "/api/v1/me/profile", new { yearsOfExperience = -1 });
+        Assert.Equal(HttpStatusCode.BadRequest, negativeYears.StatusCode);
+        Assert.Equal("VALIDATION_ERROR", await ErrorCodeAsync(negativeYears));
+
+        using var excessiveYears = await client.PatchAsJsonAsync(
+            "/api/v1/me/profile", new { yearsOfExperience = 61 });
+        Assert.Equal(HttpStatusCode.BadRequest, excessiveYears.StatusCode);
+        Assert.Equal("VALIDATION_ERROR", await ErrorCodeAsync(excessiveYears));
+
+        using var blankDisplayName = await client.PatchAsJsonAsync(
+            "/api/v1/me/profile", new { displayName = "  " });
+        Assert.Equal(HttpStatusCode.BadRequest, blankDisplayName.StatusCode);
+        Assert.Equal("DISPLAY_NAME_REQUIRED", await ErrorCodeAsync(blankDisplayName));
+
+        using var oversizedDisplayName = await client.PatchAsJsonAsync(
+            "/api/v1/me/profile", new { displayName = new string('x', 121) });
+        Assert.Equal(HttpStatusCode.BadRequest, oversizedDisplayName.StatusCode);
+        Assert.Equal("VALIDATION_ERROR", await ErrorCodeAsync(oversizedDisplayName));
+    }
+
+    [Fact]
+    public async Task OnboardingCompletesWithOnlyProfilePrimaryResumeAndActiveGoal()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "Minimal setup candidate");
+        Authorize(client, account);
+
+        using var profileUpdate = await client.PatchAsJsonAsync(
+            "/api/v1/me/profile", new { yearsOfExperience = 0 });
+        Assert.Equal(HttpStatusCode.OK, profileUpdate.StatusCode);
+
+        var resumeId = await SeedResumeAsync(factory, account.UserId, PracticeValues.Ready, At(1), "primary.pdf");
+        using var selection = await client.PutAsJsonAsync(
+            "/api/v1/me/primary-resume", new { resumeId });
+        Assert.Equal(HttpStatusCode.OK, selection.StatusCode);
+
+        using var goalResponse = await client.PostAsJsonAsync("/api/v1/career-goals", new
+        {
+            targetRole = "Backend Developer",
+            seniority = "mid"
+        });
+        Assert.Equal(HttpStatusCode.Created, goalResponse.StatusCode);
+
+        using var response = await client.GetAsync("/api/v1/me/career-profile");
+        var data = await DataAsync(response);
+        var onboarding = data.GetProperty("onboarding");
+        Assert.True(onboarding.GetProperty("hasDisplayName").GetBoolean());
+        Assert.True(onboarding.GetProperty("hasYearsOfExperience").GetBoolean());
+        Assert.True(onboarding.GetProperty("hasPrimaryResume").GetBoolean());
+        Assert.True(onboarding.GetProperty("hasActiveCareerGoal").GetBoolean());
+        Assert.True(onboarding.GetProperty("isComplete").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("learningPath").ValueKind);
+        Assert.Empty(data.GetProperty("skillProfileSummary").GetProperty("topCompetencies").EnumerateArray());
+        Assert.Empty(data.GetProperty("skillProfileSummary").GetProperty("topWeaknessSignals").EnumerateArray());
     }
 
     [Fact]
@@ -249,6 +365,11 @@ public sealed class CareerProfileApiTests
             "/api/v1/me/primary-resume", new { resumeId = primaryResumeId });
         Assert.Equal(HttpStatusCode.OK, selection.StatusCode);
 
+        using var profileUpdate = await client.PatchAsJsonAsync(
+            "/api/v1/me/profile", new { yearsOfExperience = 6 });
+        var profileData = await DataAsync(profileUpdate);
+        Assert.Equal(6, profileData.GetProperty("yearsOfExperience").GetInt32());
+
         using var response = await client.GetAsync("/api/v1/me/career-profile");
         var responseBody = await response.Content.ReadAsStringAsync();
         Assert.DoesNotContain("extractedText", responseBody, StringComparison.Ordinal);
@@ -261,6 +382,7 @@ public sealed class CareerProfileApiTests
 
         Assert.Equal(account.UserId, data.GetProperty("profile").GetProperty("userId").GetGuid());
         Assert.Equal("Full career profile candidate", data.GetProperty("profile").GetProperty("displayName").GetString());
+        Assert.Equal(6, data.GetProperty("profile").GetProperty("yearsOfExperience").GetInt32());
         Assert.Equal(primaryResumeId, primaryResume.GetProperty("id").GetGuid());
         Assert.Equal(latestPrimaryAnalysisId, primaryResume.GetProperty("latestAnalysis").GetProperty("id").GetGuid());
         Assert.Equal("field_benchmark", primaryResume.GetProperty("latestAnalysis").GetProperty("mode").GetString());
@@ -280,9 +402,34 @@ public sealed class CareerProfileApiTests
         Assert.Equal("active", learningPath.GetProperty("status").GetString());
         Assert.Equal(1, learningPath.GetProperty("pendingActivityCount").GetInt32());
         Assert.Equal(1, learningPath.GetProperty("completedActivityCount").GetInt32());
+        Assert.True(data.GetProperty("onboarding").GetProperty("hasDisplayName").GetBoolean());
+        Assert.True(data.GetProperty("onboarding").GetProperty("hasYearsOfExperience").GetBoolean());
         Assert.True(data.GetProperty("onboarding").GetProperty("hasPrimaryResume").GetBoolean());
         Assert.True(data.GetProperty("onboarding").GetProperty("hasActiveCareerGoal").GetBoolean());
         Assert.True(data.GetProperty("onboarding").GetProperty("isComplete").GetBoolean());
+
+        using (var deactivateGoal = await client.PatchAsJsonAsync(
+                   $"/api/v1/career-goals/{goalId}", new { active = false }))
+        {
+            Assert.Equal(HttpStatusCode.OK, deactivateGoal.StatusCode);
+        }
+
+        using (var afterDeactivate = await client.GetAsync("/api/v1/me/career-profile"))
+        {
+            var deactivated = await DataAsync(afterDeactivate);
+            Assert.Equal(JsonValueKind.Null, deactivated.GetProperty("activeCareerGoal").ValueKind);
+            Assert.True(deactivated.GetProperty("onboarding").GetProperty("hasDisplayName").GetBoolean());
+            Assert.True(deactivated.GetProperty("onboarding").GetProperty("hasYearsOfExperience").GetBoolean());
+            Assert.True(deactivated.GetProperty("onboarding").GetProperty("hasPrimaryResume").GetBoolean());
+            Assert.False(deactivated.GetProperty("onboarding").GetProperty("hasActiveCareerGoal").GetBoolean());
+            Assert.False(deactivated.GetProperty("onboarding").GetProperty("isComplete").GetBoolean());
+        }
+
+        using (var reactivateGoal = await client.PatchAsJsonAsync(
+                   $"/api/v1/career-goals/{goalId}", new { active = true }))
+        {
+            Assert.Equal(HttpStatusCode.OK, reactivateGoal.StatusCode);
+        }
 
         using (var clear = await client.PutAsJsonAsync(
                    "/api/v1/me/primary-resume", new { resumeId = (Guid?)null }))
@@ -298,6 +445,8 @@ public sealed class CareerProfileApiTests
             Assert.Equal(JsonValueKind.Null, cleared.GetProperty("primaryResume").ValueKind);
             Assert.Equal(goalId, cleared.GetProperty("activeCareerGoal").GetProperty("id").GetGuid());
             Assert.Equal("active", cleared.GetProperty("learningPath").GetProperty("status").GetString());
+            Assert.True(cleared.GetProperty("onboarding").GetProperty("hasDisplayName").GetBoolean());
+            Assert.True(cleared.GetProperty("onboarding").GetProperty("hasYearsOfExperience").GetBoolean());
             Assert.True(cleared.GetProperty("onboarding").GetProperty("hasActiveCareerGoal").GetBoolean());
             Assert.False(cleared.GetProperty("onboarding").GetProperty("isComplete").GetBoolean());
             Assert.Equal(competencies.Length, cleared.GetProperty("skillProfileSummary").GetProperty("topCompetencies").GetArrayLength());
@@ -328,7 +477,8 @@ public sealed class CareerProfileApiTests
         var data = await DataAsync(login);
         return new Account(
             data.GetProperty("user").GetProperty("id").GetGuid(),
-            data.GetProperty("accessToken").GetString()!);
+            data.GetProperty("accessToken").GetString()!,
+            email);
     }
 
     private static async Task<Guid> SeedResumeAsync(
@@ -486,5 +636,5 @@ public sealed class CareerProfileApiTests
 
     private static DateTimeOffset At(int day) => new(2026, 9, day, 0, 0, 0, TimeSpan.Zero);
 
-    private sealed record Account(Guid UserId, string AccessToken);
+    private sealed record Account(Guid UserId, string AccessToken, string Email);
 }

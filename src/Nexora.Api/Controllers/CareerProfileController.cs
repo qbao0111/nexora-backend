@@ -31,6 +31,7 @@ public sealed class CareerProfileController(ICareerProfileService careerProfileS
             profile.Profile.UserId,
             profile.Profile.Email,
             profile.Profile.DisplayName,
+            profile.Profile.YearsOfExperience,
             profile.Profile.AvatarUrl),
         profile.PrimaryResume is null ? null : Map(profile.PrimaryResume),
         profile.ActiveCareerGoal is null ? null : new CareerProfileGoalResponse(
@@ -52,6 +53,8 @@ public sealed class CareerProfileController(ICareerProfileService careerProfileS
             profile.LearningPath.PendingActivityCount,
             profile.LearningPath.CompletedActivityCount),
         new CareerProfileOnboardingResponse(
+            profile.Onboarding.HasDisplayName,
+            profile.Onboarding.HasYearsOfExperience,
             profile.Onboarding.HasPrimaryResume,
             profile.Onboarding.HasActiveCareerGoal,
             profile.Onboarding.IsComplete));

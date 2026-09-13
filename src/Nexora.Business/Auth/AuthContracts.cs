@@ -9,6 +9,7 @@ public sealed record VerifyEmailCommand(Guid UserId, string Token);
 public sealed record ResendVerificationCommand(string Email);
 public sealed record EmailVerificationResult(string Email, bool AlreadyVerified);
 public sealed record ExternalIdentity(string Provider, string ProviderSubject, string Email, string? DisplayName);
+public sealed record UserProfileView(Guid UserId, string Email, string? DisplayName, int? YearsOfExperience);
 public sealed record AuthenticatedUser(Guid Id, string Email, string? DisplayName, IReadOnlyCollection<string> Roles);
 public sealed record AuthSession(AuthenticatedUser User, string AccessToken, DateTimeOffset AccessTokenExpiresAt, string RefreshToken, DateTimeOffset RefreshTokenExpiresAt);
 
@@ -24,7 +25,11 @@ public interface IAuthService
     Task RevokeRefreshTokenAsync(string refreshToken, CancellationToken cancellationToken);
     Task RevokeAllSessionsAsync(Guid userId, CancellationToken cancellationToken);
     Task<AuthenticatedUser> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken);
-    Task<AuthenticatedUser> UpdateProfileAsync(Guid userId, string? displayName, CancellationToken cancellationToken);
+    Task<UserProfileView> UpdateProfileAsync(
+        Guid userId,
+        string? displayName,
+        int? yearsOfExperience,
+        CancellationToken cancellationToken);
     Task ChangePasswordAsync(Guid userId, string currentPassword, string newPassword, CancellationToken cancellationToken);
 }
 

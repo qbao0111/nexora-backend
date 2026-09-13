@@ -19,6 +19,7 @@ public sealed record CareerProfileIdentityView(
     Guid UserId,
     string Email,
     string? DisplayName,
+    int? YearsOfExperience,
     string? AvatarUrl);
 
 public sealed record CareerProfileGoalView(
@@ -41,6 +42,8 @@ public sealed record CareerProfileLearningPathSummary(
     int CompletedActivityCount);
 
 public sealed record CareerProfileOnboardingSummary(
+    bool HasDisplayName,
+    bool HasYearsOfExperience,
     bool HasPrimaryResume,
     bool HasActiveCareerGoal,
     bool IsComplete);

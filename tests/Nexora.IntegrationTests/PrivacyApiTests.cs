@@ -26,6 +26,10 @@ public sealed class PrivacyApiTests
         var account = await RegisterAsync(client);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
 
+        using (var profile = await client.PatchAsJsonAsync(
+                   "/api/v1/me/profile", new { yearsOfExperience = 4 }))
+            Assert.Equal(HttpStatusCode.OK, profile.StatusCode);
+
         using (var jd = await client.PostAsJsonAsync("/api/v1/job-descriptions", new
         {
             title = "Private role",
@@ -57,6 +61,7 @@ public sealed class PrivacyApiTests
         Assert.Equal(HttpStatusCode.OK, export.StatusCode);
         var exported = await DataAsync(export);
         Assert.Equal(account.UserId, exported.GetProperty("profile").GetProperty("id").GetGuid());
+        Assert.Equal(4, exported.GetProperty("profile").GetProperty("yearsOfExperience").GetInt32());
         Assert.Equal("Private role", exported.GetProperty("jobDescriptions")[0].GetProperty("title").GetString());
         Assert.Equal("Backend Developer", exported.GetProperty("careerGoals")[0].GetProperty("targetRole").GetString());
         Assert.DoesNotContain("storageKey", exported.GetRawText(), StringComparison.OrdinalIgnoreCase);

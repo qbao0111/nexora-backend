@@ -49,7 +49,7 @@ public sealed partial class PrivacyService(
 
         return new CoreDataExport(
             timeProvider.GetUtcNow(),
-            new ExportProfile(user.Id, user.Email ?? string.Empty, user.Profile?.DisplayName, user.CreatedAt),
+            new ExportProfile(user.Id, user.Email ?? string.Empty, user.Profile?.DisplayName, user.Profile?.YearsOfExperience, user.CreatedAt),
             await billingService.GetSummaryAsync(userId, cancellationToken),
             resumes.OrderBy(item => item.CreatedAt).Select(item => new ExportResume(item.Id, item.StoredFile.FileName, item.StoredFile.ContentType,
                 item.StoredFile.Size, item.Status, item.CreatedAt)).ToArray(),

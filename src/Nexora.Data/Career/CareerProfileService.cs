@@ -79,6 +79,7 @@ public sealed class CareerProfileService(
                 item.Id,
                 item.Email,
                 item.Profile == null ? null : item.Profile.DisplayName,
+                item.Profile == null ? null : item.Profile.YearsOfExperience,
                 item.Profile == null ? null : item.Profile.PrimaryResumeId))
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw NotFound();
@@ -115,13 +116,19 @@ public sealed class CareerProfileService(
         var learningPath = activeCareerGoal is null
             ? null
             : await LoadLearningPathSummaryAsync(userId, activeCareerGoal.Id, cancellationToken);
+        var hasDisplayName = !string.IsNullOrWhiteSpace(account.DisplayName);
+        var hasYearsOfExperience = account.YearsOfExperience is not null;
+        var hasPrimaryResume = primaryResume is not null;
+        var hasActiveCareerGoal = activeCareerGoal is not null;
         var onboarding = new CareerProfileOnboardingSummary(
-            primaryResume is not null,
-            activeCareerGoal is not null,
-            primaryResume is not null && activeCareerGoal is not null);
+            hasDisplayName,
+            hasYearsOfExperience,
+            hasPrimaryResume,
+            hasActiveCareerGoal,
+            hasDisplayName && hasYearsOfExperience && hasPrimaryResume && hasActiveCareerGoal);
 
         return new CareerProfileView(
-            new CareerProfileIdentityView(account.Id, account.Email ?? string.Empty, account.DisplayName, AvatarUrl: null),
+            new CareerProfileIdentityView(account.Id, account.Email ?? string.Empty, account.DisplayName, account.YearsOfExperience, AvatarUrl: null),
             primaryResume,
             activeCareerGoal,
             skillSummary,
@@ -196,7 +203,7 @@ public sealed class CareerProfileService(
     private static BusinessException NotFound() =>
         new("NOT_FOUND", "Không tìm thấy tài nguyên.", BusinessErrorKind.NotFound);
 
-    private sealed record AccountRow(Guid Id, string? Email, string? DisplayName, Guid? PrimaryResumeId);
+    private sealed record AccountRow(Guid Id, string? Email, string? DisplayName, int? YearsOfExperience, Guid? PrimaryResumeId);
     private sealed record PrimaryResumeRow(Guid Id, string FileName, string Status, DateTimeOffset CreatedAt);
     private sealed record LearningPathRow(Guid Id, string Status);
     private sealed record LearningPathCounts(int PendingActivityCount, int CompletedActivityCount);

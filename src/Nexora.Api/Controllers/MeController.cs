@@ -21,8 +21,21 @@ public sealed class MeController(IAuthService authService, IBillingService billi
     }
 
     [HttpPatch("profile")]
-    public async Task<ActionResult<ApiResponse<UserResponse>>> UpdateProfile(UpdateProfileRequest request, CancellationToken cancellationToken) =>
-        Ok(new ApiResponse<UserResponse>(Map(await authService.UpdateProfileAsync(User.GetRequiredUserId(), request.DisplayName, cancellationToken))));
+    public async Task<ActionResult<ApiResponse<UserProfileResponse>>> UpdateProfile(
+        UpdateProfileRequest request,
+        CancellationToken cancellationToken)
+    {
+        var profile = await authService.UpdateProfileAsync(
+            User.GetRequiredUserId(),
+            request.DisplayName,
+            request.YearsOfExperience,
+            cancellationToken);
+        return Ok(new ApiResponse<UserProfileResponse>(new UserProfileResponse(
+            profile.UserId,
+            profile.Email,
+            profile.DisplayName,
+            profile.YearsOfExperience)));
+    }
 
     [HttpPost("password")]
     public async Task<IActionResult> ChangePassword(ChangePasswordRequest request, CancellationToken cancellationToken)
