@@ -73,6 +73,118 @@ public sealed class SkillProfileApiTests
     }
 
     [Fact]
+    public async Task OnlyLatestValidCvAnalysisContributesWeaknessSignals()
+    {
+        using var factory = NewFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        var oldAt = new DateTimeOffset(2026, 9, 11, 8, 0, 0, TimeSpan.Zero);
+        await SeedResumeAnalysisAsync(factory, account.UserId, PracticeValues.Completed,
+            ValidResumeOutput(70, ["SQL", "Agile"], []), oldAt);
+        await SeedResumeAnalysisAsync(factory, account.UserId, PracticeValues.Completed,
+            ValidResumeOutput(80, ["API integration"], []), oldAt.AddDays(1));
+
+        var labels = await WeaknessLabelsAsync(client);
+
+        Assert.Equal(["API integration"], labels);
+    }
+
+    [Fact]
+    public async Task LatestValidCvAnalysisDeduplicatesDuplicateLabels()
+    {
+        using var factory = NewFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        await SeedResumeAnalysisAsync(factory, account.UserId, PracticeValues.Completed,
+            ValidResumeOutput(80, ["API", " api ", "API"], []),
+            new DateTimeOffset(2026, 9, 12, 8, 0, 0, TimeSpan.Zero));
+
+        var labels = await WeaknessLabelsAsync(client);
+
+        Assert.Equal(["API"], labels);
+    }
+
+    [Fact]
+    public async Task LatestValidCvAnalysisDeduplicatesCaseAndWhitespace()
+    {
+        using var factory = NewFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        await SeedResumeAnalysisAsync(factory, account.UserId, PracticeValues.Completed,
+            ValidResumeOutput(80, [" SQL ", "sql"], ["Agile", " agile "]),
+            new DateTimeOffset(2026, 9, 12, 8, 0, 0, TimeSpan.Zero));
+
+        var labels = await WeaknessLabelsAsync(client);
+
+        Assert.Equal(["Agile", "SQL"], labels);
+    }
+
+    [Fact]
+    public async Task MalformedNewestCompletedCvAnalysisFallsBackToLatestValidAnalysis()
+    {
+        using var factory = NewFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        var oldAt = new DateTimeOffset(2026, 9, 11, 8, 0, 0, TimeSpan.Zero);
+        await SeedResumeAnalysisAsync(factory, account.UserId, PracticeValues.Completed,
+            ValidResumeOutput(70, ["Previous weakness"], []), oldAt);
+        await SeedResumeAnalysisAsync(factory, account.UserId, PracticeValues.Completed,
+            "{not-json", oldAt.AddDays(1));
+
+        var labels = await WeaknessLabelsAsync(client);
+
+        Assert.Equal(["Previous weakness"], labels);
+    }
+
+    [Fact]
+    public async Task SemanticallyInvalidNewestCompletedCvAnalysisFallsBackToLatestValidAnalysis()
+    {
+        using var factory = NewFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        var oldAt = new DateTimeOffset(2026, 9, 11, 8, 0, 0, TimeSpan.Zero);
+        await SeedResumeAnalysisAsync(factory, account.UserId, PracticeValues.Completed,
+            ValidResumeOutput(70, ["Previous weakness"], []), oldAt);
+        await SeedResumeAnalysisAsync(factory, account.UserId, PracticeValues.Completed,
+            ValidResumeOutput(101, ["Invalid newest weakness"], []), oldAt.AddDays(1));
+
+        var labels = await WeaknessLabelsAsync(client);
+
+        Assert.Equal(["Previous weakness"], labels);
+    }
+
+    [Fact]
+    public async Task NewerFailedOrIncompleteCvAnalysisDoesNotReplaceLatestValidAnalysis()
+    {
+        using var factory = NewFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        var oldAt = new DateTimeOffset(2026, 9, 11, 8, 0, 0, TimeSpan.Zero);
+        await SeedResumeAnalysisAsync(factory, account.UserId, PracticeValues.Completed,
+            ValidResumeOutput(70, ["Current valid weakness"], []), oldAt);
+        await SeedResumeAnalysisAsync(factory, account.UserId, PracticeValues.Failed,
+            ValidResumeOutput(80, ["Failed weakness"], []), oldAt.AddDays(1));
+        await SeedResumeAnalysisAsync(factory, account.UserId, PracticeValues.Processing,
+            ValidResumeOutput(90, ["Incomplete weakness"], []), oldAt.AddDays(2));
+
+        var labels = await WeaknessLabelsAsync(client);
+
+        Assert.Equal(["Current valid weakness"], labels);
+    }
+
+    [Fact]
     public async Task FailedAndIncompleteCvAnalysesAreIgnored()
     {
         using var factory = NewFactory();
@@ -378,8 +490,7 @@ public sealed class SkillProfileApiTests
         var data = await DataAsync(response);
 
         Assert.Empty(data.GetProperty("competencies").EnumerateArray());
-        Assert.Contains(data.GetProperty("weaknessSignals").EnumerateArray(),
-            item => item.GetProperty("label").GetString() == "qualitative gap");
+        Assert.Empty(data.GetProperty("weaknessSignals").EnumerateArray());
     }
 
     private static NexoraApiFactory NewFactory() => new();
@@ -708,6 +819,16 @@ public sealed class SkillProfileApiTests
     {
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         return document.RootElement.GetProperty("data").Clone();
+    }
+
+    private static async Task<string[]> WeaknessLabelsAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync("/api/v1/skill-profile");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var data = await DataAsync(response);
+        return data.GetProperty("weaknessSignals").EnumerateArray()
+            .Select(item => item.GetProperty("label").GetString()!)
+            .ToArray();
     }
 
     private sealed record Account(Guid UserId, string AccessToken);

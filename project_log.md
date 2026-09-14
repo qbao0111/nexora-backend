@@ -2,6 +2,21 @@
 
 This log records completed implementation milestones and verification evidence. It must never contain credentials or other secrets.
 
+## 2026-09-14 — Current CV weakness-signal scoping
+
+- Status: Implementation complete / Ready for independent review
+- Owner: Codex / backend workstream
+- Branch: `fix/current-cv-weakness-signals`
+- Base main: `51209413a1ef5d6d70b1226d5d5d9e9de67157e7` (`origin/main` at branch creation)
+- Implementation commit: `5e5da637913baa51831eafde2e2d3d9904053141`
+- Scope: Qualitative CV `weaknessSignals` now come only from the latest valid completed owner-scoped `ResumeAnalysis`, using `CompletedAt ?? UpdatedAt` descending. Malformed JSON, unparseable modes and outputs rejected by the existing mode-specific validator are skipped so the next latest valid analysis is used. Labels are trimmed, case-insensitively deduplicated and deterministically ordered within the existing safe maximum; no numeric score is assigned to qualitative signals.
+- Separation: Valid completed ResumeAnalysis breakdowns continue to aggregate numerically across history with existing B10 semantics. Interview, STAR, Scenario, B11, B12 and B13 behavior is unchanged; no `PracticeService.cs` change was made.
+- Tests: Added focused integration regressions for one valid analysis, historical-signal exclusion, duplicate/case/whitespace normalization, malformed and semantically invalid fallback, and newer failed/incomplete analyses. Existing numeric/interview/STAR/scenario coverage remains green.
+- Migration impact: None. No entity, `DbSet`, migration or ModelSnapshot change.
+- Verification: `dotnet tool restore`; `dotnet restore Nexora.slnx`; Release build passed with 0 warnings/errors; 424 unit tests and 291 integration tests passed; focused Skill Profile tests passed 23/23; EF reported no pending model changes; scoped style/analyzer verification passed; NuGet vulnerability audit reported no vulnerable packages; `git diff --check` passed.
+- FE impact: No frontend code changed. The backend contract now explicitly defines `skillProfile.weaknessSignals` as the canonical current set; future Primary CV support should scope it to the latest valid completed analysis for that CV.
+- Dependencies/blockers: No Pull Request or merge was created; independent review remains required.
+
 ## 2026-09-11 — Course MVP scope normalization
 
 - Status: Scope decision recorded; documentation normalized for review
