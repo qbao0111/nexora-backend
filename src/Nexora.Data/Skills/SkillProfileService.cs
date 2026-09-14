@@ -42,9 +42,20 @@ public sealed class SkillProfileService(NexoraDbContext dbContext) : ISkillProfi
             .ToArrayAsync(cancellationToken);
 
         var evidence = new List<SkillProfileEvidence>();
-        var weaknessSignals = new List<SkillProfileWeaknessSignal>();
-        foreach (var row in resumeAnalyses)
-            ReadResumeAnalysis(row, evidence, weaknessSignals);
+        ResumeAnalysisSelection? latestValidResumeAnalysis = null;
+        foreach (var row in resumeAnalyses
+                     .OrderByDescending(item => item.CompletedAt ?? item.UpdatedAt)
+                     .ThenByDescending(item => item.Id))
+        {
+            if (!TryReadValidatedResumeAnalysis(row, out var output)) continue;
+
+            ReadResumeAnalysisEvidence(row, output, evidence);
+            latestValidResumeAnalysis ??= new ResumeAnalysisSelection(row, output);
+        }
+
+        var weaknessSignals = latestValidResumeAnalysis is null
+            ? new List<SkillProfileWeaknessSignal>()
+            : ReadResumeAnalysisWeaknessSignals(latestValidResumeAnalysis.Row, latestValidResumeAnalysis.Output);
 
         var validReportSessions = new HashSet<Guid>();
         foreach (var row in reports)
@@ -84,35 +95,13 @@ public sealed class SkillProfileService(NexoraDbContext dbContext) : ISkillProfi
         return SkillProfileAggregator.Aggregate(evidence, weaknessSignals);
     }
 
-    private static void ReadResumeAnalysis(
+    private static void ReadResumeAnalysisEvidence(
         ResumeAnalysisRow row,
-        List<SkillProfileEvidence> evidence,
-        List<SkillProfileWeaknessSignal> weaknessSignals)
+        ResumeAnalysisOutput output,
+        List<SkillProfileEvidence> evidence)
     {
-        if (!TryDeserialize(row.Result, out ResumeAnalysisOutput? output) || output is null) return;
-
         var timestamp = row.CompletedAt ?? row.UpdatedAt;
-        foreach (var label in (output.Gaps ?? []).Concat(output.MissingKeywordsOrSkills ?? []).Take(12))
-        {
-            var normalized = label?.Trim();
-            if (!string.IsNullOrWhiteSpace(normalized) && normalized.Length <= MaximumQualitativeLabelLength)
-                weaknessSignals.Add(new SkillProfileWeaknessSignal(SkillProfileSourceTypes.ResumeAnalysis, normalized, timestamp));
-        }
-
-        if (!ResumeAnalysisModes.TryParse(row.Mode, out var mode)) return;
-
-        var context = new AiOperationContext(
-            row.Id.ToString("N"),
-            Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                [ResumeAnalysisMetadata.Mode] = mode.ToWireValue()
-            });
-        var validation = mode == ResumeAnalysisMode.JobTargeted
-            ? ResumeAnalysisValidator.NormalizeJobTargeted(output, context)
-            : ResumeAnalysisValidator.NormalizeFieldBenchmark(output, context);
-        if (!validation.IsValid || validation.NormalizedValue?.Breakdown is null) return;
-
-        foreach (var item in validation.NormalizedValue.Breakdown.OrderBy(item => item.Key, StringComparer.Ordinal))
+        foreach (var item in output.Breakdown!.OrderBy(item => item.Key, StringComparer.Ordinal))
         {
             var code = SkillProfileTaxonomy.CreateCode("resume", item.Key);
             if (code is null) continue;
@@ -126,6 +115,42 @@ public sealed class SkillProfileService(NexoraDbContext dbContext) : ISkillProfi
                 item.Value,
                 timestamp));
         }
+    }
+
+    private static List<SkillProfileWeaknessSignal> ReadResumeAnalysisWeaknessSignals(
+        ResumeAnalysisRow row,
+        ResumeAnalysisOutput output)
+    {
+        var timestamp = row.CompletedAt ?? row.UpdatedAt;
+        return (output.Gaps ?? []).Concat(output.MissingKeywordsOrSkills ?? [])
+            .Take(12)
+            .Select(label => label?.Trim())
+            .Where(label => !string.IsNullOrWhiteSpace(label) && label.Length <= MaximumQualitativeLabelLength)
+            .Select(label => new SkillProfileWeaknessSignal(SkillProfileSourceTypes.ResumeAnalysis, label!, timestamp))
+            .ToList();
+    }
+
+    private static bool TryReadValidatedResumeAnalysis(
+        ResumeAnalysisRow row,
+        out ResumeAnalysisOutput output)
+    {
+        output = null!;
+        if (!TryDeserialize(row.Result, out ResumeAnalysisOutput? parsed) || parsed is null) return false;
+        if (!ResumeAnalysisModes.TryParse(row.Mode, out var mode)) return false;
+
+        var context = new AiOperationContext(
+            row.Id.ToString("N"),
+            Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [ResumeAnalysisMetadata.Mode] = mode.ToWireValue()
+            });
+        var validation = mode == ResumeAnalysisMode.JobTargeted
+            ? ResumeAnalysisValidator.NormalizeJobTargeted(parsed, context)
+            : ResumeAnalysisValidator.NormalizeFieldBenchmark(parsed, context);
+        if (!validation.IsValid || validation.NormalizedValue?.Breakdown is null) return false;
+
+        output = validation.NormalizedValue;
+        return true;
     }
 
     private static void ReadScenarioAttempt(ScenarioAttemptRow row, List<SkillProfileEvidence> evidence)
@@ -255,6 +280,7 @@ public sealed class SkillProfileService(NexoraDbContext dbContext) : ISkillProfi
     }
 
     private sealed record ResumeAnalysisRow(Guid Id, string Mode, string? Result, DateTimeOffset? CompletedAt, DateTimeOffset UpdatedAt);
+    private sealed record ResumeAnalysisSelection(ResumeAnalysisRow Row, ResumeAnalysisOutput Output);
     private sealed record InterviewReportRow(Guid Id, Guid InterviewSessionId, string Rubric, DateTimeOffset CreatedAt);
     private sealed record InterviewAnswerRow(Guid Id, Guid InterviewSessionId, string Evaluation, DateTimeOffset CreatedAt);
     private sealed record StarAttemptRow(Guid Id, string? EvaluationJson, DateTimeOffset? CompletedAt, DateTimeOffset UpdatedAt);
