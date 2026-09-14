@@ -174,7 +174,7 @@ does not consume another interview reservation.
   - Non-behavioral questions: `star.applicable` is server-normalized to `false` without failing evaluation; STAR component details are suppressed.
   - Behavioral questions: If model omits STAR or returns `applicable = false`, the executor marks the issue repairable and attempts repair once.
   - Standalone `star.evaluate` (Scenario/STAR feature): strictly requires `applicable = true`.
-  - **Canonical STAR Instructions (`StarSemantics.CanonicalInstructions`)**: Unified single source of truth embedded in both `interview.answer.evaluate` (`interview-eval-v7`) and `star.evaluate` (`star-eval-v4`). Defines clear technical examples for Situation (system state/incident), Task (candidate's specific duty/ownership), Action (investigation/profiling/indexing/caching/code changes), and Result (latency reduction, recovery, metrics, lessons).
+  - **Canonical STAR Instructions (`StarSemantics.CanonicalInstructions`)**: Unified single source of truth embedded in both `interview.answer.evaluate` (`interview-eval-v8`) and `star.evaluate` (`star-eval-v4`). Defines clear technical examples for Situation (system state/incident), Task (candidate's specific duty/ownership), Action (investigation/profiling/indexing/caching/code changes), and Result (latency reduction, recovery, metrics, lessons).
   - **Question-Focus Detachment**: Evaluator must scan the entire answer for all four components. Phrasing of the interview question must not constrain component detection.
   - **Evidence-First Extraction**: For every component:
     - If concrete evidence exists: `detected = true`, `evidence = "<exact quote>"`, `score = 1..100`.
@@ -196,6 +196,7 @@ does not consume another interview reservation.
   - **Per-answer coaching (`interview.evaluate`)**:
     - The same structured call returns rubric scores, feedback, STAR (when applicable), `strengths`, `improvements` and `improvedAnswer`; no second rewrite call is made.
     - `strengths` contains 1–3 nonblank grounded items when the answer demonstrates positive evidence, or an empty collection when no grounded positive evidence is demonstrated and all rubric scores are below 60. `improvements` contains 1–3 nonblank actionable items (maximum 500 characters each). `improvedAnswer` is nonblank and capped at 4,000 characters.
+    - Strength grounding uses only the submitted candidate answer plus rubric evidence after canonical rubric validation; each improvement must state a direct action with a Vietnamese or English action verb rather than passive criticism.
     - When the original answer is available to Business validation, strengths and the improved answer must retain meaningful evidence from it. New numeric values, technologies, achievements or experience are rejected; missing evidence is described as a suggestion to add it, never fabricated. The normalized coaching is persisted with the answer evaluation and remains provider-neutral.
   - **Context Budgeting**:
   - `ResumeContextBuilder` prioritizes candidate answer text, question text, and metadata above background context.
