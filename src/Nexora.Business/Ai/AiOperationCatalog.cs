@@ -128,13 +128,13 @@ public static class AnswerCoachingValidator
     private static readonly string[] UnsupportedFactTerms =
     [
         "kubernetes", "docker", "postgresql", "mysql", "mongodb", "redis", "kafka", "graphql", "react", "python", "java", "golang", "typescript", "javascript", "rabbitmq", "c#", ".net", "asp.net", "aws", "azure", "gcp", "sql",
-        "led", "leadership", "pressure", "mentor", "mentored", "mentoring", "managed", "owned", "achieved", "built", "implemented", "designed", "deployed", "launched", "migrated", "migration", "certified", "experience", "expertise", "experienced", "team", "project", "production", "incident", "business impact", "team size", "architecture ownership", "large-scale", "technical depth", "analytical", "analytical skills", "analysis", "reasoning", "critical thinking", "communication", "problem-solving", "problem solving", "kinh nghiệm", "triển khai", "xây dựng", "dẫn dắt", "lãnh đạo", "đội nhóm", "quản lý", "sở hữu", "vận hành", "quy mô", "tác động kinh doanh", "giao tiếp", "phân tích", "tư duy", "năng lực", "khả năng", "chuyên sâu", "thành thạo", "thể hiện", "kết quả", "tác động"
+        "led", "leadership", "pressure", "mentor", "mentored", "mentoring", "managed", "owned", "achieved", "built", "implemented", "designed", "deployed", "launched", "migrated", "migration", "certified", "experience", "expertise", "experienced", "team", "project", "production", "incident", "business impact", "team size", "architecture ownership", "large-scale", "kinh nghiệm", "triển khai", "xây dựng", "dẫn dắt", "lãnh đạo", "đội nhóm", "quản lý", "sở hữu", "vận hành", "quy mô", "tác động kinh doanh"
     ];
 
-    private static readonly string[] ActionMarkers =
+    private static readonly string[] SubstantiveActionMarkers =
     [
         "add", "include", "explain", "quantify", "clarify", "describe", "mention", "specify", "show", "provide", "use", "connect", "highlight", "focus", "outline", "state", "compare", "give", "identify", "emphasize", "present",
-        "hãy", "nên", "có thể", "tập trung", "trình bày", "làm nổi bật", "liên hệ", "đưa ví dụ", "đưa thêm", "chỉ ra", "nhấn mạnh", "so sánh", "giải thích", "mô tả", "làm rõ", "bổ sung", "nêu", "định lượng", "cụ thể hóa", "đưa ra", "thêm"
+        "tập trung", "trình bày", "làm nổi bật", "liên hệ", "đưa ví dụ", "đưa thêm", "chỉ ra", "nhấn mạnh", "so sánh", "giải thích", "mô tả", "làm rõ", "bổ sung", "nêu", "định lượng", "cụ thể hóa", "đưa ra", "thêm"
     ];
 
     private static readonly string[] SafeImprovedAnswerMarkers =
@@ -167,25 +167,6 @@ public static class AnswerCoachingValidator
             ["vận hành"] = ["operate", "operated", "operations", "production"],
             ["quy mô"] = ["scale", "scalable", "large-scale"],
             ["tác động kinh doanh"] = ["business impact"],
-            ["giao tiếp"] = ["communicate", "communication"],
-            ["phân tích"] = ["analyze", "analyzed", "analysis"],
-            ["tư duy"] = ["thinking", "reasoning"],
-            ["năng lực"] = ["ability", "capability", "skill", "skills"],
-            ["khả năng"] = ["ability", "capability", "skill", "skills"],
-            ["chuyên sâu"] = ["deep", "expert", "expertise"],
-            ["thành thạo"] = ["proficient", "proficiency", "expertise"],
-            ["technical depth"] = ["chuyên sâu", "expertise"],
-            ["analytical"] = ["phân tích", "analysis", "analyze", "analyzed"],
-            ["analytical skills"] = ["phân tích", "analysis", "analyze", "analyzed"],
-            ["analysis"] = ["phân tích", "analyze", "analyzed"],
-            ["reasoning"] = ["tư duy", "thinking", "reason"],
-            ["critical thinking"] = ["tư duy", "reasoning", "thinking"],
-            ["communication"] = ["giao tiếp", "communicate"],
-            ["problem-solving"] = ["problem solving", "giải quyết vấn đề"],
-            ["problem solving"] = ["problem-solving", "giải quyết vấn đề"],
-            ["thể hiện"] = ["demonstrate", "demonstrated", "show", "showed"],
-            ["kết quả"] = ["result", "results", "outcome", "outcomes"],
-            ["tác động"] = ["impact", "outcome", "outcomes"],
             ["built"] = ["build", "xây dựng", "xây"],
             ["implemented"] = ["implement", "xây dựng", "triển khai"],
             ["designed"] = ["design", "thiết kế"],
@@ -222,15 +203,21 @@ public static class AnswerCoachingValidator
 
     private static readonly HashSet<string> TechnologyContextMarkers = new(StringComparer.OrdinalIgnoreCase)
     {
-        "backed", "built", "deployed", "integrated", "migrated", "powered", "using", "via"
+        "backed", "built", "created", "deployed", "implemented", "integrated", "migrated", "powered",
+        "use", "used", "using", "via", "integrate", "deploy", "build", "create", "implement", "dùng"
     };
 
-    private static readonly HashSet<string> OpenVocabularyIdentifierContextMarkers = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly string[] TechnologyContextPhrases =
+    [
+        "sử dụng", "đã dùng", "tích hợp", "triển khai"
+    ];
+
+    private static readonly HashSet<string> TechnicalAnchorTokens = new(StringComparer.OrdinalIgnoreCase)
     {
-        "backed", "built", "created", "deployed", "implemented", "integrated", "migrated", "powered", "used", "using", "via"
+        "api", "asp", "backend", "cache", "cloud", "code", "database", "databases", "db", "endpoint", "framework",
+        "library", "libraries", "latency", "net", "platform", "production", "queue", "search", "server", "service",
+        "services", "software", "sql", "system", "technology", "technical"
     };
-
-    private static readonly string[] OpenVocabularyIdentifierContextPhrases = ["sử dụng", "đã dùng"];
 
     private static readonly HashSet<string> GenericCoachingTokens = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -345,7 +332,7 @@ public static class AnswerCoachingValidator
     private static bool ContainsActionMarker(string value)
     {
         var normalized = NormalizeForMatching(value);
-        return ActionMarkers.Any(marker =>
+        return SubstantiveActionMarkers.Any(marker =>
         {
             var normalizedMarker = NormalizeForMatching(marker);
             if (normalizedMarker.Contains(' ', StringComparison.Ordinal))
@@ -383,12 +370,55 @@ public static class AnswerCoachingValidator
             .Any(identifier => IsOpenVocabularyConcreteIdentifier(output, identifier)))
             return true;
 
-        var outputTokens = Tokens(output).Where(IsMeaningful).ToArray();
+        var outputTokens = Tokens(output).ToArray();
         return outputTokens
             .Select((token, index) => (token, index))
+            .Where(item => IsMeaningful(item.token))
             .Where(item => !answerTokens.Any(answerToken => TokensMatch(item.token, answerToken)))
             .Any(item => IsTechnologyLikeIdentifier(item.token) ||
-                         (item.index > 0 && TechnologyContextMarkers.Contains(outputTokens[item.index - 1])));
+                         IsNovelLowercaseTechnologyReference(output, outputTokens, item.index));
+    }
+
+    private static bool IsNovelLowercaseTechnologyReference(
+        string output,
+        string[] outputTokens,
+        int identifierIndex)
+    {
+        var identifier = outputTokens[identifierIndex];
+        if (GenericStrengthTokens.Contains(identifier))
+            return false;
+
+        // Lowercase open-vocabulary references need both a direct technology-use
+        // context and another technical anchor so ordinary prose is not treated
+        // as a concrete candidate fact merely because it follows "used".
+        return HasTechnologyUseContext(outputTokens, identifierIndex) &&
+            HasTechnicalAnchor(output, outputTokens, identifierIndex);
+    }
+
+    private static bool HasTechnologyUseContext(string[] outputTokens, int identifierIndex)
+    {
+        if (identifierIndex > 0 && TechnologyContextMarkers.Contains(outputTokens[identifierIndex - 1]))
+            return true;
+
+        return identifierIndex > 1 &&
+            ((outputTokens[identifierIndex - 2], outputTokens[identifierIndex - 1]) is ("sử", "dụng") or
+             ("tích", "hợp") or
+             ("triển", "khai"));
+    }
+
+    private static bool HasTechnicalAnchor(
+        string output,
+        string[] outputTokens,
+        int identifierIndex)
+    {
+        if (outputTokens
+            .Select((token, index) => (token, index))
+            .Where(item => item.index != identifierIndex)
+            .Any(item => TechnicalAnchorTokens.Contains(item.token) || IsTechnologyLikeIdentifier(item.token)))
+            return true;
+
+        return ExtractCapitalizedIdentifierMatches(output)
+            .Any(identifier => IsTechnologyLikeIdentifier(identifier.Value));
     }
 
     private static bool IsIdentifierSupported(
@@ -433,11 +463,11 @@ public static class AnswerCoachingValidator
     {
         var prefix = output[..identifierIndex];
         var previousToken = Tokens(prefix).LastOrDefault();
-        if (previousToken is not null && OpenVocabularyIdentifierContextMarkers.Contains(previousToken))
+        if (previousToken is not null && TechnologyContextMarkers.Contains(previousToken))
             return true;
 
         var normalizedPrefix = NormalizeForMatching(prefix);
-        return OpenVocabularyIdentifierContextPhrases.Any(phrase =>
+        return TechnologyContextPhrases.Any(phrase =>
             normalizedPrefix.EndsWith(phrase, StringComparison.Ordinal));
     }
 
@@ -1167,7 +1197,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         Set scoreScale to '0-100'.
         Return exactly four rubric scores for criteria: correctness, structure, completeness, clarity (scores 0-100 with non-empty evidence quote).
         Return 1-3 modest strengths grounded only in direct evidence from the candidate's submitted answer. Each strength must reuse at least one concrete phrase, technology, action, fact, or result from that answer. The supplied question and context may inform relevance and rubric scoring, but they are not evidence that the candidate stated or performed anything. Prefer wording such as 'Bạn đã nêu rõ...' or 'Bạn mô tả cụ thể...'. Do not infer leadership, ownership, production experience, business impact, mentoring, scale, team size, architecture ownership, deployment success, or measurable outcomes unless the candidate explicitly states them. If no grounded positive evidence is demonstrated, return an empty strengths array, keep rubric scores below 60 where justified, and do not invent a strength.
-        Return 1-3 improvements, and make every item a direct action the candidate can take. Start with or clearly include an actionable verb such as add, include, explain, quantify, clarify, describe, mention, specify, show, provide, use, connect, highlight, focus, compare, give, identify, emphasize, present, hãy, nên, có thể, tập trung, trình bày, làm nổi bật, liên hệ, đưa ví dụ, chỉ ra, nhấn mạnh, so sánh, giải thích, mô tả, làm rõ, bổ sung, nêu, định lượng, or cụ thể hóa. Do not return passive observations such as 'the result is unclear'. Return one improvedAnswer.
+        Return 1-3 improvements, and make every item a direct action the candidate can take. Start with or clearly include a substantive action verb such as add, include, explain, quantify, clarify, describe, mention, specify, show, provide, use, connect, highlight, focus, compare, give, identify, emphasize, present, tập trung, trình bày, làm nổi bật, liên hệ, đưa ví dụ, chỉ ra, nhấn mạnh, so sánh, giải thích, mô tả, làm rõ, bổ sung, nêu, định lượng, or cụ thể hóa. Directive prefixes such as 'hãy', 'nên', or 'có thể' may introduce an action, but do not count by themselves. Do not return passive observations such as 'the result is unclear'. Return one improvedAnswer.
         Keep improvedAnswer faithful to the candidate answer: do not add metrics, achievements, technologies, roles, or experience that are not explicitly present. When evidence is missing, explain what concrete evidence the candidate could add instead of inventing it. Use the answer's facts; do not call another AI operation to rewrite it.
         {AiLanguagePolicy.VietnameseUserFacingInstruction}
 
@@ -1322,7 +1352,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
 
                 IMPORTANT COACHING CORRECTION INSTRUCTION:
                 The previous structured evaluation failed validation with reason 'interview.improvements_not_actionable' because it contained a non-actionable improvement.
-                Return 1-3 improvement items. Every item must tell the candidate a direct action to take and must start with or clearly include an action verb, such as add, include, explain, quantify, clarify, describe, mention, specify, show, provide, use, connect, highlight, focus, outline, state, compare, give, identify, emphasize, present, nêu, bổ sung, thêm, định lượng, làm rõ, giải thích, or mô tả. Reject passive observations such as 'the result is unclear' or 'phần kết quả hơi yếu'.
+                Return 1-3 improvement items. Every item must tell the candidate a direct action to take and must start with or clearly include a substantive action verb, such as add, include, explain, quantify, clarify, describe, mention, specify, show, provide, use, connect, highlight, focus, outline, state, compare, give, identify, emphasize, present, nêu, bổ sung, thêm, định lượng, làm rõ, giải thích, or mô tả. Directive prefixes such as 'hãy', 'nên', or 'có thể' may introduce an action, but do not count by themselves. Reject passive observations such as 'the result is unclear' or 'phần kết quả hơi yếu'.
                 Keep every improvement grounded in the ORIGINAL candidate answer and preserve every other already-valid field where possible. Do not invent facts, experience, or technologies.
                 Return a completely corrected object matching the schema.
                 """;

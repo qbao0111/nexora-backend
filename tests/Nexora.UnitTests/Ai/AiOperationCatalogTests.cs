@@ -645,6 +645,51 @@ public sealed class AiOperationCatalogTests
     }
 
     [Theory]
+    [InlineData("Bạn thể hiện khả năng phân tích rõ ràng khi kiểm tra log và xác định deadlock.")]
+    [InlineData("Bạn trình bày khá rõ cách xác định nguyên nhân deadlock.")]
+    [InlineData("Bạn cho thấy tư duy xử lý có cấu trúc khi bắt đầu từ việc kiểm tra log.")]
+    public void InterviewEvaluateAcceptsGroundedEvaluativeVietnameseStrengthParaphrases(string strength)
+    {
+        const string candidateAnswer = "Tôi kiểm tra log và xác định nguyên nhân deadlock.";
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            CreateCoachingEvaluation(candidateAnswer, [strength]),
+            new AiOperationContext("coaching-evaluative-vietnamese", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.True(result.IsValid, result.FailureReason);
+    }
+
+    [Fact]
+    public void InterviewEvaluateAcceptsGroundedResultWordingWithGenericResultTerm()
+    {
+        const string candidateAnswer = "Latency giảm từ 500ms xuống 120ms.";
+        const string strength = "Bạn nêu rõ kết quả cải thiện latency từ 500ms xuống 120ms.";
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            CreateCoachingEvaluation(candidateAnswer, [strength]),
+            new AiOperationContext("coaching-grounded-result-wording", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.True(result.IsValid, result.FailureReason);
+    }
+
+    [Theory]
+    [InlineData("Bạn có kinh nghiệm vận hành production quy mô lớn.")]
+    [InlineData("Bạn đã triển khai Kubernetes để xử lý deadlock.")]
+    [InlineData("Bạn dẫn dắt team xử lý sự cố.")]
+    [InlineData("Bạn giúp giảm 40% latency.")]
+    public void InterviewEvaluateStillRejectsConcreteFactsAddedToEvaluativeStrengths(string strength)
+    {
+        const string candidateAnswer = "Tôi kiểm tra log và xác định nguyên nhân deadlock.";
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            CreateCoachingEvaluation(candidateAnswer, [strength]),
+            new AiOperationContext("coaching-concrete-fact-regression", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("interview.strengths_ungrounded", result.FailureReason);
+    }
+
+    [Theory]
     [InlineData("Bạn có kinh nghiệm vận hành hệ thống production quy mô lớn.")]
     [InlineData("Bạn thể hiện năng lực leadership tốt.")]
     [InlineData("Bạn đã dẫn dắt team backend.")]
@@ -678,6 +723,24 @@ public sealed class AiOperationCatalogTests
         Assert.True(result.IsValid, result.FailureReason);
     }
 
+    [Fact]
+    public void InterviewEvaluateAcceptsWeakDirectivePrefixWhenFollowedBySubstantiveAction()
+    {
+        const string candidateAnswer = "I debugged the API.";
+        var improvements = new[]
+        {
+            "Có thể làm rõ kết quả bằng một số liệu cụ thể nếu bạn có dữ liệu.",
+            "Bạn nên bổ sung trách nhiệm cá nhân trong dự án.",
+            "Hãy định lượng tác động nếu có số liệu."
+        };
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            CreateCoachingEvaluation(candidateAnswer, ["The API debugging is clear."], improvements),
+            new AiOperationContext("coaching-weak-directive-prefix", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.True(result.IsValid, result.FailureReason);
+    }
+
     [Theory]
     [InlineData("Phần trách nhiệm còn thiếu.")]
     [InlineData("Ví dụ chưa tốt.")]
@@ -690,6 +753,21 @@ public sealed class AiOperationCatalogTests
         var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
             CreateCoachingEvaluation(candidateAnswer, ["The API debugging is clear."], [improvement]),
             new AiOperationContext("coaching-passive-vietnamese", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("interview.improvements_not_actionable", result.FailureReason);
+    }
+
+    [Theory]
+    [InlineData("Kết quả có thể rõ hơn.")]
+    [InlineData("Phần trả lời nên tốt hơn.")]
+    public void InterviewEvaluateRejectsWeakDirectivePrefixWithoutSubstantiveAction(string improvement)
+    {
+        const string candidateAnswer = "I debugged the API.";
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            CreateCoachingEvaluation(candidateAnswer, ["The API debugging is clear."], [improvement]),
+            new AiOperationContext("coaching-weak-directive-only", ExpectedStar: false, CandidateAnswer: candidateAnswer));
 
         Assert.False(result.IsValid);
         Assert.Equal("interview.improvements_not_actionable", result.FailureReason);
@@ -731,6 +809,49 @@ public sealed class AiOperationCatalogTests
         Assert.False(result.IsValid);
         Assert.Equal("interview.strengths_ungrounded", result.FailureReason);
         Assert.True(result.Repairable);
+    }
+
+    [Theory]
+    [InlineData("You used terraform to build the API with ASP.NET Core.")]
+    [InlineData("Bạn sử dụng terraform để xây API bằng ASP.NET Core.")]
+    [InlineData("Bạn đã dùng elasticsearch cùng ASP.NET Core.")]
+    public void InterviewEvaluateRejectsLowercaseUnseenTechnologyIdentifiersInStrengths(string strength)
+    {
+        const string candidateAnswer = "I built an API with ASP.NET Core.";
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            CreateCoachingEvaluation(candidateAnswer, [strength]),
+            new AiOperationContext("coaching-lowercase-open-technology-strength", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("interview.strengths_ungrounded", result.FailureReason);
+        Assert.True(result.Repairable);
+    }
+
+    [Fact]
+    public void InterviewEvaluateDoesNotRejectOrdinaryLowercaseEvaluativeProseAfterGenericVerb()
+    {
+        const string candidateAnswer = "I explained the API issue clearly.";
+        const string strength = "You used clear language to explain the answer.";
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            CreateCoachingEvaluation(candidateAnswer, [strength]),
+            new AiOperationContext("coaching-ordinary-lowercase-prose", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.True(result.IsValid, result.FailureReason);
+    }
+
+    [Fact]
+    public void InterviewEvaluateDoesNotRejectOrdinaryVietnameseProseAfterGenericVerb()
+    {
+        const string candidateAnswer = "Tôi đã nêu ví dụ cụ thể về cách xử lý lỗi.";
+        const string strength = "Bạn dùng cách trình bày rõ ràng để mô tả ví dụ trong câu trả lời.";
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            CreateCoachingEvaluation(candidateAnswer, [strength]),
+            new AiOperationContext("coaching-ordinary-vietnamese-prose", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.True(result.IsValid, result.FailureReason);
     }
 
     [Fact]
