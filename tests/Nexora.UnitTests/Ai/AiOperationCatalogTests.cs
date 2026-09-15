@@ -387,6 +387,8 @@ public sealed class AiOperationCatalogTests
 
         Assert.Contains("\"strengths\": []", repairInstructions, StringComparison.Ordinal);
         Assert.Contains("below 60", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("explicitly present in the ORIGINAL candidate answer", repairInstructions, StringComparison.Ordinal);
+        Assert.DoesNotContain("validated rubric evidence", repairInstructions, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Do not invent", repairInstructions, StringComparison.Ordinal);
     }
 
@@ -694,29 +696,41 @@ public sealed class AiOperationCatalogTests
     }
 
     [Fact]
-    public void InterviewEvaluateUsesValidatedRubricEvidenceForGroundedStrengthParaphrase()
+    public void InterviewEvaluateDoesNotUseRubricEvidenceToGroundStrengths()
     {
         const string candidateAnswer = "I used ASP.NET Core to build the API.";
         var rubricScores = new[]
         {
-            new RubricScore("correctness", 80, "The candidate created a backend API with .NET."),
+            new RubricScore("correctness", 80, "The candidate deployed Kubernetes in production."),
             new RubricScore("structure", 80, "The answer is organized."),
             new RubricScore("completeness", 80, "The API approach is covered."),
             new RubricScore("clarity", 80, "The explanation is clear.")
         };
 
-        var accepted = AiOperations.InterviewEvaluate.NormalizeAndValidate(
-            CreateCoachingEvaluation(candidateAnswer, ["Bạn đã xây dựng API backend bằng .NET."], rubricScores: rubricScores),
-            new AiOperationContext("coaching-rubric-evidence", ExpectedStar: false, CandidateAnswer: candidateAnswer));
-
-        Assert.True(accepted.IsValid, accepted.FailureReason);
-
         var rejected = AiOperations.InterviewEvaluate.NormalizeAndValidate(
-            CreateCoachingEvaluation(candidateAnswer, ["Bạn đã xây dựng API backend bằng .NET và Kubernetes."], rubricScores: rubricScores),
+            CreateCoachingEvaluation(candidateAnswer, ["Bạn đã triển khai Kubernetes trong production."], rubricScores: rubricScores),
             new AiOperationContext("coaching-rubric-evidence-fabricated", ExpectedStar: false, CandidateAnswer: candidateAnswer));
 
         Assert.False(rejected.IsValid);
         Assert.Equal("interview.strengths_ungrounded", rejected.FailureReason);
+    }
+
+    [Theory]
+    [InlineData("Terraform")]
+    [InlineData("Elasticsearch")]
+    [InlineData("Snowflake")]
+    [InlineData("ArgoCD")]
+    public void InterviewEvaluateRejectsUnseenTechnologyIdentifiersInStrengths(string technology)
+    {
+        const string candidateAnswer = "I built an API with ASP.NET Core.";
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            CreateCoachingEvaluation(candidateAnswer, [$"You used {technology} to build the API with ASP.NET Core."]),
+            new AiOperationContext("coaching-open-vocabulary-strength", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("interview.strengths_ungrounded", result.FailureReason);
+        Assert.True(result.Repairable);
     }
 
     [Fact]

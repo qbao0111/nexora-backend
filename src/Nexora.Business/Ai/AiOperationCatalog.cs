@@ -225,6 +225,13 @@ public static class AnswerCoachingValidator
         "backed", "built", "deployed", "integrated", "migrated", "powered", "using", "via"
     };
 
+    private static readonly HashSet<string> OpenVocabularyIdentifierContextMarkers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "backed", "built", "created", "deployed", "implemented", "integrated", "migrated", "powered", "used", "using", "via"
+    };
+
+    private static readonly string[] OpenVocabularyIdentifierContextPhrases = ["sử dụng", "đã dùng"];
+
     private static readonly HashSet<string> GenericCoachingTokens = new(StringComparer.OrdinalIgnoreCase)
     {
         "answer", "response", "candidate", "question", "clear", "concise", "specific", "relevant", "grounded", "strong", "good", "well",
@@ -239,8 +246,7 @@ public static class AnswerCoachingValidator
         IReadOnlyCollection<string>? rawImprovements,
         string? rawImprovedAnswer,
         string? candidateAnswer,
-        IReadOnlyCollection<RubricScore> rubricScores,
-        string? strengthGroundingTranscript = null)
+        IReadOnlyCollection<RubricScore> rubricScores)
     {
         // An empty strengths collection is an explicit absence signal only when
         // every rubric score is below the existing 60-point coaching threshold.
@@ -268,13 +274,10 @@ public static class AnswerCoachingValidator
         if (!string.IsNullOrWhiteSpace(candidateAnswer))
         {
             var answer = candidateAnswer.Trim();
-            var strengthEvidence = string.IsNullOrWhiteSpace(strengthGroundingTranscript)
-                ? answer
-                : strengthGroundingTranscript.Trim();
             if (strengths.Any(strength =>
-                ContainsUnsupportedFact(strength, strengthEvidence) ||
-                ContainsNovelStrengthClaim(strength, strengthEvidence, allowGenericParaphrases: true) ||
-                !HasMeaningfulOverlap(strength, strengthEvidence)))
+                ContainsUnsupportedFact(strength, answer) ||
+                ContainsNovelStrengthClaim(strength, answer, allowGenericParaphrases: true) ||
+                !HasMeaningfulOverlap(strength, answer)))
                 return AiValidationResult<AnswerCoachingOutput>.Failure("interview.strengths_ungrounded", "semantic", repairable: true);
 
             if (!HasMeaningfulOverlap(improvedAnswer, answer) && !IsSafePlaceholder(improvedAnswer))
@@ -357,7 +360,7 @@ public static class AnswerCoachingValidator
 
     private static bool ContainsNovelCandidateFact(string output, string answer)
     {
-        if (ContainsNovelTechnologyIdentifier(output, answer))
+        if (ContainsNovelConcreteIdentifier(output, answer))
             return true;
 
         var answerTokens = Tokens(answer).Where(IsMeaningful).ToArray();
@@ -368,18 +371,18 @@ public static class AnswerCoachingValidator
             .Any(token => CandidateSpecificFactTokens.Contains(token, StringComparer.OrdinalIgnoreCase));
     }
 
-    private static bool ContainsNovelTechnologyIdentifier(string output, string answer)
+    private static bool ContainsNovelConcreteIdentifier(string output, string answer)
     {
         var answerIdentifiers = ExtractCapitalizedIdentifiers(answer)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var answerTokens = Tokens(answer).Where(IsMeaningful).ToArray();
 
-        if (ExtractCapitalizedIdentifiers(output)
-            .Where(identifier => !CommonCapitalizedWords.Contains(identifier))
-            .Where(IsTechnologyLikeIdentifier)
-            .Any(identifier => !answerIdentifiers.Contains(identifier)))
+        if (ExtractCapitalizedIdentifierMatches(output)
+            .Where(identifier => !CommonCapitalizedWords.Contains(identifier.Value))
+            .Where(identifier => !IsIdentifierSupported(identifier.Value, answerIdentifiers, answerTokens))
+            .Any(identifier => IsOpenVocabularyConcreteIdentifier(output, identifier)))
             return true;
 
-        var answerTokens = Tokens(answer).Where(IsMeaningful).ToArray();
         var outputTokens = Tokens(output).Where(IsMeaningful).ToArray();
         return outputTokens
             .Select((token, index) => (token, index))
@@ -387,6 +390,20 @@ public static class AnswerCoachingValidator
             .Any(item => IsTechnologyLikeIdentifier(item.token) ||
                          (item.index > 0 && TechnologyContextMarkers.Contains(outputTokens[item.index - 1])));
     }
+
+    private static bool IsIdentifierSupported(
+        string identifier,
+        HashSet<string> answerIdentifiers,
+        IReadOnlyCollection<string> answerTokens) =>
+        answerIdentifiers.Contains(identifier) ||
+        Tokens(identifier).Any(identifierToken =>
+            answerTokens.Any(answerToken => TokensMatch(identifierToken, answerToken)));
+
+    private static bool IsOpenVocabularyConcreteIdentifier(
+        string output,
+        (string Value, int Index) identifier) =>
+        IsTechnologyLikeIdentifier(identifier.Value) ||
+        HasOpenVocabularyIdentifierContext(output, identifier.Index);
 
     private static bool IsTechnologyLikeIdentifier(string identifier)
     {
@@ -400,13 +417,28 @@ public static class AnswerCoachingValidator
     }
 
     private static IEnumerable<string> ExtractCapitalizedIdentifiers(string value)
+        => ExtractCapitalizedIdentifierMatches(value).Select(match => match.Value);
+
+    private static IEnumerable<(string Value, int Index)> ExtractCapitalizedIdentifierMatches(string value)
     {
         foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
                      value,
                      @"(?<![\p{L}\p{N}])(?:[A-Z][a-z]{2,}[A-Za-z0-9]*|[A-Z]{2,}[A-Za-z0-9+#.-]*)(?![\p{L}\p{N}])"))
         {
-            yield return match.Value;
+            yield return (match.Value, match.Index);
         }
+    }
+
+    private static bool HasOpenVocabularyIdentifierContext(string output, int identifierIndex)
+    {
+        var prefix = output[..identifierIndex];
+        var previousToken = Tokens(prefix).LastOrDefault();
+        if (previousToken is not null && OpenVocabularyIdentifierContextMarkers.Contains(previousToken))
+            return true;
+
+        var normalizedPrefix = NormalizeForMatching(prefix);
+        return OpenVocabularyIdentifierContextPhrases.Any(phrase =>
+            normalizedPrefix.EndsWith(phrase, StringComparison.Ordinal));
     }
 
     private static bool ContainsNovelStrengthClaim(
@@ -414,6 +446,9 @@ public static class AnswerCoachingValidator
         string answer,
         bool allowGenericParaphrases = false)
     {
+        if (ContainsNovelConcreteIdentifier(output, answer))
+            return true;
+
         var answerTokens = Tokens(answer).Where(IsMeaningful).ToArray();
         var unmatchedTokens = Tokens(output)
             .Where(IsMeaningful)
@@ -1131,7 +1166,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         Evaluate the candidate's answer against the job and question requirements.
         Set scoreScale to '0-100'.
         Return exactly four rubric scores for criteria: correctness, structure, completeness, clarity (scores 0-100 with non-empty evidence quote).
-        Return 1-3 modest strengths grounded only in direct evidence from the candidate answer and the supplied question/context. Each strength must reuse at least one concrete phrase, technology, action, fact, or result from the candidate answer. Prefer wording such as 'Bạn đã nêu rõ...' or 'Bạn mô tả cụ thể...'. Do not infer leadership, ownership, production experience, business impact, mentoring, scale, team size, architecture ownership, deployment success, or measurable outcomes unless the candidate explicitly states them. If no grounded positive evidence is demonstrated, return an empty strengths array, keep rubric scores below 60 where justified, and do not invent a strength.
+        Return 1-3 modest strengths grounded only in direct evidence from the candidate's submitted answer. Each strength must reuse at least one concrete phrase, technology, action, fact, or result from that answer. The supplied question and context may inform relevance and rubric scoring, but they are not evidence that the candidate stated or performed anything. Prefer wording such as 'Bạn đã nêu rõ...' or 'Bạn mô tả cụ thể...'. Do not infer leadership, ownership, production experience, business impact, mentoring, scale, team size, architecture ownership, deployment success, or measurable outcomes unless the candidate explicitly states them. If no grounded positive evidence is demonstrated, return an empty strengths array, keep rubric scores below 60 where justified, and do not invent a strength.
         Return 1-3 improvements, and make every item a direct action the candidate can take. Start with or clearly include an actionable verb such as add, include, explain, quantify, clarify, describe, mention, specify, show, provide, use, connect, highlight, focus, compare, give, identify, emphasize, present, hãy, nên, có thể, tập trung, trình bày, làm nổi bật, liên hệ, đưa ví dụ, chỉ ra, nhấn mạnh, so sánh, giải thích, mô tả, làm rõ, bổ sung, nêu, định lượng, or cụ thể hóa. Do not return passive observations such as 'the result is unclear'. Return one improvedAnswer.
         Keep improvedAnswer faithful to the candidate answer: do not add metrics, achievements, technologies, roles, or experience that are not explicitly present. When evidence is missing, explain what concrete evidence the candidate could add instead of inventing it. Use the answer's facts; do not call another AI operation to rewrite it.
         {AiLanguagePolicy.VietnameseUserFacingInstruction}
@@ -1230,17 +1265,12 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                 AiOperations.ScoreScale);
         }
 
-        var strengthGroundingTranscript = BuildStrengthGroundingTranscript(
-            context.CandidateAnswer,
-            rubricResult.NormalizedValue!);
-
         var coachingResult = AnswerCoachingValidator.ValidateAndNormalize(
             raw.Strengths,
             raw.Improvements,
             raw.ImprovedAnswer,
             context.CandidateAnswer,
-            rubricResult.NormalizedValue!,
-            strengthGroundingTranscript);
+            rubricResult.NormalizedValue!);
         if (!coachingResult.IsValid)
             return AiValidationResult<AnswerEvaluation>.Failure(coachingResult.FailureReason!, coachingResult.ValidationStage!, coachingResult.Repairable);
 
@@ -1277,8 +1307,8 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                 {originalInstructions}
 
                 IMPORTANT COACHING CORRECTION INSTRUCTION:
-                The previous structured evaluation failed validation because its strengths were not grounded in the ORIGINAL candidate answer or validated rubric evidence: '{priorResult.FailureReason}'
-                Rewrite strengths using only concrete words, technologies, actions, facts, or results explicitly present in the ORIGINAL candidate answer or its validated rubric evidence. Remove inferred traits such as leadership, ownership, production experience, business impact, mentoring, scale, team size, architecture ownership, deployment success, or measurable outcomes unless directly stated. Do not add new facts, technologies, responsibilities, achievements, or results.
+                The previous structured evaluation failed validation because its strengths were not grounded in the ORIGINAL candidate answer: '{priorResult.FailureReason}'
+                Rewrite strengths using only concrete words, technologies, actions, facts, or results explicitly present in the ORIGINAL candidate answer. The question, context, rubric scores, and rubric evidence may guide relevance or scoring but must not be used as evidence of what the candidate stated or did. Remove inferred traits such as leadership, ownership, production experience, business impact, mentoring, scale, team size, architecture ownership, deployment success, or measurable outcomes unless directly stated. Do not add new facts, technologies, responsibilities, achievements, or results.
                 If no grounded positive evidence is present, return "strengths": [] (an empty strengths collection), use rubric scores below 60 where justified, and do not invent a strength. Otherwise return 1-3 modest grounded strengths.
                 Preserve every other already-valid field where possible. In all cases, return 1-3 concrete actionable improvements and a faithful improvedAnswer. Do not invent facts, experience, technologies, achievements, or metrics.
                 Return a completely corrected object matching the schema.
@@ -1346,21 +1376,6 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         return base.BuildRepairInstructions(priorResult, originalInstructions);
     }
 
-    private static string BuildStrengthGroundingTranscript(
-        string? candidateAnswer,
-        IReadOnlyCollection<RubricScore> validatedRubricScores)
-    {
-        var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(candidateAnswer))
-            parts.Add(candidateAnswer.Trim());
-
-        parts.AddRange(validatedRubricScores
-            .Select(score => score.Evidence?.Trim())
-            .Where(evidence => !string.IsNullOrWhiteSpace(evidence))
-            .Cast<string>());
-
-        return string.Join("\n", parts);
-    }
 }
 
 public sealed class InterviewReportOperation : AiOperationDefinition<InterviewReportOutput>
