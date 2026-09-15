@@ -128,12 +128,13 @@ public static class AnswerCoachingValidator
     private static readonly string[] UnsupportedFactTerms =
     [
         "kubernetes", "docker", "postgresql", "mysql", "mongodb", "redis", "kafka", "graphql", "react", "python", "java", "golang", "typescript", "javascript", "rabbitmq", "c#", ".net", "asp.net", "aws", "azure", "gcp", "sql",
-        "led", "leadership", "pressure", "mentor", "mentored", "mentoring", "managed", "owned", "achieved", "built", "implemented", "designed", "deployed", "launched", "migrated", "migration", "certified", "experience", "team", "project", "production", "incident", "kinh nghiệm", "triển khai", "xây dựng"
+        "led", "leadership", "pressure", "mentor", "mentored", "mentoring", "managed", "owned", "achieved", "built", "implemented", "designed", "deployed", "launched", "migrated", "migration", "certified", "experience", "expertise", "experienced", "team", "project", "production", "incident", "business impact", "team size", "architecture ownership", "large-scale", "kinh nghiệm", "triển khai", "xây dựng", "dẫn dắt", "lãnh đạo", "đội nhóm", "quản lý", "sở hữu", "vận hành", "quy mô", "tác động kinh doanh"
     ];
 
-    private static readonly string[] ActionMarkers =
+    private static readonly string[] SubstantiveActionMarkers =
     [
-        "add", "include", "explain", "quantify", "clarify", "describe", "mention", "specify", "show", "provide", "use", "nêu", "bổ sung", "thêm", "định lượng", "làm rõ", "giải thích", "mô tả", "đưa ra", "cụ thể"
+        "add", "include", "explain", "quantify", "clarify", "describe", "mention", "specify", "show", "provide", "use", "connect", "highlight", "focus", "outline", "state", "compare", "give", "identify", "emphasize", "present",
+        "tập trung", "trình bày", "làm nổi bật", "liên hệ", "đưa ví dụ", "đưa thêm", "chỉ ra", "nhấn mạnh", "so sánh", "giải thích", "mô tả", "làm rõ", "bổ sung", "nêu", "định lượng", "cụ thể hóa", "đưa ra", "thêm"
     ];
 
     private static readonly string[] SafeImprovedAnswerMarkers =
@@ -150,8 +151,37 @@ public static class AnswerCoachingValidator
         "structure", "approach", "logic", "reasoning", "process", "method", "detail", "details", "context", "complete", "accurate", "focused",
         "direct", "thoughtful", "thorough", "coherent", "understanding", "knowledge", "solution", "problem", "solving", "communication", "communicates",
         "nêu", "bổ sung", "thêm", "định lượng", "làm rõ", "giải thích", "mô tả", "đưa ra", "cụ thể", "ví dụ", "kết quả", "tác động", "bằng chứng",
-        "giữ", "nguyên", "câu", "trả", "lời", "phần", "nếu", "có"
+        "giữ", "nguyên", "câu", "trả", "lời", "phần", "nếu", "có", "rõ", "việc", "công", "nghệ", "backend"
     };
+
+    private static readonly Dictionary<string, string[]> UnsupportedFactVariants =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["xây dựng"] = ["build", "built", "create", "created", "implement", "implemented"],
+            ["triển khai"] = ["deploy", "deployed", "deployment"],
+            ["dẫn dắt"] = ["lead", "led", "leadership"],
+            ["lãnh đạo"] = ["lead", "led", "leadership"],
+            ["đội nhóm"] = ["team"],
+            ["quản lý"] = ["manage", "managed", "management"],
+            ["sở hữu"] = ["own", "owned", "ownership"],
+            ["vận hành"] = ["operate", "operated", "operations", "production"],
+            ["quy mô"] = ["scale", "scalable", "large-scale"],
+            ["tác động kinh doanh"] = ["business impact"],
+            ["built"] = ["build", "xây dựng", "xây"],
+            ["implemented"] = ["implement", "xây dựng", "triển khai"],
+            ["designed"] = ["design", "thiết kế"],
+            ["deployed"] = ["deploy", "triển khai"],
+            ["led"] = ["lead", "leadership", "dẫn dắt", "lãnh đạo"],
+            ["managed"] = ["manage", "management", "quản lý"],
+            ["owned"] = ["own", "ownership", "sở hữu"],
+            ["achieved"] = ["achieve", "achievement", "đạt được"],
+            ["experience"] = ["kinh nghiệm", "experienced"],
+            ["expertise"] = ["chuyên sâu", "expert", "thành thạo"],
+            ["experienced"] = ["experience", "kinh nghiệm"],
+            ["team"] = ["đội nhóm", "team"],
+            ["production"] = ["vận hành", "production"],
+            ["incident"] = ["sự cố", "incident"]
+        };
 
     private static readonly HashSet<string> CandidateSpecificFactTokens = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -173,7 +203,20 @@ public static class AnswerCoachingValidator
 
     private static readonly HashSet<string> TechnologyContextMarkers = new(StringComparer.OrdinalIgnoreCase)
     {
-        "backed", "built", "deployed", "integrated", "migrated", "powered", "using", "via"
+        "backed", "built", "created", "deployed", "implemented", "integrated", "migrated", "powered",
+        "use", "used", "using", "via", "integrate", "deploy", "build", "create", "implement", "dùng"
+    };
+
+    private static readonly string[] TechnologyContextPhrases =
+    [
+        "sử dụng", "đã dùng", "tích hợp", "triển khai"
+    ];
+
+    private static readonly HashSet<string> TechnicalAnchorTokens = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "api", "asp", "backend", "cache", "cloud", "code", "database", "databases", "db", "endpoint", "framework",
+        "library", "libraries", "latency", "net", "platform", "production", "queue", "search", "server", "service",
+        "services", "software", "sql", "system", "technology", "technical"
     };
 
     private static readonly HashSet<string> GenericCoachingTokens = new(StringComparer.OrdinalIgnoreCase)
@@ -205,7 +248,7 @@ public static class AnswerCoachingValidator
         if (improvements is null)
             return AiValidationResult<AnswerCoachingOutput>.Failure(improvementsFailure!, "semantic", repairable: true);
 
-        if (improvements.Any(item => !ActionMarkers.Any(marker => item.Contains(marker, StringComparison.OrdinalIgnoreCase))))
+        if (improvements.Any(item => !ContainsActionMarker(item)))
             return AiValidationResult<AnswerCoachingOutput>.Failure("interview.improvements_not_actionable", "semantic", repairable: true);
 
         if (string.IsNullOrWhiteSpace(rawImprovedAnswer))
@@ -220,7 +263,7 @@ public static class AnswerCoachingValidator
             var answer = candidateAnswer.Trim();
             if (strengths.Any(strength =>
                 ContainsUnsupportedFact(strength, answer) ||
-                ContainsNovelStrengthClaim(strength, answer) ||
+                ContainsNovelStrengthClaim(strength, answer, allowGenericParaphrases: true) ||
                 !HasMeaningfulOverlap(strength, answer)))
                 return AiValidationResult<AnswerCoachingOutput>.Failure("interview.strengths_ungrounded", "semantic", repairable: true);
 
@@ -286,9 +329,25 @@ public static class AnswerCoachingValidator
                 (answerToken.Length >= 5 && outputToken.StartsWith(answerToken, StringComparison.OrdinalIgnoreCase))));
     }
 
+    private static bool ContainsActionMarker(string value)
+    {
+        var normalized = NormalizeForMatching(value);
+        return SubstantiveActionMarkers.Any(marker =>
+        {
+            var normalizedMarker = NormalizeForMatching(marker);
+            if (normalizedMarker.Contains(' ', StringComparison.Ordinal))
+                return normalized.Contains(normalizedMarker, StringComparison.Ordinal);
+
+            return System.Text.RegularExpressions.Regex.IsMatch(
+                normalized,
+                $@"(?<![\p{{L}}\p{{N}}]){System.Text.RegularExpressions.Regex.Escape(normalizedMarker)}(?![\p{{L}}\p{{N}}])",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        });
+    }
+
     private static bool ContainsNovelCandidateFact(string output, string answer)
     {
-        if (ContainsNovelTechnologyIdentifier(output, answer))
+        if (ContainsNovelConcreteIdentifier(output, answer))
             return true;
 
         var answerTokens = Tokens(answer).Where(IsMeaningful).ToArray();
@@ -299,25 +358,82 @@ public static class AnswerCoachingValidator
             .Any(token => CandidateSpecificFactTokens.Contains(token, StringComparer.OrdinalIgnoreCase));
     }
 
-    private static bool ContainsNovelTechnologyIdentifier(string output, string answer)
+    private static bool ContainsNovelConcreteIdentifier(string output, string answer)
     {
         var answerIdentifiers = ExtractCapitalizedIdentifiers(answer)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var answerTokens = Tokens(answer).Where(IsMeaningful).ToArray();
 
-        if (ExtractCapitalizedIdentifiers(output)
-            .Where(identifier => !CommonCapitalizedWords.Contains(identifier))
-            .Where(IsTechnologyLikeIdentifier)
-            .Any(identifier => !answerIdentifiers.Contains(identifier)))
+        if (ExtractCapitalizedIdentifierMatches(output)
+            .Where(identifier => !CommonCapitalizedWords.Contains(identifier.Value))
+            .Where(identifier => !IsIdentifierSupported(identifier.Value, answerIdentifiers, answerTokens))
+            .Any(identifier => IsOpenVocabularyConcreteIdentifier(output, identifier)))
             return true;
 
-        var answerTokens = Tokens(answer).Where(IsMeaningful).ToArray();
-        var outputTokens = Tokens(output).Where(IsMeaningful).ToArray();
+        var outputTokens = Tokens(output).ToArray();
         return outputTokens
             .Select((token, index) => (token, index))
+            .Where(item => IsMeaningful(item.token))
             .Where(item => !answerTokens.Any(answerToken => TokensMatch(item.token, answerToken)))
             .Any(item => IsTechnologyLikeIdentifier(item.token) ||
-                         (item.index > 0 && TechnologyContextMarkers.Contains(outputTokens[item.index - 1])));
+                         IsNovelLowercaseTechnologyReference(output, outputTokens, item.index));
     }
+
+    private static bool IsNovelLowercaseTechnologyReference(
+        string output,
+        string[] outputTokens,
+        int identifierIndex)
+    {
+        var identifier = outputTokens[identifierIndex];
+        if (GenericStrengthTokens.Contains(identifier))
+            return false;
+
+        // Lowercase open-vocabulary references need both a direct technology-use
+        // context and another technical anchor so ordinary prose is not treated
+        // as a concrete candidate fact merely because it follows "used".
+        return HasTechnologyUseContext(outputTokens, identifierIndex) &&
+            HasTechnicalAnchor(output, outputTokens, identifierIndex);
+    }
+
+    private static bool HasTechnologyUseContext(string[] outputTokens, int identifierIndex)
+    {
+        if (identifierIndex > 0 && TechnologyContextMarkers.Contains(outputTokens[identifierIndex - 1]))
+            return true;
+
+        return identifierIndex > 1 &&
+            ((outputTokens[identifierIndex - 2], outputTokens[identifierIndex - 1]) is ("sử", "dụng") or
+             ("tích", "hợp") or
+             ("triển", "khai"));
+    }
+
+    private static bool HasTechnicalAnchor(
+        string output,
+        string[] outputTokens,
+        int identifierIndex)
+    {
+        if (outputTokens
+            .Select((token, index) => (token, index))
+            .Where(item => item.index != identifierIndex)
+            .Any(item => TechnicalAnchorTokens.Contains(item.token) || IsTechnologyLikeIdentifier(item.token)))
+            return true;
+
+        return ExtractCapitalizedIdentifierMatches(output)
+            .Any(identifier => IsTechnologyLikeIdentifier(identifier.Value));
+    }
+
+    private static bool IsIdentifierSupported(
+        string identifier,
+        HashSet<string> answerIdentifiers,
+        IReadOnlyCollection<string> answerTokens) =>
+        answerIdentifiers.Contains(identifier) ||
+        Tokens(identifier).Any(identifierToken =>
+            answerTokens.Any(answerToken => TokensMatch(identifierToken, answerToken)));
+
+    private static bool IsOpenVocabularyConcreteIdentifier(
+        string output,
+        (string Value, int Index) identifier) =>
+        IsTechnologyLikeIdentifier(identifier.Value) ||
+        HasOpenVocabularyIdentifierContext(output, identifier.Index);
 
     private static bool IsTechnologyLikeIdentifier(string identifier)
     {
@@ -331,22 +447,48 @@ public static class AnswerCoachingValidator
     }
 
     private static IEnumerable<string> ExtractCapitalizedIdentifiers(string value)
+        => ExtractCapitalizedIdentifierMatches(value).Select(match => match.Value);
+
+    private static IEnumerable<(string Value, int Index)> ExtractCapitalizedIdentifierMatches(string value)
     {
         foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
                      value,
                      @"(?<![\p{L}\p{N}])(?:[A-Z][a-z]{2,}[A-Za-z0-9]*|[A-Z]{2,}[A-Za-z0-9+#.-]*)(?![\p{L}\p{N}])"))
         {
-            yield return match.Value;
+            yield return (match.Value, match.Index);
         }
     }
 
-    private static bool ContainsNovelStrengthClaim(string output, string answer)
+    private static bool HasOpenVocabularyIdentifierContext(string output, int identifierIndex)
     {
+        var prefix = output[..identifierIndex];
+        var previousToken = Tokens(prefix).LastOrDefault();
+        if (previousToken is not null && TechnologyContextMarkers.Contains(previousToken))
+            return true;
+
+        var normalizedPrefix = NormalizeForMatching(prefix);
+        return TechnologyContextPhrases.Any(phrase =>
+            normalizedPrefix.EndsWith(phrase, StringComparison.Ordinal));
+    }
+
+    private static bool ContainsNovelStrengthClaim(
+        string output,
+        string answer,
+        bool allowGenericParaphrases = false)
+    {
+        if (ContainsNovelConcreteIdentifier(output, answer))
+            return true;
+
         var answerTokens = Tokens(answer).Where(IsMeaningful).ToArray();
-        return Tokens(output)
+        var unmatchedTokens = Tokens(output)
             .Where(IsMeaningful)
             .Where(token => !GenericStrengthTokens.Contains(token))
-            .Any(token => !answerTokens.Any(answerToken => TokensMatch(token, answerToken)));
+            .Where(token => !answerTokens.Any(answerToken => TokensMatch(token, answerToken)))
+            .ToArray();
+
+        return allowGenericParaphrases
+            ? unmatchedTokens.Any(token => CandidateSpecificFactTokens.Contains(token, StringComparer.OrdinalIgnoreCase))
+            : unmatchedTokens.Length > 0;
     }
 
     private static bool TokensMatch(string outputToken, string answerToken) =>
@@ -367,14 +509,35 @@ public static class AnswerCoachingValidator
         if (outputNumbers.Any(number => !answerNumbers.Contains(number)))
             return true;
 
+        var normalizedOutput = NormalizeForMatching(output);
+        var normalizedAnswer = NormalizeForMatching(answer);
         return UnsupportedFactTerms.Any(term =>
-            output.Contains(term, StringComparison.OrdinalIgnoreCase) &&
-            !answer.Contains(term, StringComparison.OrdinalIgnoreCase));
+            normalizedOutput.Contains(NormalizeForMatching(term), StringComparison.Ordinal) &&
+            !IsFactTermSupported(term, normalizedAnswer));
+    }
+
+    private static bool IsFactTermSupported(string term, string answer)
+    {
+        if (answer.Contains(NormalizeForMatching(term), StringComparison.Ordinal))
+            return true;
+
+        return UnsupportedFactVariants.TryGetValue(term, out var variants) &&
+            variants.Any(variant => answer.Contains(NormalizeForMatching(variant), StringComparison.Ordinal));
     }
 
     private static IEnumerable<string> Tokens(string value) =>
-        System.Text.RegularExpressions.Regex.Matches(value.ToLowerInvariant(), @"[\p{L}\p{N}]+(?:[+#.]*)")
+        System.Text.RegularExpressions.Regex.Matches(NormalizeForMatching(value), @"[\p{L}\p{N}]+(?:[+#.]*)")
             .Select(match => match.Value.Trim('.', '+'));
+
+    private static string NormalizeForMatching(string value)
+    {
+        var normalized = value.Normalize(System.Text.NormalizationForm.FormC).ToLowerInvariant();
+        return System.Text.RegularExpressions.Regex.Replace(
+            normalized,
+            @"\s+",
+            " ",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant).Trim();
+    }
 
     private static bool IsMeaningful(string token) =>
         token.Length >= 3 && !StopWords.Contains(token);
@@ -946,7 +1109,7 @@ public sealed class InterviewFollowupOperation : AiOperationDefinition<Generated
 public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEvaluation>
 {
     public override string Purpose => AiPurposes.InterviewEvaluate;
-    public override string PromptVersion => "interview-eval-v7";
+    public override string PromptVersion => "interview-eval-v8";
     public override string SchemaVersion => "interview-eval-v5";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 6_000;
@@ -1033,7 +1196,8 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         Evaluate the candidate's answer against the job and question requirements.
         Set scoreScale to '0-100'.
         Return exactly four rubric scores for criteria: correctness, structure, completeness, clarity (scores 0-100 with non-empty evidence quote).
-        Return 1-3 strengths grounded in the candidate answer when it demonstrates positive evidence. If no grounded positive evidence is demonstrated, return an empty strengths array, keep rubric scores below 60 where justified, and do not invent a strength. Return 1-3 concrete actionable improvements and one improvedAnswer.
+        Return 1-3 modest strengths grounded only in direct evidence from the candidate's submitted answer. Each strength must reuse at least one concrete phrase, technology, action, fact, or result from that answer. The supplied question and context may inform relevance and rubric scoring, but they are not evidence that the candidate stated or performed anything. Prefer wording such as 'Bạn đã nêu rõ...' or 'Bạn mô tả cụ thể...'. Do not infer leadership, ownership, production experience, business impact, mentoring, scale, team size, architecture ownership, deployment success, or measurable outcomes unless the candidate explicitly states them. If no grounded positive evidence is demonstrated, return an empty strengths array, keep rubric scores below 60 where justified, and do not invent a strength.
+        Return 1-3 improvements, and make every item a direct action the candidate can take. Start with or clearly include a substantive action verb such as add, include, explain, quantify, clarify, describe, mention, specify, show, provide, use, connect, highlight, focus, compare, give, identify, emphasize, present, tập trung, trình bày, làm nổi bật, liên hệ, đưa ví dụ, chỉ ra, nhấn mạnh, so sánh, giải thích, mô tả, làm rõ, bổ sung, nêu, định lượng, or cụ thể hóa. Directive prefixes such as 'hãy', 'nên', or 'có thể' may introduce an action, but do not count by themselves. Do not return passive observations such as 'the result is unclear'. Return one improvedAnswer.
         Keep improvedAnswer faithful to the candidate answer: do not add metrics, achievements, technologies, roles, or experience that are not explicitly present. When evidence is missing, explain what concrete evidence the candidate could add instead of inventing it. Use the answer's facts; do not call another AI operation to rewrite it.
         {AiLanguagePolicy.VietnameseUserFacingInstruction}
 
@@ -1174,9 +1338,9 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
 
                 IMPORTANT COACHING CORRECTION INSTRUCTION:
                 The previous structured evaluation failed validation because its strengths were not grounded in the ORIGINAL candidate answer: '{priorResult.FailureReason}'
-                If the ORIGINAL candidate answer demonstrates no positive evidence, return "strengths": [] (an empty strengths collection), use rubric scores below 60 where justified, and do not invent a strength.
-                If positive evidence is present, return 1-3 strengths only when each one is directly grounded in the ORIGINAL candidate answer.
-                In both cases, return 1-3 concrete actionable improvements and a faithful improvedAnswer. Do not invent facts, experience, technologies, achievements, or metrics.
+                Rewrite strengths using only concrete words, technologies, actions, facts, or results explicitly present in the ORIGINAL candidate answer. The question, context, rubric scores, and rubric evidence may guide relevance or scoring but must not be used as evidence of what the candidate stated or did. Remove inferred traits such as leadership, ownership, production experience, business impact, mentoring, scale, team size, architecture ownership, deployment success, or measurable outcomes unless directly stated. Do not add new facts, technologies, responsibilities, achievements, or results.
+                If no grounded positive evidence is present, return "strengths": [] (an empty strengths collection), use rubric scores below 60 where justified, and do not invent a strength. Otherwise return 1-3 modest grounded strengths.
+                Preserve every other already-valid field where possible. In all cases, return 1-3 concrete actionable improvements and a faithful improvedAnswer. Do not invent facts, experience, technologies, achievements, or metrics.
                 Return a completely corrected object matching the schema.
                 """;
         }
@@ -1188,8 +1352,21 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
 
                 IMPORTANT COACHING CORRECTION INSTRUCTION:
                 The previous structured evaluation failed validation with reason 'interview.improvements_not_actionable' because it contained a non-actionable improvement.
-                Return 1-3 improvement items. Every item must state a concrete action with an action verb, such as add, include, explain, quantify, clarify, describe, mention, specify, show, provide, use, nêu, bổ sung, thêm, định lượng, làm rõ, giải thích, or mô tả.
-                Keep every improvement grounded in the ORIGINAL candidate answer. Do not invent facts, experience, or technologies.
+                Return 1-3 improvement items. Every item must tell the candidate a direct action to take and must start with or clearly include a substantive action verb, such as add, include, explain, quantify, clarify, describe, mention, specify, show, provide, use, connect, highlight, focus, outline, state, compare, give, identify, emphasize, present, nêu, bổ sung, thêm, định lượng, làm rõ, giải thích, or mô tả. Directive prefixes such as 'hãy', 'nên', or 'có thể' may introduce an action, but do not count by themselves. Reject passive observations such as 'the result is unclear' or 'phần kết quả hơi yếu'.
+                Keep every improvement grounded in the ORIGINAL candidate answer and preserve every other already-valid field where possible. Do not invent facts, experience, or technologies.
+                Return a completely corrected object matching the schema.
+                """;
+        }
+
+        if (priorResult.FailureReason is "interview.improved_answer_ungrounded" or "interview.improved_answer_fabricated")
+        {
+            return $"""
+                {originalInstructions}
+
+                IMPORTANT IMPROVED-ANSWER CORRECTION INSTRUCTION:
+                The previous structured evaluation failed validation with reason '{priorResult.FailureReason}'.
+                Rewrite improvedAnswer using only facts, technologies, responsibilities, actions, and outcomes explicitly present in the ORIGINAL candidate answer. Keep the candidate's meaning and do not introduce new metrics, achievements, technologies, roles, responsibilities, impact, team size, scale, deployment claims, or other experience. Placeholders are allowed for missing facts; use a concise placeholder asking the candidate to add the evidence rather than fabricating it.
+                Preserve every other already-valid field where possible, including grounded strengths and actionable improvements.
                 Return a completely corrected object matching the schema.
                 """;
         }
@@ -1228,6 +1405,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
 
         return base.BuildRepairInstructions(priorResult, originalInstructions);
     }
+
 }
 
 public sealed class InterviewReportOperation : AiOperationDefinition<InterviewReportOutput>
