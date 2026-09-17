@@ -480,6 +480,11 @@ các coaching field còn lại đều hợp lệ, server dùng chính candidate 
 fallback deterministic (giới hạn theo contract 4.000 ký tự). Core evaluation
 không hợp lệ vẫn trả `AI_OUTPUT_INVALID`; fallback không được lấy facts từ câu
 hỏi, rubric, JD, CV, Career Goal hay interviewer context.
+Nếu repair attempt terminal trả `AI_OUTPUT_INVALID` do structured response không
+deserialize được, server chỉ được fallback từ evaluation typed gần nhất khi lần
+semantic failure trước đó là riêng `improvedAnswer` ungrounded/fabricated; server
+thay đúng field này bằng candidate answer rồi validate lại toàn bộ evaluation.
+Nội dung malformed không được parse hoặc dùng làm fallback.
 
 Nếu câu hỏi không phù hợp STAR, `star.applicable=false` và các component có thể là `null`/empty. Frontend không parse prose để suy ra điểm STAR.
 

@@ -23,6 +23,7 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
         var instructions = operation.Instructions;
         var maxAttempts = Math.Clamp(operation.MaxAttempts, 1, GlobalMaxAttemptsPerPurpose);
 
+        T? lastSemanticRaw = default;
         AiValidationResult<T>? lastValidation = null;
         AiProviderException? lastProviderException = null;
         AiReasoningEffortOverride? reasoningOverride = null;
@@ -65,6 +66,7 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
             {
                 var raw = await aiProvider.GenerateStructuredAsync<T>(request, cancellationToken);
                 var validation = operation.NormalizeAndValidate(raw, context);
+                lastSemanticRaw = raw;
                 lastValidation = validation;
 
                 if (validation.IsValid)
@@ -175,6 +177,39 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                     correlationId);
 
                 if (ex.Kind == AiProviderFailureKind.InvalidResponse &&
+                    isRepairAttempt &&
+                    attempt >= maxAttempts &&
+                    !cancellationToken.IsCancellationRequested &&
+                    lastSemanticRaw is not null &&
+                    lastValidation is { IsValid: false } priorValidation)
+                {
+                    var recovery = operation.TryRecoverTerminalValidation(
+                        lastSemanticRaw,
+                        context,
+                        priorValidation);
+                    if (recovery is { IsValid: true })
+                    {
+                        LogSemanticRepairProviderFailureRecovered(
+                            logger,
+                            operation.Purpose,
+                            priorValidation.FailureReason ?? "unknown",
+                            ex.Kind.ToString(),
+                            attempt,
+                            correlationId);
+
+                        return new AiExecutionResult<T>(
+                            recovery.NormalizedValue!,
+                            modelVersion,
+                            operation.PromptVersion,
+                            operation.SchemaVersion,
+                            operation.RubricVersion,
+                            true,
+                            attempt,
+                            stopwatch.ElapsedMilliseconds);
+                    }
+                }
+
+                if (ex.Kind == AiProviderFailureKind.InvalidResponse &&
                     ex.RetryHint == AiProviderRetryHint.LowerReasoningEffort &&
                     lastValidation is null &&
                     attempt < maxAttempts)
@@ -273,6 +308,15 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
     [LoggerMessage(LogLevel.Warning, "AI terminal semantic validation recovered with a contract-safe fallback: purpose={Purpose}, failureReason={FailureReason}, attempt={Attempt}, correlationId={CorrelationId}")]
     private static partial void LogTerminalValidationRecovered(ILogger logger, string purpose, string failureReason, int attempt, string correlationId);
+
+    [LoggerMessage(LogLevel.Warning, "AI semantic repair provider failure recovered from prior validated raw: purpose={Purpose}, priorFailureReason={PriorFailureReason}, providerFailureKind={ProviderFailureKind}, attempt={Attempt}, correlationId={CorrelationId}")]
+    private static partial void LogSemanticRepairProviderFailureRecovered(
+        ILogger logger,
+        string purpose,
+        string priorFailureReason,
+        string providerFailureKind,
+        int attempt,
+        string correlationId);
 
     [LoggerMessage(LogLevel.Warning, "AI cross-field evaluation suspicious: general rubric strong but multiple STAR components absent: purpose={Purpose}, correlationId={CorrelationId}")]
     private static partial void LogCrossFieldSuspicious(ILogger logger, string purpose, string correlationId);

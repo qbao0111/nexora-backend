@@ -615,6 +615,82 @@ public sealed class AiContractReliabilityTests
         Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
     }
 
+    [Fact]
+    public async Task MalformedRepairProviderResponseRecoversAnswerAndIdempotentReplayHasNoDuplicateEffects()
+    {
+        const string candidateAnswer = "I debugged the API.";
+        var aiProvider = new TestAiProvider();
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, ApiCoachingEvaluation("Clear structured response"));
+        aiProvider.EnqueueResponse(
+            AiPurposes.InterviewEvaluate,
+            new AiProviderException(AiProviderFailureKind.InvalidResponse, "AI provider returned an invalid structured response."));
+
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 5);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var interviewId = await StartInterviewAsync(client, "technical", "coaching-malformed-repair");
+        await ProcessJobsAsync(factory);
+        var questionId = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var questionCountBeforeAnswer = await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId);
+        var usageCountBeforeAnswer = await db.UsageEvents.CountAsync(item => item.UserId == account.UserId);
+        var notificationCountBeforeAnswer = await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId);
+        var reservationsBeforeAnswer = await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Reserve);
+        var consumptionsBeforeAnswer = await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Consume);
+
+        var first = await SubmitAnswerAsync(client, interviewId, questionId, candidateAnswer, "coaching-malformed-repair-answer");
+        var firstAnswer = first.GetProperty("answer");
+        var firstEvaluation = firstAnswer.GetProperty("evaluation");
+        Assert.Equal(candidateAnswer, firstEvaluation.GetProperty("improvedAnswer").GetString());
+        Assert.Equal("Good answer.", firstEvaluation.GetProperty("feedback").GetString());
+        Assert.Equal(4, firstEvaluation.GetProperty("scores").GetArrayLength());
+        Assert.Equal(4, firstEvaluation.GetProperty("scores").EnumerateArray()
+            .Select(score => score.GetProperty("criterion").GetString())
+            .Distinct(StringComparer.Ordinal)
+            .Count());
+        Assert.Equal(1, firstEvaluation.GetProperty("strengths").GetArrayLength());
+        Assert.Equal(1, firstEvaluation.GetProperty("improvements").GetArrayLength());
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+
+        var persistedAnswer = await db.InterviewAnswers.SingleAsync(item => item.QuestionId == questionId);
+        Assert.Equal(firstAnswer.GetProperty("id").GetGuid(), persistedAnswer.Id);
+        using (var persistedEvaluation = JsonDocument.Parse(persistedAnswer.Evaluation))
+        {
+            Assert.Equal(candidateAnswer, persistedEvaluation.RootElement.GetProperty("improvedAnswer").GetString());
+            Assert.Equal(4, persistedEvaluation.RootElement.GetProperty("scores").GetArrayLength());
+        }
+
+        var questionCountAfterSuccess = await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId);
+        var usageCountAfterSuccess = await db.UsageEvents.CountAsync(item => item.UserId == account.UserId);
+        var notificationCountAfterSuccess = await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId);
+        Assert.Equal(questionCountBeforeAnswer + 1, questionCountAfterSuccess);
+        Assert.Equal(usageCountBeforeAnswer, usageCountAfterSuccess);
+        Assert.Equal(notificationCountBeforeAnswer, notificationCountAfterSuccess);
+        Assert.Equal(reservationsBeforeAnswer, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Reserve));
+        Assert.Equal(consumptionsBeforeAnswer, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Consume));
+        Assert.Equal(1, await db.IdempotencyRecords.CountAsync(item =>
+            item.ActorId == account.UserId && item.Operation == "interview.answer" && item.Key == "coaching-malformed-repair-answer"));
+
+        var replay = await SubmitAnswerAsync(client, interviewId, questionId, candidateAnswer, "coaching-malformed-repair-answer");
+        var replayAnswer = replay.GetProperty("answer");
+        Assert.Equal(firstAnswer.GetProperty("id").GetGuid(), replayAnswer.GetProperty("id").GetGuid());
+        Assert.Equal(first.GetProperty("nextQuestion").GetProperty("id").GetGuid(), replay.GetProperty("nextQuestion").GetProperty("id").GetGuid());
+        Assert.Equal(firstEvaluation.GetRawText(), replayAnswer.GetProperty("evaluation").GetRawText());
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+        Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
+        Assert.Equal(questionCountAfterSuccess, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(usageCountAfterSuccess, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(notificationCountAfterSuccess, await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(1, await db.IdempotencyRecords.CountAsync(item =>
+            item.ActorId == account.UserId && item.Operation == "interview.answer" && item.Key == "coaching-malformed-repair-answer"));
+    }
+
     private static async Task<Guid> StartInterviewAsync(HttpClient client, string interviewType, string key)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/interviews")

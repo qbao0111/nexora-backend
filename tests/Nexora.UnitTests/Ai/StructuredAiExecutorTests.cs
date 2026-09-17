@@ -577,6 +577,148 @@ public sealed class StructuredAiExecutorTests
     }
 
     [Fact]
+    public async Task ExecuteAsyncRecoversPriorEvaluationWhenSemanticRepairReturnsInvalidResponse()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.DelayPerCall = TimeSpan.FromMilliseconds(20);
+        var firstEvaluation = TechnicalEvaluation(AiOperations.ScoreScale) with
+        {
+            Feedback = "Attempt-one feedback remains authoritative.",
+            ImprovedAnswer = "Clear structured response"
+        };
+        fakeProvider.EnqueueResult(firstEvaluation);
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "AI provider returned an invalid structured response."));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "Grounded answer",
+            new AiOperationContext("repair-provider-failure", ExpectedStar: false, CandidateAnswer: "Grounded answer"),
+            CancellationToken.None);
+
+        Assert.True(result.RepairUsed);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Equal("mock-gemini", result.ModelVersion);
+        Assert.Equal(AiOperations.InterviewEvaluate.PromptVersion, result.PromptVersion);
+        Assert.Equal(AiOperations.InterviewEvaluate.SchemaVersion, result.SchemaVersion);
+        Assert.Equal(AiOperations.InterviewEvaluate.RubricVersion, result.RubricVersion);
+        Assert.True(result.LatencyMs >= 30);
+        Assert.Contains("interview.improved_answer_ungrounded", fakeProvider.Requests[1].Instructions, StringComparison.Ordinal);
+        Assert.Equal("Grounded answer", result.Value.ImprovedAnswer);
+        Assert.Equal(firstEvaluation.Scores, result.Value.Scores);
+        Assert.Equal(firstEvaluation.Feedback, result.Value.Feedback);
+        Assert.Equal(firstEvaluation.Strengths, result.Value.Strengths);
+        Assert.Equal(firstEvaluation.Improvements, result.Value.Improvements);
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncDoesNotRecoverPriorOutputWhenRubricWasInvalid()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale) with { Scores = [] });
+        fakeProvider.EnqueueException(new AiProviderException(AiProviderFailureKind.InvalidResponse, "Invalid repair response."));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "Grounded answer",
+            new AiOperationContext("invalid-rubric-provider-failure", ExpectedStar: false, CandidateAnswer: "Grounded answer"),
+            CancellationToken.None));
+
+        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
+        Assert.Equal(2, fakeProvider.CallCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncDoesNotRecoverPriorOutputWhenImprovementsWereInvalid()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale) with
+        {
+            Improvements = [],
+            ImprovedAnswer = "Clear structured response"
+        });
+        fakeProvider.EnqueueException(new AiProviderException(AiProviderFailureKind.InvalidResponse, "Invalid repair response."));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "Grounded answer",
+            new AiOperationContext("invalid-improvements-provider-failure", ExpectedStar: false, CandidateAnswer: "Grounded answer"),
+            CancellationToken.None));
+
+        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
+        Assert.Equal(2, fakeProvider.CallCount);
+    }
+
+    [Fact]
+    public void InterviewEvaluationRecoveryRevalidatesAllCoreFields()
+    {
+        var invalidRaw = TechnicalEvaluation(AiOperations.ScoreScale) with
+        {
+            Improvements = [],
+            ImprovedAnswer = "Clear structured response"
+        };
+        var context = new AiOperationContext(
+            "recovery-full-revalidation",
+            ExpectedStar: false,
+            CandidateAnswer: "Grounded answer");
+
+        // The validator reports the first failure only; this synthetic prior result
+        // exercises the defensive recovery boundary with a newly invalid core field.
+        var recovery = AiOperations.InterviewEvaluate.TryRecoverTerminalValidation(
+            invalidRaw,
+            context,
+            AiValidationResult<AnswerEvaluation>.Failure(
+                "interview.improved_answer_ungrounded",
+                "semantic",
+                repairable: true));
+
+        Assert.NotNull(recovery);
+        Assert.False(recovery.IsValid);
+        Assert.Equal("interview.improvements_invalid", recovery.FailureReason);
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncFailsClosedWhenBothInterviewProviderResponsesAreInvalid()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueException(new AiProviderException(AiProviderFailureKind.InvalidResponse, "Invalid first response."));
+        fakeProvider.EnqueueException(new AiProviderException(AiProviderFailureKind.InvalidResponse, "Invalid repair response."));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "Grounded answer",
+            new AiOperationContext("both-provider-responses-invalid", ExpectedStar: false, CandidateAnswer: "Grounded answer"),
+            CancellationToken.None));
+
+        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
+        Assert.Equal(2, fakeProvider.CallCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncDoesNotApplyInterviewRecoveryToNonInterviewOperations()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueException(new AiProviderException(AiProviderFailureKind.InvalidResponse, "Invalid first response."));
+        fakeProvider.EnqueueException(new AiProviderException(AiProviderFailureKind.InvalidResponse, "Invalid repair response."));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.ResumeProfile,
+            "candidate resume text",
+            new AiOperationContext("non-interview-provider-failure"),
+            CancellationToken.None));
+
+        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
+        Assert.Equal(2, fakeProvider.CallCount);
+    }
+
+    [Fact]
     public async Task ExecuteAsyncFallbackPreservesAnExtremelyShortCandidateAnswerWithoutInventingFacts()
     {
         var fakeProvider = new MockAiProvider();
@@ -752,21 +894,25 @@ public sealed class StructuredAiExecutorTests
         public string ModelVersion => "mock-gemini";
         public List<AiRequest> Requests { get; } = [];
         public int CallCount => Requests.Count;
+        public TimeSpan DelayPerCall { get; set; }
 
         private readonly Queue<object> _queue = new();
 
         public void EnqueueResult(object result) => _queue.Enqueue(result);
         public void EnqueueException(Exception exception) => _queue.Enqueue(exception);
 
-        public Task<T> GenerateStructuredAsync<T>(AiRequest request, CancellationToken cancellationToken)
+        public async Task<T> GenerateStructuredAsync<T>(AiRequest request, CancellationToken cancellationToken)
         {
             Requests.Add(request);
             if (_queue.Count == 0)
                 throw new InvalidOperationException("No mock result queued.");
+            if (DelayPerCall > TimeSpan.Zero)
+                await Task.Delay(DelayPerCall, cancellationToken);
+
             var item = _queue.Dequeue();
             if (item is Exception ex)
                 throw ex;
-            return Task.FromResult((T)item);
+            return (T)item;
         }
     }
 }
