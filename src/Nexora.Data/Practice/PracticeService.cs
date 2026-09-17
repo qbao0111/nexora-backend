@@ -158,8 +158,27 @@ public sealed partial class PracticeService(
 
     public async Task<IReadOnlyList<ResumeView>> GetResumesAsync(Guid userId, CancellationToken cancellationToken)
     {
-        var query = dbContext.Resumes.AsNoTracking()
-            .Where(item => item.UserId == userId)
+        var query = dbContext.Resumes.AsNoTracking().Where(item => item.UserId == userId);
+        if (string.Equals(dbContext.Database.ProviderName, "Microsoft.EntityFrameworkCore.Sqlite", StringComparison.Ordinal))
+        {
+            return (await query.Select(item => new ResumeView(
+                    item.Id,
+                    item.StoredFile.FileName,
+                    item.StoredFile.ContentType,
+                    item.StoredFile.Size,
+                    item.Status,
+                    item.CreatedAt,
+                    item.Status == PracticeValues.Failed ? "RESUME_EXTRACTION_FAILED" : null,
+                    item.Status == PracticeValues.Failed ? ResumeExtractionFailureMessage : null))
+                .ToArrayAsync(cancellationToken))
+                .OrderByDescending(item => item.CreatedAt)
+                .ThenByDescending(item => item.Id)
+                .ToArray();
+        }
+
+        return await query
+            .OrderByDescending(item => item.CreatedAt)
+            .ThenByDescending(item => item.Id)
             .Select(item => new ResumeView(
                 item.Id,
                 item.StoredFile.FileName,
@@ -168,16 +187,8 @@ public sealed partial class PracticeService(
                 item.Status,
                 item.CreatedAt,
                 item.Status == PracticeValues.Failed ? "RESUME_EXTRACTION_FAILED" : null,
-                item.Status == PracticeValues.Failed ? ResumeExtractionFailureMessage : null));
-
-        return dbContext.Database.IsNpgsql()
-            ? await query.OrderByDescending(item => item.CreatedAt)
-                .ThenByDescending(item => item.Id)
-                .ToArrayAsync(cancellationToken)
-            : (await query.ToArrayAsync(cancellationToken))
-                .OrderByDescending(item => item.CreatedAt)
-                .ThenByDescending(item => item.Id)
-                .ToArray();
+                item.Status == PracticeValues.Failed ? ResumeExtractionFailureMessage : null))
+            .ToArrayAsync(cancellationToken);
     }
 
     private async Task WaitForResumeReadyAsync(Guid resumeId, CancellationToken cancellationToken)
@@ -263,18 +274,22 @@ public sealed partial class PracticeService(
 
     public async Task<IReadOnlyList<JobDescriptionView>> GetJobDescriptionsAsync(Guid userId, CancellationToken cancellationToken)
     {
-        var query = dbContext.JobDescriptions.AsNoTracking()
-            .Where(item => item.UserId == userId)
-            .Select(item => new JobDescriptionView(item.Id, item.Title, item.Content, item.CreatedAt));
-
-        return dbContext.Database.IsNpgsql()
-            ? await query.OrderByDescending(item => item.CreatedAt)
-                .ThenByDescending(item => item.Id)
-                .ToArrayAsync(cancellationToken)
-            : (await query.ToArrayAsync(cancellationToken))
+        var query = dbContext.JobDescriptions.AsNoTracking().Where(item => item.UserId == userId);
+        if (string.Equals(dbContext.Database.ProviderName, "Microsoft.EntityFrameworkCore.Sqlite", StringComparison.Ordinal))
+        {
+            return (await query
+                    .Select(item => new JobDescriptionView(item.Id, item.Title, item.Content, item.CreatedAt))
+                    .ToArrayAsync(cancellationToken))
                 .OrderByDescending(item => item.CreatedAt)
                 .ThenByDescending(item => item.Id)
                 .ToArray();
+        }
+
+        return await query
+            .OrderByDescending(item => item.CreatedAt)
+            .ThenByDescending(item => item.Id)
+            .Select(item => new JobDescriptionView(item.Id, item.Title, item.Content, item.CreatedAt))
+            .ToArrayAsync(cancellationToken);
     }
 
     public async Task<JobDescriptionView> GetJobDescriptionAsync(Guid userId, Guid jobDescriptionId, CancellationToken cancellationToken)

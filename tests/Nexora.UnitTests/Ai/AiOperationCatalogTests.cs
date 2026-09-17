@@ -303,6 +303,34 @@ public sealed class AiOperationCatalogTests
     }
 
     [Fact]
+    public void BuildRepairInstructionsForInvalidImprovementsStatesTheExactContract()
+    {
+        var validation = AiValidationResult<AnswerEvaluation>.Failure("interview.improvements_invalid", "semantic", repairable: true);
+
+        var repairInstructions = AiOperations.InterviewEvaluate.BuildRepairInstructions(validation, "Evaluate the interview answer.");
+
+        Assert.Contains("JSON array", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("1 to 3 unique, non-empty strings", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("no longer than 500 characters", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("concrete action", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("must not assert or fabricate", repairInstructions, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildRepairInstructionsForUngroundedImprovedAnswerExcludesEveryNonCandidateSource()
+    {
+        var validation = AiValidationResult<AnswerEvaluation>.Failure("interview.improved_answer_ungrounded", "semantic", repairable: true);
+
+        var repairInstructions = AiOperations.InterviewEvaluate.BuildRepairInstructions(validation, "Evaluate the interview answer.");
+
+        Assert.Contains("ONLY facts explicitly present in the ORIGINAL candidate answer", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("question, rubric, Job Description, resume context, Career Goal", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("new technologies, projects, responsibilities, metrics, team size, production claims", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("inferred experience", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("preserve the candidate's original answer", repairInstructions, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BuildRepairInstructionsForStarAppendsStarCorrectionInstruction()
     {
         var validation = AiValidationResult<AnswerEvaluation>.Failure("star.component_detected_without_evidence", "semantic", repairable: true);
@@ -342,12 +370,41 @@ public sealed class AiOperationCatalogTests
         Assert.Contains("debugged the API", result.NormalizedValue.ImprovedAnswer);
     }
 
+    [Fact]
+    public void InterviewEvaluateNormalizesWhitespaceAndEquivalentDuplicateImprovements()
+    {
+        var raw = new AnswerEvaluation(
+            [
+                new RubricScore("correctness", 80, "The API debugging approach is described."),
+                new RubricScore("structure", 80, "The answer is ordered."),
+                new RubricScore("completeness", 80, "The API issue is covered."),
+                new RubricScore("clarity", 80, "The answer is clear.")
+            ],
+            "Good answer.",
+            new StarEvaluation(false, null, null, null, null, null, [], [], []),
+            AiOperations.ScoreScale,
+            ["The API debugging is clear."],
+            [" Add one concrete result. ", "add one concrete result.", " Explain the debugging sequence. ", "explain the debugging sequence."],
+            "I debugged the API.");
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            raw,
+            new AiOperationContext("coaching-normalized", ExpectedStar: false, CandidateAnswer: "I debugged the API."));
+
+        Assert.True(result.IsValid, result.FailureReason);
+        Assert.Equal(["Add one concrete result.", "Explain the debugging sequence."], result.NormalizedValue!.Improvements);
+    }
+
     [Theory]
     [InlineData("khom")]
     [InlineData("không biết")]
     [InlineData("em chưa rõ")]
     [InlineData("idk")]
     [InlineData("I don't know")]
+    [InlineData("banana weather football")]
+    [InlineData("yes yes yes yes yes")]
+    [InlineData("khom biết maybe API gì đó ???")]
+    [InlineData("x")]
     public void InterviewEvaluateAllowsEmptyStrengthsWhenNoPositiveEvidenceIsGrounded(string candidateAnswer)
     {
         var raw = new AnswerEvaluation(

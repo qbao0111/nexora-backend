@@ -50,7 +50,7 @@ public sealed class VietnameseOnlyPolicyTests
         Assert.Equal("resume-analysis-field-benchmark-v3", AiOperations.ResumeAnalysisFieldBenchmark.PromptVersion);
         Assert.Equal("interview-first-question-v5", AiOperations.InterviewFirstQuestion.PromptVersion);
         Assert.Equal("interview-followup-v4", AiOperations.InterviewFollowup.PromptVersion);
-        Assert.Equal("interview-eval-v8", AiOperations.InterviewEvaluate.PromptVersion);
+        Assert.Equal("interview-eval-v9", AiOperations.InterviewEvaluate.PromptVersion);
         Assert.Equal("interview-report-v4", AiOperations.InterviewReport.PromptVersion);
         Assert.Equal("scenario-eval-v3", AiOperations.ScenarioEvaluate.PromptVersion);
         Assert.Equal("star-eval-v4", AiOperations.StarEvaluate.PromptVersion);
