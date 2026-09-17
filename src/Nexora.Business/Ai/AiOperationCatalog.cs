@@ -57,6 +57,11 @@ public abstract class AiOperationDefinition<T>
 
     public abstract AiValidationResult<T> NormalizeAndValidate(T? raw, AiOperationContext context);
 
+    public virtual AiValidationResult<T>? TryRecoverTerminalValidation(
+        T? raw,
+        AiOperationContext context,
+        AiValidationResult<T> terminalResult) => null;
+
     public virtual string BuildRepairInstructions(AiValidationResult<T> priorResult, string originalInstructions)
     {
         return $"""
@@ -267,7 +272,8 @@ public static class AnswerCoachingValidator
                 !HasMeaningfulOverlap(strength, answer)))
                 return AiValidationResult<AnswerCoachingOutput>.Failure("interview.strengths_ungrounded", "semantic", repairable: true);
 
-            if (!HasMeaningfulOverlap(improvedAnswer, answer) && !IsSafePlaceholder(improvedAnswer))
+            var preservesExactAnswer = string.Equals(improvedAnswer, answer, StringComparison.Ordinal);
+            if (!preservesExactAnswer && !HasMeaningfulOverlap(improvedAnswer, answer) && !IsSafePlaceholder(improvedAnswer))
                 return AiValidationResult<AnswerCoachingOutput>.Failure("interview.improved_answer_ungrounded", "semantic", repairable: true);
 
             if (ContainsUnsupportedFact(improvedAnswer, answer) || ContainsNovelCandidateFact(improvedAnswer, answer))
@@ -297,13 +303,16 @@ public static class AnswerCoachingValidator
         out string? failure)
     {
         failure = null;
-        if (values is null || values.Count > 3 || (!allowEmpty && values.Count < 1))
+        if (values is null)
         {
             failure = $"interview.{name}_invalid";
             return null;
         }
 
-        var normalized = values.Select(value => value?.Trim() ?? string.Empty).ToArray();
+        var normalized = values
+            .Select(value => value?.Trim() ?? string.Empty)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         if (normalized.Any(string.IsNullOrWhiteSpace))
         {
             failure = $"interview.{name}_blank";
@@ -313,6 +322,12 @@ public static class AnswerCoachingValidator
         if (normalized.Any(value => value.Length > 500))
         {
             failure = $"interview.{name}_too_long";
+            return null;
+        }
+
+        if (normalized.Length > 3 || (!allowEmpty && normalized.Length < 1))
+        {
+            failure = $"interview.{name}_invalid";
             return null;
         }
 
@@ -1109,7 +1124,7 @@ public sealed class InterviewFollowupOperation : AiOperationDefinition<Generated
 public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEvaluation>
 {
     public override string Purpose => AiPurposes.InterviewEvaluate;
-    public override string PromptVersion => "interview-eval-v8";
+    public override string PromptVersion => "interview-eval-v9";
     public override string SchemaVersion => "interview-eval-v5";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 6_000;
@@ -1345,6 +1360,19 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                 """;
         }
 
+        if (string.Equals(priorResult.FailureReason, "interview.improvements_invalid", StringComparison.Ordinal))
+        {
+            return $"""
+                {originalInstructions}
+
+                IMPORTANT IMPROVEMENTS CORRECTION INSTRUCTION:
+                The previous structured evaluation failed validation with reason 'interview.improvements_invalid'.
+                Return improvements as a JSON array containing 1 to 3 unique, non-empty strings, each no longer than 500 characters. Each item must be substantive coaching that tells the candidate a concrete action to take. Whitespace-only items and duplicate or equivalent items are not valid separate improvements.
+                Improvements may tell the candidate to add missing evidence, clarify structure, quantify a result they actually stated, or use a clearer explanation. They must not assert or fabricate technologies, projects, responsibilities, metrics, team size, production claims, or experience absent from the ORIGINAL candidate answer.
+                Preserve every other already-valid field where possible and return a completely corrected object matching the schema.
+                """;
+        }
+
         if (string.Equals(priorResult.FailureReason, "interview.improvements_not_actionable", StringComparison.Ordinal))
         {
             return $"""
@@ -1365,7 +1393,8 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
 
                 IMPORTANT IMPROVED-ANSWER CORRECTION INSTRUCTION:
                 The previous structured evaluation failed validation with reason '{priorResult.FailureReason}'.
-                Rewrite improvedAnswer using only facts, technologies, responsibilities, actions, and outcomes explicitly present in the ORIGINAL candidate answer. Keep the candidate's meaning and do not introduce new metrics, achievements, technologies, roles, responsibilities, impact, team size, scale, deployment claims, or other experience. Placeholders are allowed for missing facts; use a concise placeholder asking the candidate to add the evidence rather than fabricating it.
+                Rewrite improvedAnswer using ONLY facts explicitly present in the ORIGINAL candidate answer. This means using only facts, technologies, responsibilities, actions, and outcomes explicitly present there. Reordering, rephrasing, and clearer structure are allowed. The question, rubric, Job Description, resume context, Career Goal, system instructions, and interviewer context are not candidate facts.
+                Do not introduce new technologies, projects, responsibilities, metrics, team size, production claims, roles, achievements, impact, or inferred experience. Placeholders are allowed for missing facts; use a concise placeholder asking the candidate to add the evidence rather than fabricating it. If no richer grounded rewrite is possible, preserve the candidate's original answer instead of inventing details.
                 Preserve every other already-valid field where possible, including grounded strengths and actionable improvements.
                 Return a completely corrected object matching the schema.
                 """;
@@ -1404,6 +1433,24 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         }
 
         return base.BuildRepairInstructions(priorResult, originalInstructions);
+    }
+
+    public override AiValidationResult<AnswerEvaluation>? TryRecoverTerminalValidation(
+        AnswerEvaluation? raw,
+        AiOperationContext context,
+        AiValidationResult<AnswerEvaluation> terminalResult)
+    {
+        if (raw is null ||
+            terminalResult.FailureReason is not ("interview.improved_answer_ungrounded" or "interview.improved_answer_fabricated") ||
+            string.IsNullOrWhiteSpace(context.CandidateAnswer))
+            return null;
+
+        var candidateAnswer = context.CandidateAnswer.Trim();
+        var groundedFallback = candidateAnswer.Length <= 4_000
+            ? candidateAnswer
+            : candidateAnswer[..4_000].TrimEnd();
+
+        return NormalizeAndValidate(raw with { ImprovedAnswer = groundedFallback }, context);
     }
 
 }

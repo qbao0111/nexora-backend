@@ -472,7 +472,14 @@ actionable. Khi có answer gốc, validator yêu cầu coaching có overlap có 
 với answer, giữ nguyên mọi số liệu/công nghệ/thành tích đã có và từ chối facts
 mới (bao gồm số chưa xuất hiện trong answer). Khi thiếu bằng chứng, AI phải
 khuyến nghị ứng viên bổ sung dữ liệu nếu có thay vì tự tạo dữ liệu. Đây là
-coaching trong cùng một AI call, không có rewrite call thứ hai.
+coaching trong cùng structured operation, không có rewrite operation riêng.
+Whitespace và duplicate tương đương trong `improvements` được normalize trước
+khi kiểm tra cardinality. Nếu sau đúng một repair attempt mà chỉ riêng
+`improvedAnswer` vẫn ungrounded/fabricated trong khi rubric, evidence, STAR và
+các coaching field còn lại đều hợp lệ, server dùng chính candidate answer làm
+fallback deterministic (giới hạn theo contract 4.000 ký tự). Core evaluation
+không hợp lệ vẫn trả `AI_OUTPUT_INVALID`; fallback không được lấy facts từ câu
+hỏi, rubric, JD, CV, Career Goal hay interviewer context.
 
 Nếu câu hỏi không phù hợp STAR, `star.applicable=false` và các component có thể là `null`/empty. Frontend không parse prose để suy ra điểm STAR.
 

@@ -511,6 +511,103 @@ public sealed class StructuredAiExecutorTests
     }
 
     [Fact]
+    public async Task ExecuteAsyncRepairsInvalidImprovementsOnSecondAttempt()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale) with
+        {
+            Improvements = [],
+            ImprovedAnswer = "Grounded answer"
+        });
+        fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "Grounded answer",
+            new AiOperationContext("improvements-repair", ExpectedStar: false, CandidateAnswer: "Grounded answer"),
+            CancellationToken.None);
+
+        Assert.True(result.RepairUsed);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Contains("interview.improvements_invalid", fakeProvider.Requests[1].Instructions, StringComparison.Ordinal);
+        Assert.NotEmpty(result.Value.Improvements!);
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncRepairsUngroundedImprovedAnswerOnSecondAttempt()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale) with { ImprovedAnswer = "Clear structured response" });
+        fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale) with { ImprovedAnswer = "Grounded answer" });
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "Grounded answer",
+            new AiOperationContext("improved-answer-repair", ExpectedStar: false, CandidateAnswer: "Grounded answer"),
+            CancellationToken.None);
+
+        Assert.True(result.RepairUsed);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal("Grounded answer", result.Value.ImprovedAnswer);
+        Assert.Contains("interview.improved_answer_ungrounded", fakeProvider.Requests[1].Instructions, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncFallsBackToCandidateAnswerWhenOnlyImprovedAnswerRemainsUngrounded()
+    {
+        var fakeProvider = new MockAiProvider();
+        var ungrounded = TechnicalEvaluation(AiOperations.ScoreScale) with { ImprovedAnswer = "Clear structured response" };
+        fakeProvider.EnqueueResult(ungrounded);
+        fakeProvider.EnqueueResult(ungrounded);
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "Grounded answer",
+            new AiOperationContext("improved-answer-fallback", ExpectedStar: false, CandidateAnswer: "Grounded answer"),
+            CancellationToken.None);
+
+        Assert.True(result.RepairUsed);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Equal("Grounded answer", result.Value.ImprovedAnswer);
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncFallbackPreservesAnExtremelyShortCandidateAnswerWithoutInventingFacts()
+    {
+        var fakeProvider = new MockAiProvider();
+        var ungrounded = TechnicalEvaluation(AiOperations.ScoreScale) with
+        {
+            Scores =
+            [
+                new RubricScore("correctness", 10, "No useful evidence."),
+                new RubricScore("structure", 10, "No structure."),
+                new RubricScore("completeness", 10, "Incomplete."),
+                new RubricScore("clarity", 10, "Unclear.")
+            ],
+            Strengths = [],
+            ImprovedAnswer = "Clear structured response"
+        };
+        fakeProvider.EnqueueResult(ungrounded);
+        fakeProvider.EnqueueResult(ungrounded);
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "x",
+            new AiOperationContext("short-answer-fallback", ExpectedStar: false, CandidateAnswer: "x"),
+            CancellationToken.None);
+
+        Assert.Equal("x", result.Value.ImprovedAnswer);
+        Assert.Empty(result.Value.Strengths!);
+        Assert.All(result.Value.Scores, score => Assert.InRange(score.Score, 0, 59));
+    }
+
+    [Fact]
     public async Task ExecuteAsyncRejectsInvalidScoreScaleAfterExactlyTwoAttempts()
     {
         var fakeProvider = new MockAiProvider();

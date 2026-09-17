@@ -348,7 +348,7 @@ public sealed class AiContractReliabilityTests
     }
 
     [Fact]
-    public async Task PersistentSemanticFailureCapsAtTwoAttemptsAndDoesNotPersistAnswer()
+    public async Task PersistentSemanticFailureCanRetrySameSubmissionWithoutDoubleConsumption()
     {
         var aiProvider = new TestAiProvider();
         // Both attempts return invalid rubric
@@ -398,6 +398,45 @@ public sealed class AiContractReliabilityTests
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         var answerCount = await db.InterviewAnswers.CountAsync(a => a.QuestionId == questionId);
         Assert.Equal(0, answerCount);
+        var questionCountAfterFailure = await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId);
+        var usageCountAfterFailure = await db.UsageEvents.CountAsync(item => item.UserId == account.UserId);
+        var notificationCountAfterFailure = await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId);
+        Assert.Equal(0, await db.IdempotencyRecords.CountAsync(item =>
+            item.ActorId == account.UserId && item.Operation == "interview.answer" && item.Key == "answer-capped-1"));
+
+        using var retryRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/answers")
+        {
+            Content = JsonContent.Create(new
+            {
+                questionId,
+                content = "Encapsulation bundles data with the methods that operate on that data.",
+                durationSeconds = 30
+            })
+        };
+        retryRequest.Headers.Add("Idempotency-Key", "answer-capped-1");
+        using var retryResponse = await client.SendAsync(retryRequest);
+        Assert.Equal(HttpStatusCode.OK, retryResponse.StatusCode);
+
+        using var replayRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/answers")
+        {
+            Content = JsonContent.Create(new
+            {
+                questionId,
+                content = "Encapsulation bundles data with the methods that operate on that data.",
+                durationSeconds = 30
+            })
+        };
+        replayRequest.Headers.Add("Idempotency-Key", "answer-capped-1");
+        using var replayResponse = await client.SendAsync(replayRequest);
+        Assert.Equal(HttpStatusCode.OK, replayResponse.StatusCode);
+
+        Assert.Equal(3, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+        Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
+        Assert.Equal(questionCountAfterFailure + 1, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(usageCountAfterFailure, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(notificationCountAfterFailure, await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(1, await db.IdempotencyRecords.CountAsync(item =>
+            item.ActorId == account.UserId && item.Operation == "interview.answer" && item.Key == "answer-capped-1"));
     }
 
     [Fact]
@@ -541,7 +580,7 @@ public sealed class AiContractReliabilityTests
     }
 
     [Fact]
-    public async Task PersistentFabricatedCoachingFailsClosedWithoutPersistingAnswer()
+    public async Task PersistentFabricatedImprovedAnswerUsesGroundedFallbackAndPersistsOnce()
     {
         var aiProvider = new TestAiProvider();
         var fabricated = ApiCoachingEvaluation("I debugged the API and mentored the team through a RabbitMQ migration.");
@@ -566,11 +605,14 @@ public sealed class AiContractReliabilityTests
         request.Headers.Add("Idempotency-Key", "coaching-terminal-answer");
         using var response = await client.SendAsync(request);
 
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+        var data = await DataAsync(response);
+        Assert.Equal("I debugged the API.", data.GetProperty("answer").GetProperty("evaluation").GetProperty("improvedAnswer").GetString());
+        Assert.DoesNotContain("RabbitMQ", await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        Assert.Equal(0, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
+        Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
     }
 
     private static async Task<Guid> StartInterviewAsync(HttpClient client, string interviewType, string key)

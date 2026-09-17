@@ -117,6 +117,27 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
                 if (!validation.Repairable || attempt >= maxAttempts)
                 {
+                    var recovery = operation.TryRecoverTerminalValidation(raw, context, validation);
+                    if (recovery is { IsValid: true })
+                    {
+                        LogTerminalValidationRecovered(
+                            logger,
+                            operation.Purpose,
+                            validation.FailureReason ?? "unknown",
+                            attempt,
+                            correlationId);
+
+                        return new AiExecutionResult<T>(
+                            recovery.NormalizedValue!,
+                            modelVersion,
+                            operation.PromptVersion,
+                            operation.SchemaVersion,
+                            operation.RubricVersion,
+                            isRepairAttempt,
+                            attempt,
+                            stopwatch.ElapsedMilliseconds);
+                    }
+
                     LogExecutionTerminalFailure(
                         logger,
                         operation.Purpose,
@@ -249,6 +270,9 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
     [LoggerMessage(LogLevel.Information, "AI output repaired successfully: purpose={Purpose}, attempt={Attempt}, correlationId={CorrelationId}")]
     private static partial void LogOutputRepaired(ILogger logger, string purpose, int attempt, string correlationId);
+
+    [LoggerMessage(LogLevel.Warning, "AI terminal semantic validation recovered with a contract-safe fallback: purpose={Purpose}, failureReason={FailureReason}, attempt={Attempt}, correlationId={CorrelationId}")]
+    private static partial void LogTerminalValidationRecovered(ILogger logger, string purpose, string failureReason, int attempt, string correlationId);
 
     [LoggerMessage(LogLevel.Warning, "AI cross-field evaluation suspicious: general rubric strong but multiple STAR components absent: purpose={Purpose}, correlationId={CorrelationId}")]
     private static partial void LogCrossFieldSuspicious(ILogger logger, string purpose, string correlationId);

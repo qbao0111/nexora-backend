@@ -10,6 +10,45 @@ namespace Nexora.IntegrationTests;
 public sealed class NpgsqlQueryTranslationTests
 {
     [Fact]
+    public void PracticeAssetListQueriesOrderEntitiesBeforeProjectionWithNpgsql()
+    {
+        var options = new DbContextOptionsBuilder<NexoraDbContext>()
+            .UseNpgsql("Host=localhost;Database=translation_probe;Username=probe;Password=probe")
+            .Options;
+        using var db = new NexoraDbContext(options);
+        var userId = Guid.NewGuid();
+
+        var resumes = db.Resumes.AsNoTracking()
+            .Where(item => item.UserId == userId)
+            .OrderByDescending(item => item.CreatedAt)
+            .ThenByDescending(item => item.Id)
+            .Select(item => new ResumeView(
+                item.Id,
+                item.StoredFile.FileName,
+                item.StoredFile.ContentType,
+                item.StoredFile.Size,
+                item.Status,
+                item.CreatedAt,
+                item.Status == PracticeValues.Failed ? "RESUME_EXTRACTION_FAILED" : null,
+                item.Status == PracticeValues.Failed ? "Không thể trích xuất nội dung CV." : null));
+        var jobDescriptions = db.JobDescriptions.AsNoTracking()
+            .Where(item => item.UserId == userId)
+            .OrderByDescending(item => item.CreatedAt)
+            .ThenByDescending(item => item.Id)
+            .Select(item => new JobDescriptionView(item.Id, item.Title, item.Content, item.CreatedAt));
+
+        var resumeSql = resumes.ToQueryString();
+        var jobDescriptionSql = jobDescriptions.ToQueryString();
+
+        Assert.Contains("ORDER BY", resumeSql, StringComparison.Ordinal);
+        Assert.Contains("\"CreatedAt\" DESC", resumeSql, StringComparison.Ordinal);
+        Assert.Contains("\"Id\" DESC", resumeSql, StringComparison.Ordinal);
+        Assert.Contains("ORDER BY", jobDescriptionSql, StringComparison.Ordinal);
+        Assert.Contains("\"CreatedAt\" DESC", jobDescriptionSql, StringComparison.Ordinal);
+        Assert.Contains("\"Id\" DESC", jobDescriptionSql, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ProgressQueriesTranslateWithNpgsqlWithoutConnectingToAStore()
     {
         var options = new DbContextOptionsBuilder<NexoraDbContext>()
