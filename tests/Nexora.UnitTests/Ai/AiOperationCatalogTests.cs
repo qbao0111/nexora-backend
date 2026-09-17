@@ -942,7 +942,9 @@ public sealed class AiOperationCatalogTests
         Assert.Contains("IMPORTANT IMPROVED-ANSWER CORRECTION INSTRUCTION", repairInstructions, StringComparison.Ordinal);
         Assert.Contains("only facts, technologies, responsibilities, actions, and outcomes explicitly present", repairInstructions, StringComparison.Ordinal);
         Assert.Contains("placeholders", repairInstructions, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Preserve every other already-valid field", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("Preserve all already-valid rubric scores, rubric evidence, feedback, STAR, strengths, and improvements exactly", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("ONLY rewrite improvedAnswer", repairInstructions, StringComparison.Ordinal);
+        Assert.Contains("Do not revise any other field", repairInstructions, StringComparison.Ordinal);
     }
 
     private static AnswerEvaluation CreateCoachingEvaluation(

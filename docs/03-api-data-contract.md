@@ -484,7 +484,15 @@ Nếu repair attempt terminal trả `AI_OUTPUT_INVALID` do structured response k
 deserialize được, server chỉ được fallback từ evaluation typed gần nhất khi lần
 semantic failure trước đó là riêng `improvedAnswer` ungrounded/fabricated; server
 thay đúng field này bằng candidate answer rồi validate lại toàn bộ evaluation.
-Nội dung malformed không được parse hoặc dùng làm fallback.
+Nội dung malformed không được parse hoặc dùng làm fallback. Nếu cả hai provider
+response đều parse thành typed output nhưng repair attempt terminal có semantic
+failure khác, server thử recovery trên output hiện tại trước; nếu không hợp lệ,
+server mới thử cặp typed raw/validation ngay trước đó và chỉ khi operation cho
+phép recovery theo failure reason trước. Với `improvedAnswer` ungrounded/fabricated,
+recovery giữ nguyên toàn bộ evaluation trước đó, chỉ thay `improvedAnswer` bằng
+candidate answer rồi chạy lại toàn bộ validation. Không ghép field giữa hai
+attempts; rubric/coaching không hợp lệ vẫn fail closed. Raw chưa deserialize thành
+công không bao giờ được giữ hoặc dùng làm fallback.
 
 Nếu câu hỏi không phù hợp STAR, `star.applicable=false` và các component có thể là `null`/empty. Frontend không parse prose để suy ra điểm STAR.
 

@@ -23,17 +23,19 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
         var instructions = operation.Instructions;
         var maxAttempts = Math.Clamp(operation.MaxAttempts, 1, GlobalMaxAttemptsPerPurpose);
 
-        T? lastSemanticRaw = default;
-        AiValidationResult<T>? lastValidation = null;
+        T? currentSemanticRaw = default;
+        AiValidationResult<T>? currentValidation = null;
+        T? previousSemanticRaw = default;
+        AiValidationResult<T>? previousValidation = null;
         AiProviderException? lastProviderException = null;
         AiReasoningEffortOverride? reasoningOverride = null;
         var outputTruncationRetry = false;
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var isRepairAttempt = attempt > 1 && lastValidation is not null && !lastValidation.IsValid;
+            var isRepairAttempt = attempt > 1 && currentValidation is not null && !currentValidation.IsValid;
             var currentInstructions = isRepairAttempt
-                ? operation.BuildRepairInstructions(lastValidation!, instructions)
+                ? operation.BuildRepairInstructions(currentValidation!, instructions)
                 : instructions;
             var currentReasoningOverride = reasoningOverride;
             reasoningOverride = null;
@@ -66,8 +68,10 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
             {
                 var raw = await aiProvider.GenerateStructuredAsync<T>(request, cancellationToken);
                 var validation = operation.NormalizeAndValidate(raw, context);
-                lastSemanticRaw = raw;
-                lastValidation = validation;
+                previousSemanticRaw = currentSemanticRaw;
+                previousValidation = currentValidation;
+                currentSemanticRaw = raw;
+                currentValidation = validation;
 
                 if (validation.IsValid)
                 {
@@ -140,6 +144,37 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                             stopwatch.ElapsedMilliseconds);
                     }
 
+                    if (isRepairAttempt &&
+                        attempt >= maxAttempts &&
+                        previousSemanticRaw is not null &&
+                        previousValidation is { IsValid: false } priorValidation)
+                    {
+                        var priorRecovery = operation.TryRecoverTerminalValidation(
+                            previousSemanticRaw,
+                            context,
+                            priorValidation);
+                        if (priorRecovery is { IsValid: true })
+                        {
+                            LogTerminalSemanticRepairRecovered(
+                                logger,
+                                operation.Purpose,
+                                priorValidation.FailureReason ?? "unknown",
+                                validation.FailureReason ?? "unknown",
+                                attempt,
+                                correlationId);
+
+                            return new AiExecutionResult<T>(
+                                priorRecovery.NormalizedValue!,
+                                modelVersion,
+                                operation.PromptVersion,
+                                operation.SchemaVersion,
+                                operation.RubricVersion,
+                                true,
+                                attempt,
+                                stopwatch.ElapsedMilliseconds);
+                        }
+                    }
+
                     LogExecutionTerminalFailure(
                         logger,
                         operation.Purpose,
@@ -180,11 +215,11 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                     isRepairAttempt &&
                     attempt >= maxAttempts &&
                     !cancellationToken.IsCancellationRequested &&
-                    lastSemanticRaw is not null &&
-                    lastValidation is { IsValid: false } priorValidation)
+                    currentSemanticRaw is not null &&
+                    currentValidation is { IsValid: false } priorValidation)
                 {
                     var recovery = operation.TryRecoverTerminalValidation(
-                        lastSemanticRaw,
+                        currentSemanticRaw,
                         context,
                         priorValidation);
                     if (recovery is { IsValid: true })
@@ -211,7 +246,7 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
                 if (ex.Kind == AiProviderFailureKind.InvalidResponse &&
                     ex.RetryHint == AiProviderRetryHint.LowerReasoningEffort &&
-                    lastValidation is null &&
+                    currentValidation is null &&
                     attempt < maxAttempts)
                 {
                     reasoningOverride = AiReasoningEffortOverride.Low;
@@ -219,7 +254,7 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                 else if (ex.Kind == AiProviderFailureKind.InvalidResponse &&
                     ex.RetryHint == AiProviderRetryHint.OutputTruncated &&
                     operation.SupportsOutputTruncationRetry &&
-                    lastValidation is null &&
+                    currentValidation is null &&
                     attempt < maxAttempts)
                 {
                     LogOutputTruncationRetry(
@@ -315,6 +350,15 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
         string purpose,
         string priorFailureReason,
         string providerFailureKind,
+        int attempt,
+        string correlationId);
+
+    [LoggerMessage(LogLevel.Warning, "AI terminal semantic repair recovered from prior validated raw: purpose={Purpose}, previousFailureReason={PreviousFailureReason}, currentFailureReason={CurrentFailureReason}, attempt={Attempt}, correlationId={CorrelationId}")]
+    private static partial void LogTerminalSemanticRepairRecovered(
+        ILogger logger,
+        string purpose,
+        string previousFailureReason,
+        string currentFailureReason,
         int attempt,
         string correlationId);
 
