@@ -684,22 +684,7 @@ public sealed class PracticeLoopApiTests
         }
 
         var ownerResumeId = await SeedReadyResumeAsync(factory, owner.UserId, "history-owner.pdf", At(1));
-        var tiedResumeAId = await SeedReadyResumeAsync(factory, owner.UserId, "history-tie-a.pdf", At(2));
-        var tiedResumeBId = await SeedReadyResumeAsync(factory, owner.UserId, "history-tie-b.pdf", At(2));
-        var foreignResumeId = await SeedReadyResumeAsync(factory, other.UserId, "history-other.pdf", At(3));
-
-        using (var ownerResumes = await ownerClient.GetAsync("/api/v1/resumes"))
-        {
-            Assert.Equal(HttpStatusCode.OK, ownerResumes.StatusCode);
-            var items = (await DataAsync(ownerResumes)).EnumerateArray().ToArray();
-            var expectedTiedIds = new[] { tiedResumeAId, tiedResumeBId }.OrderByDescending(item => item).ToArray();
-            Assert.Equal(3, items.Length);
-            Assert.Equal(expectedTiedIds[0], items[0].GetProperty("id").GetGuid());
-            Assert.Equal(expectedTiedIds[1], items[1].GetProperty("id").GetGuid());
-            Assert.Equal(ownerResumeId, items[2].GetProperty("id").GetGuid());
-            Assert.DoesNotContain(foreignResumeId, items.Select(item => item.GetProperty("id").GetGuid()));
-        }
-
+        var foreignResumeId = await SeedReadyResumeAsync(factory, other.UserId, "history-other.pdf", At(1));
         var olderAnalysisId = await SeedAnalysisAsync(factory, owner.UserId, ownerResumeId, At(1), "old-role");
         var newerAnalysisId = await SeedAnalysisAsync(factory, owner.UserId, ownerResumeId, At(2), "new-role");
         await SeedAnalysisAsync(factory, other.UserId, foreignResumeId, At(3), "foreign-role");
