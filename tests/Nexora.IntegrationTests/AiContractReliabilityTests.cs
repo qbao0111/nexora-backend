@@ -616,6 +616,106 @@ public sealed class AiContractReliabilityTests
     }
 
     [Fact]
+    public async Task SemanticRepairRegressionRecoversPriorEvaluationAndReplayHasNoDuplicateEffects()
+    {
+        const string candidateAnswer = "I debugged the API.";
+        var aiProvider = new TestAiProvider();
+        var priorEvaluation = ApiCoachingEvaluation("Clear structured response");
+        var regressedRepair = ApiCoachingEvaluation(candidateAnswer) with
+        {
+            Scores =
+            [
+                new RubricScore("correctness", 25, "Repair-attempt correctness evidence."),
+                new RubricScore("structure", 25, "Repair-attempt structure evidence."),
+                new RubricScore("completeness", 25, "Repair-attempt completeness evidence."),
+                new RubricScore("clarity", 25, "Repair-attempt clarity evidence.")
+            ],
+            Feedback = "Repair-attempt feedback must not replace the prior result.",
+            Strengths = ["Repair-attempt strength must not replace the prior result."],
+            Improvements = []
+        };
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, priorEvaluation);
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, regressedRepair);
+
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 5);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var interviewId = await StartInterviewAsync(client, "technical", "coaching-semantic-regression");
+        await ProcessJobsAsync(factory);
+        var questionId = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var questionCountBeforeAnswer = await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId);
+        var usageCountBeforeAnswer = await db.UsageEvents.CountAsync(item => item.UserId == account.UserId);
+        var reservationCountBeforeAnswer = await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Reserve);
+        var consumptionCountBeforeAnswer = await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Consume);
+        var featureUsageCountBeforeAnswer = await db.FeatureUsageEvents.CountAsync(item => item.UserId == account.UserId);
+        var notificationCountBeforeAnswer = await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId);
+        Assert.Equal(1, reservationCountBeforeAnswer);
+        Assert.Equal(1, consumptionCountBeforeAnswer);
+
+        var first = await SubmitAnswerAsync(client, interviewId, questionId, candidateAnswer, "coaching-semantic-regression-answer");
+        var firstAnswer = first.GetProperty("answer");
+        var evaluation = firstAnswer.GetProperty("evaluation");
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+        Assert.Equal(candidateAnswer, evaluation.GetProperty("improvedAnswer").GetString());
+        Assert.Equal(priorEvaluation.Feedback, evaluation.GetProperty("feedback").GetString());
+        Assert.Equal(4, evaluation.GetProperty("scores").GetArrayLength());
+        Assert.All(evaluation.GetProperty("scores").EnumerateArray(), score => Assert.Equal(80, score.GetProperty("score").GetInt32()));
+        Assert.All(evaluation.GetProperty("scores").EnumerateArray(), score =>
+            Assert.DoesNotContain("Repair-attempt", score.GetProperty("evidence").GetString(), StringComparison.Ordinal));
+        Assert.Equal(priorEvaluation.Scores.Select(score => score.Evidence), evaluation.GetProperty("scores").EnumerateArray()
+            .Select(score => score.GetProperty("evidence").GetString()));
+        Assert.Equal(priorEvaluation.Strengths!.Single(), evaluation.GetProperty("strengths")[0].GetString());
+        Assert.Equal(priorEvaluation.Improvements!.Single(), evaluation.GetProperty("improvements")[0].GetString());
+        Assert.Equal(4, evaluation.GetProperty("scores").EnumerateArray()
+            .Select(score => score.GetProperty("criterion").GetString())
+            .Distinct(StringComparer.Ordinal)
+            .Count());
+
+        var persistedAnswer = await db.InterviewAnswers.SingleAsync(item => item.QuestionId == questionId);
+        Assert.Equal(firstAnswer.GetProperty("id").GetGuid(), persistedAnswer.Id);
+        using (var persistedEvaluation = JsonDocument.Parse(persistedAnswer.Evaluation))
+        {
+            Assert.Equal(candidateAnswer, persistedEvaluation.RootElement.GetProperty("improvedAnswer").GetString());
+            Assert.Equal(priorEvaluation.Feedback, persistedEvaluation.RootElement.GetProperty("feedback").GetString());
+            Assert.Equal(priorEvaluation.Improvements!.Single(), persistedEvaluation.RootElement.GetProperty("improvements")[0].GetString());
+        }
+
+        var questionCountAfterSuccess = await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId);
+        var usageCountAfterSuccess = await db.UsageEvents.CountAsync(item => item.UserId == account.UserId);
+        var featureUsageCountAfterSuccess = await db.FeatureUsageEvents.CountAsync(item => item.UserId == account.UserId);
+        var notificationCountAfterSuccess = await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId);
+        Assert.Equal(questionCountBeforeAnswer + 1, questionCountAfterSuccess);
+        Assert.Equal(usageCountBeforeAnswer, usageCountAfterSuccess);
+        Assert.Equal(featureUsageCountBeforeAnswer, featureUsageCountAfterSuccess);
+        Assert.Equal(reservationCountBeforeAnswer, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Reserve));
+        Assert.Equal(consumptionCountBeforeAnswer, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Consume));
+        Assert.Equal(notificationCountBeforeAnswer, notificationCountAfterSuccess);
+        Assert.Equal(1, await db.IdempotencyRecords.CountAsync(item =>
+            item.ActorId == account.UserId && item.Operation == "interview.answer" && item.Key == "coaching-semantic-regression-answer"));
+
+        var replay = await SubmitAnswerAsync(client, interviewId, questionId, candidateAnswer, "coaching-semantic-regression-answer");
+        var replayAnswer = replay.GetProperty("answer");
+        Assert.Equal(firstAnswer.GetProperty("id").GetGuid(), replayAnswer.GetProperty("id").GetGuid());
+        Assert.Equal(first.GetProperty("nextQuestion").GetProperty("id").GetGuid(), replay.GetProperty("nextQuestion").GetProperty("id").GetGuid());
+        Assert.Equal(evaluation.GetRawText(), replayAnswer.GetProperty("evaluation").GetRawText());
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+        Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
+        Assert.Equal(questionCountAfterSuccess, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(usageCountAfterSuccess, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(featureUsageCountAfterSuccess, await db.FeatureUsageEvents.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(notificationCountAfterSuccess, await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(1, await db.IdempotencyRecords.CountAsync(item =>
+            item.ActorId == account.UserId && item.Operation == "interview.answer" && item.Key == "coaching-semantic-regression-answer"));
+    }
+
+    [Fact]
     public async Task MalformedRepairProviderResponseRecoversAnswerAndIdempotentReplayHasNoDuplicateEffects()
     {
         const string candidateAnswer = "I debugged the API.";

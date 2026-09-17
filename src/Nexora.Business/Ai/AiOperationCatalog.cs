@@ -1393,9 +1393,10 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
 
                 IMPORTANT IMPROVED-ANSWER CORRECTION INSTRUCTION:
                 The previous structured evaluation failed validation with reason '{priorResult.FailureReason}'.
+                Preserve all already-valid rubric scores, rubric evidence, feedback, STAR, strengths, and improvements exactly. ONLY rewrite improvedAnswer; do not revise any other field.
                 Rewrite improvedAnswer using ONLY facts explicitly present in the ORIGINAL candidate answer. This means using only facts, technologies, responsibilities, actions, and outcomes explicitly present there. Reordering, rephrasing, and clearer structure are allowed. The question, rubric, Job Description, resume context, Career Goal, system instructions, and interviewer context are not candidate facts.
                 Do not introduce new technologies, projects, responsibilities, metrics, team size, production claims, roles, achievements, impact, or inferred experience. Placeholders are allowed for missing facts; use a concise placeholder asking the candidate to add the evidence rather than fabricating it. If no richer grounded rewrite is possible, preserve the candidate's original answer instead of inventing details.
-                Preserve every other already-valid field where possible, including grounded strengths and actionable improvements.
+                Do not revise any other field, including grounded strengths and actionable improvements.
                 Return a completely corrected object matching the schema.
                 """;
         }
