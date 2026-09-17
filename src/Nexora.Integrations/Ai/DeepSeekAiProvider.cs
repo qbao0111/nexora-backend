@@ -266,14 +266,11 @@ public sealed partial class DeepSeekAiProvider(
         Stopwatch stopwatch,
         CancellationToken cancellationToken)
     {
-        using var payload = await JsonDocument.ParseAsync(
-            await response.Content.ReadAsStreamAsync(cancellationToken),
-            cancellationToken: cancellationToken);
+        using var payload = await ParseEnvelopeAsync(response, request, cancellationToken);
 
         var root = payload.RootElement;
         if (root.ValueKind != JsonValueKind.Object)
-            throw new AiProviderException(AiProviderFailureKind.InvalidResponse,
-                "AI provider returned an invalid structured response.");
+            throw CreateInvalidStructuredResponse(request, policy, null, null, "envelope_not_object");
 
         var usage = ReadUsage(root);
         var finishReason = ReadFinishReason(root);
@@ -283,21 +280,47 @@ public sealed partial class DeepSeekAiProvider(
         // deserializing content so a parseable prefix can never be accepted as a
         // complete structured result.
         if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
-            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason);
+            throw CreateInvalidStructuredResponse(
+                request,
+                policy,
+                usage,
+                finishReason,
+                "provider_finish_reason_length",
+                ReadContentLength(root));
 
-        if (!root.TryGetProperty("choices", out var choices) ||
-            choices.ValueKind != JsonValueKind.Array ||
-            choices.GetArrayLength() == 0 ||
-            choices[0].ValueKind != JsonValueKind.Object ||
-            !choices[0].TryGetProperty("message", out var message) ||
-            message.ValueKind != JsonValueKind.Object ||
-            !message.TryGetProperty("content", out var contentElement) ||
-            contentElement.ValueKind != JsonValueKind.String)
-            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason);
+        if (!root.TryGetProperty("choices", out var choices))
+            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason, "choices_missing");
+
+        if (choices.ValueKind != JsonValueKind.Array)
+            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason, "choices_invalid");
+
+        if (choices.GetArrayLength() == 0)
+            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason, "choices_empty");
+
+        if (choices[0].ValueKind != JsonValueKind.Object)
+            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason, "choice_invalid");
+
+        if (!choices[0].TryGetProperty("message", out var message))
+            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason, "message_missing");
+
+        if (message.ValueKind != JsonValueKind.Object)
+            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason, "message_invalid");
+
+        if (!message.TryGetProperty("content", out var contentElement))
+            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason, "content_missing");
+
+        if (contentElement.ValueKind != JsonValueKind.String)
+            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason, "content_invalid");
 
         var content = contentElement.GetString();
         if (string.IsNullOrWhiteSpace(content))
-            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason);
+            throw CreateInvalidStructuredResponse(
+                request,
+                policy,
+                usage,
+                finishReason,
+                "content_blank",
+                content?.Length ?? 0);
 
         try
         {
@@ -306,16 +329,72 @@ public sealed partial class DeepSeekAiProvider(
         }
         catch (JsonException)
         {
-            throw CreateInvalidStructuredResponse(request, policy, usage, finishReason);
+            throw CreateInvalidStructuredResponse(
+                request,
+                policy,
+                usage,
+                finishReason,
+                "content_json_deserialization_failed",
+                content.Length);
         }
+    }
+
+    private async Task<JsonDocument> ParseEnvelopeAsync(
+        HttpResponseMessage response,
+        AiRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync(cancellationToken),
+                cancellationToken: cancellationToken);
+        }
+        catch (JsonException)
+        {
+            LogStructuredResponseFailure(
+                logger,
+                request.Purpose,
+                "none",
+                0,
+                "envelope_json_parse_failed",
+                request.CorrelationId);
+            throw new AiProviderException(
+                AiProviderFailureKind.InvalidResponse,
+                "AI provider returned an invalid structured response.");
+        }
+    }
+
+    private static int ReadContentLength(JsonElement root)
+    {
+        if (!root.TryGetProperty("choices", out var choices) ||
+            choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0 ||
+            choices[0].ValueKind != JsonValueKind.Object ||
+            !choices[0].TryGetProperty("message", out var message) ||
+            message.ValueKind != JsonValueKind.Object ||
+            !message.TryGetProperty("content", out var content) ||
+            content.ValueKind != JsonValueKind.String)
+            return 0;
+
+        return content.GetString()?.Length ?? 0;
     }
 
     private AiProviderException CreateInvalidStructuredResponse(
         AiRequest request,
         DeepSeekReasoningSelection policy,
         DeepSeekUsage? usage,
-        string? finishReason)
+        string? finishReason,
+        string structuredFailureStage,
+        int contentLength = 0)
     {
+        LogStructuredResponseFailure(
+            logger,
+            request.Purpose,
+            finishReason ?? "none",
+            contentLength,
+            structuredFailureStage,
+            request.CorrelationId);
+
         if (policy.ThinkingEnabled &&
             string.Equals(policy.ReasoningEffort, "high", StringComparison.OrdinalIgnoreCase) &&
             IsReasoningBudgetExhausted(usage, finishReason, request.MaxOutputTokens))
@@ -500,6 +579,18 @@ public sealed partial class DeepSeekAiProvider(
         long? reasoningTokens,
         long? completionTokens,
         int maxOutputTokens,
+        string correlationId);
+
+    [LoggerMessage(
+        EventId = 4103,
+        Level = LogLevel.Warning,
+        Message = "DeepSeek structured response rejected purpose={Purpose} finishReason={FinishReason} contentLength={ContentLength} structuredFailureStage={StructuredFailureStage} correlationId={CorrelationId}")]
+    private static partial void LogStructuredResponseFailure(
+        ILogger logger,
+        string purpose,
+        string finishReason,
+        int contentLength,
+        string structuredFailureStage,
         string correlationId);
 
     private sealed record DeepSeekReasoningSelection(bool ThinkingEnabled, string? ReasoningEffort);
