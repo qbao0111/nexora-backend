@@ -2413,7 +2413,8 @@ public sealed partial class PracticeService(
                     evaluation?.Star,
                     evaluation?.Strengths ?? [],
                     evaluation?.Improvements ?? [],
-                    evaluation?.ImprovedAnswer);
+                    evaluation?.ImprovedAnswer,
+                    evaluation?.SampleAnswer);
             })
             .ToArray();
     }

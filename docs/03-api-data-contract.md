@@ -435,7 +435,7 @@ khi evaluation STAR của câu hỏi behavioral trả phí cho thấy thiếu th
 và luôn kế thừa topic/parent rõ ràng. Retry cùng key trả cùng session/question;
 key khác payload trả `409 IDEMPOTENCY_CONFLICT`.
 
-`answer.evaluation` giữ các field generic hiện có và có thêm coaching theo từng câu trả lời. Các field `strengths`, `improvements` và `improvedAnswer` được tạo trong cùng một `interview.evaluate` call với rubric/STAR; server chỉ lưu output sau khi schema và semantic validation thành công:
+`answer.evaluation` giữ các field generic hiện có và có thêm coaching theo từng câu trả lời. Các field `strengths`, `improvements`, `improvedAnswer` và nullable `sampleAnswer` được tạo trong cùng một `interview.evaluate` call với rubric/STAR; server chỉ lưu core evaluation sau khi schema và semantic validation thành công. `sampleAnswer` được kiểm tra độc lập: nội dung thiếu/sai schema, framework không hỗ trợ, hoặc thiếu phần bắt buộc được bỏ thành `null`/không có field, không làm hỏng core evaluation hợp lệ và không tạo thêm AI call.
 
 ```json
 {
@@ -450,6 +450,14 @@ key khác payload trả `409 IDEMPOTENCY_CONFLICT`.
   "strengths": ["Điểm mạnh có bằng chứng trong câu trả lời"],
   "improvements": ["Bổ sung một ví dụ hoặc kết quả cụ thể nếu có"],
   "improvedAnswer": "Phiên bản trả lời được diễn đạt rõ hơn nhưng chỉ dùng facts ứng viên đã nêu.",
+  "sampleAnswer": {
+    "framework": "star",
+    "situation": "Ví dụ giả định: Một trang danh sách nội bộ phản hồi chậm khi dữ liệu tăng.",
+    "task": "Tôi phụ trách tìm nguyên nhân và đề xuất cải thiện.",
+    "action": "Tôi kiểm tra truy vấn, thêm phân trang và đo lại luồng chính cùng nhóm.",
+    "result": "Tải trang ổn định hơn; nhóm ghi lại cách kiểm tra để dùng cho các màn hình tương tự.",
+    "fullAnswer": "Ví dụ minh họa, không phải trải nghiệm ứng viên: Trong một dự án giả định, một trang danh sách nội bộ phản hồi chậm khi dữ liệu tăng. Tôi phụ trách tìm nguyên nhân, kiểm tra truy vấn và phối hợp thêm phân trang. Sau đó, tải trang ổn định hơn và nhóm dùng lại cách kiểm tra cho các màn hình tương tự."
+  },
   "star": {
     "applicable": true,
     "overallScore": 72,
@@ -463,6 +471,12 @@ key khác payload trả `409 IDEMPOTENCY_CONFLICT`.
   }
 }
 ```
+
+`candidateAnswer` là nguồn facts duy nhất về điều ứng viên thực sự đã nói/làm. `improvedAnswer` là bản viết lại có căn cứ, không thêm thành tích, trách nhiệm, công nghệ hay số liệu. `sampleAnswer` là ví dụ dạy cấu trúc, tách biệt hoàn toàn: có thể dùng bối cảnh/chi tiết giả định nếu được trình bày rõ là ví dụ, nhưng không được đưa facts đó vào candidate evidence, rubric scores, strengths, report transcript/evidence, skill profile, progress hay recommendations. UI phải giữ nhãn minh họa riêng để không gây hiểu nhầm đây là lịch sử của ứng viên.
+
+`framework` chỉ nhận `star`, `self_intro`, `technical`, `direct`. `star` dành cho câu hỏi hành vi, trải nghiệm quá khứ, xung đột, lãnh đạo, làm việc nhóm, giải quyết vấn đề hoặc thành tựu; khi chọn, `situation`, `task`, `action`, `result` phải đều không rỗng. `self_intro` dùng cho giới thiệu, động lực hoặc mức độ phù hợp; `technical` cho kiến thức kỹ thuật; `direct` cho câu hỏi khác. Ba framework không phải STAR phải trả các phần STAR là `null`, không ép mẫu theo STAR. `fullAnswer` là câu trả lời mẫu hoàn chỉnh bằng tiếng Việt tự nhiên, ngắn gọn và chuyên nghiệp. Ví dụ kỹ thuật dùng cách dẫn phi cá nhân như “Ví dụ, trong một hệ thống…” thay vì gán trải nghiệm cho ứng viên. Tránh số liệu chính xác/ấn tượng không cần thiết.
+
+Field `sampleAnswer` có thể vắng mặt hoặc `null`; clients phải đọc lịch sử JSON không có field này như evaluation cũ hợp lệ và không có mẫu. Một sample không hợp lệ/không dùng được được bỏ độc lập (null/absent); không retry bằng AI call thứ ba, không đổi token budget hay provider policy, và không làm mất evaluation core hợp lệ.
 
 `strengths` có 1–3 phần tử có bằng chứng khi câu trả lời thể hiện điểm tích cực,
 hoặc là collection rỗng khi không có bằng chứng tích cực có thể ground và mọi

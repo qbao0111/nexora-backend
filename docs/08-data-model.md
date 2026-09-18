@@ -35,6 +35,8 @@ ApplicationUser 1--N Subscription 1--N Entitlement 1--N UsageEvent
 | `data_privacy_requests` | Audit/retry state cho export/delete workflow | unique `(user_id, idempotency_key)`; không FK cascade để audit còn lại sau anonymization. |
 | `realtime_notifications` | Minimal owner-targeted resource-change delivery metadata | `Id`, `UserId`, `ResourceType`, `ResourceId`, `Status`, `CreatedAt`, nullable `ProcessedAt`/`NextAttemptAt`, `Attempts`; pending index `(ProcessedAt, CreatedAt)`. Inserted with resource transition; see [delivery contract](realtime-notifications.md). |
 
+`interview_answers.Evaluation` stores the validated per-answer evaluation/coaching JSON. `sampleAnswer` is an additive nullable object inside that existing JSON value; it is an illustrative example, not candidate evidence. It must not be aggregated into answer/report scores or evidence, report transcript, Skill Profile, progress or recommendations. No relational column or database migration is required. Historical JSON without `sampleAnswer` remains readable and is interpreted as a null/absent sample.
+
 ## 3. Required columns
 
 All user-owned records: `id UUID/ULID`, `user_id`, `created_at timestamptz`, `updated_at timestamptz`; add `(user_id, created_at DESC)` index for user history. Soft-delete only where recovery/retention requires it; otherwise hard-delete file content after legal retention period.

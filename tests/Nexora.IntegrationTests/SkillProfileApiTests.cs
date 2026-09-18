@@ -263,6 +263,43 @@ public sealed class SkillProfileApiTests
     }
 
     [Fact]
+    public async Task IllustrativeSampleAnswerDoesNotBecomeSkillProfileOrProgressEvidence()
+    {
+        using var factory = NewFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        const string hypotheticalClaim = "hypothetical Atlas project with 99 percent uptime";
+        var evaluation = AnswerEvaluationWithRubric(67) with
+        {
+            SampleAnswer = new SampleInterviewAnswer(
+                "technical", null, null, null, null,
+                $"Ví dụ trong một hệ thống giả định: {hypotheticalClaim}.")
+        };
+        await SeedProgressAnalyticsEntitlementAsync(factory, account.UserId);
+        await SeedInterviewAsync(factory, account.UserId, CanonicalScores(67), includeReport: false,
+            answerEvaluation: evaluation);
+
+        using var profileResponse = await client.GetAsync("/api/v1/skill-profile");
+        Assert.Equal(HttpStatusCode.OK, profileResponse.StatusCode);
+        var profile = await DataAsync(profileResponse);
+        var correctness = Assert.Single(profile.GetProperty("competencies").EnumerateArray(),
+            item => item.GetProperty("code").GetString() == "interview.correctness");
+        Assert.Equal(67, correctness.GetProperty("score").GetInt32());
+        Assert.Equal(1, correctness.GetProperty("evidenceCount").GetInt32());
+        Assert.DoesNotContain(profile.GetProperty("weaknessSignals").EnumerateArray(),
+            item => item.GetProperty("label").GetString()?.Contains("Atlas", StringComparison.OrdinalIgnoreCase) == true);
+
+        using var progressResponse = await client.GetAsync("/api/v1/progress");
+        Assert.Equal(HttpStatusCode.OK, progressResponse.StatusCode);
+        var progress = await DataAsync(progressResponse);
+        Assert.Equal(1, progress.GetProperty("completedInterviews").GetInt32());
+        Assert.Empty(progress.GetProperty("recentInterviewScores").EnumerateArray());
+        Assert.Equal(JsonValueKind.Null, progress.GetProperty("starAverages").ValueKind);
+    }
+
+    [Fact]
     public async Task ApplicableDetectedStarComponentsContributeFromBothStorageLocations()
     {
         using var factory = NewFactory();
@@ -678,6 +715,44 @@ public sealed class SkillProfileApiTests
             });
         }
 
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedProgressAnalyticsEntitlementAsync(NexoraApiFactory factory, Guid userId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var plan = new Plan
+        {
+            Id = Guid.NewGuid(), Code = $"sample-answer-{Guid.NewGuid():N}", Name = "Sample answer test",
+            IsActive = true, CreatedAt = now
+        };
+        var price = new PlanPrice
+        {
+            Id = Guid.NewGuid(), PlanId = plan.Id, AmountMinor = 1, Currency = "VND", DurationDays = 30,
+            InterviewQuota = 1, IsActive = true, CreatedAt = now
+        };
+        var subscription = new Subscription
+        {
+            Id = Guid.NewGuid(), UserId = userId, Status = BillingValues.Active,
+            StartsAt = now.AddMinutes(-1), EndsAt = now.AddDays(30), CreatedAt = now, UpdatedAt = now
+        };
+        var entitlement = new Entitlement
+        {
+            Id = Guid.NewGuid(), UserId = userId, SubscriptionId = subscription.Id,
+            PlanCodeSnapshot = plan.Code, Status = BillingValues.Active, InterviewLimit = 1,
+            StartsAt = subscription.StartsAt, EndsAt = subscription.EndsAt,
+            CreatedAt = now, UpdatedAt = now, ConcurrencyToken = Guid.NewGuid()
+        };
+        var feature = await db.FeatureDefinitions.SingleAsync(item => item.Code == FeatureValues.ProgressAnalytics);
+        var featureEntitlement = new EntitlementFeature
+        {
+            Id = Guid.NewGuid(), EntitlementId = entitlement.Id, FeatureDefinitionId = feature.Id,
+            FeatureCode = FeatureValues.ProgressAnalytics, IsEnabled = true, Limit = null,
+            CreatedAt = now, UpdatedAt = now, ConcurrencyToken = Guid.NewGuid()
+        };
+        db.AddRange(plan, price, subscription, entitlement, featureEntitlement);
         await db.SaveChangesAsync();
     }
 
