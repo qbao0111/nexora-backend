@@ -1124,8 +1124,8 @@ public sealed class InterviewFollowupOperation : AiOperationDefinition<Generated
 public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEvaluation>
 {
     public override string Purpose => AiPurposes.InterviewEvaluate;
-    public override string PromptVersion => "interview-eval-v9";
-    public override string SchemaVersion => "interview-eval-v5";
+    public override string PromptVersion => "interview-eval-v10";
+    public override string SchemaVersion => "interview-eval-v6";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 6_000;
 
@@ -1150,6 +1150,20 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
             "strengths": { "type": "array", "minItems": 0, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
             "improvements": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
             "improvedAnswer": { "type": "string", "minLength": 1, "maxLength": 4000 },
+            "sampleAnswer": {
+              "type": "object",
+              "nullable": true,
+              "additionalProperties": false,
+              "properties": {
+                "framework": { "type": "string", "enum": ["star", "self_intro", "technical", "direct"] },
+                "situation": { "type": "string", "nullable": true, "maxLength": 1200 },
+                "task": { "type": "string", "nullable": true, "maxLength": 1200 },
+                "action": { "type": "string", "nullable": true, "maxLength": 1200 },
+                "result": { "type": "string", "nullable": true, "maxLength": 1200 },
+                "fullAnswer": { "type": "string", "minLength": 1, "maxLength": 4000 }
+              },
+              "required": ["framework", "situation", "task", "action", "result", "fullAnswer"]
+            },
             "star": {
               "type": "object",
               "properties": {
@@ -1222,6 +1236,11 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         If the question is behavioral:
         Set star.applicable = true.
         {StarSemantics.CanonicalInstructions}
+
+        Return a separate optional sampleAnswer for teaching. This is an EXAMPLE, not a claim about the real candidate. You may invent realistic hypothetical details for teaching, but keep them plausible and concise, clearly confined to sampleAnswer, and never imply they belong to this candidate. Never copy sampleAnswer details into rubric evidence, STAR evaluation evidence, scores, feedback, strengths, improvements, improvedAnswer, the candidate transcript, or downstream candidate facts. The submitted candidate answer remains the only factual evidence source. If no usable example can be produced, return sampleAnswer=null; an invalid sample must not compromise otherwise-valid evaluation fields.
+        Choose exactly one framework enum: star, self_intro, technical, or direct. Use star for questions about past experience, behavioral evidence, conflict, leadership, teamwork, experience-based problem-solving, situational/project examples, or achievements. Use self_intro for self-introduction, motivation, or role-fit questions. Use technical for technical-knowledge questions. Use direct for other questions. Do not mechanically force STAR onto every question.
+        For framework=star, provide nonblank Situation, Task, Action, and Result sections. Situation is concise context; Task is the candidate's responsibility/objective; Action is the most detailed section with concrete individual decisions/actions rather than vague 'we did'; Result is an outcome, plausible measurement where useful, learning, or impact. Avoid absurdly precise fake metrics. FullAnswer must read naturally as one concise professional Vietnamese interview response, not four disconnected bullets.
+        For framework=self_intro, set Situation, Task, Action, and Result to null; compose a natural concise introduction from current positioning, relevant background, strongest relevant capability, and reason for fit/direction, without fake STAR labels. For framework=technical, set all STAR fields to null; answer directly, explain the principle, provide a concrete example, and mention a tradeoff/caveat when useful. Phrase hypotheticals as 'Ví dụ, trong một hệ thống...', not as personal candidate experience unless the submitted answer says so. For framework=direct, set all STAR fields to null and answer naturally without forcing another structure.
         """;
 
     public override AiValidationResult<AnswerEvaluation> NormalizeAndValidate(AnswerEvaluation? raw, AiOperationContext context)
@@ -1231,9 +1250,18 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         if (!string.Equals(raw.ScoreScale, AiOperations.ScoreScale, StringComparison.Ordinal))
             return AiValidationResult<AnswerEvaluation>.Failure("score.scale_invalid", "semantic", repairable: true);
 
+        var sampleAnswer = NormalizeSampleAnswer(raw.SampleAnswer);
+
         var rubricResult = CanonicalRubricValidator.ValidateAndNormalize(raw.Scores);
         if (!rubricResult.IsValid)
             return AiValidationResult<AnswerEvaluation>.Failure(rubricResult.FailureReason!, rubricResult.ValidationStage!, rubricResult.Repairable);
+
+        if (raw.SampleAnswer is not null && !string.IsNullOrWhiteSpace(context.CandidateAnswer) &&
+            rubricResult.NormalizedValue!.Any(score =>
+                IsIllustrativeSampleEvidence(score.Evidence, context.CandidateAnswer, raw.SampleAnswer)))
+        {
+            return AiValidationResult<AnswerEvaluation>.Failure("interview.rubric_evidence_ungrounded", "semantic", repairable: true);
+        }
 
         if (string.IsNullOrWhiteSpace(raw.Feedback))
             return AiValidationResult<AnswerEvaluation>.Failure("interview.feedback_blank", "semantic", repairable: true);
@@ -1288,6 +1316,15 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
             var act = actResult.NormalizedValue!;
             var res = resResult.NormalizedValue!;
 
+            if (raw.SampleAnswer is not null && !string.IsNullOrWhiteSpace(context.CandidateAnswer) &&
+                ((sit.Detected && IsIllustrativeSampleEvidence(sit.Evidence, context.CandidateAnswer, raw.SampleAnswer)) ||
+                 (task.Detected && IsIllustrativeSampleEvidence(task.Evidence, context.CandidateAnswer, raw.SampleAnswer)) ||
+                 (act.Detected && IsIllustrativeSampleEvidence(act.Evidence, context.CandidateAnswer, raw.SampleAnswer)) ||
+                 (res.Detected && IsIllustrativeSampleEvidence(res.Evidence, context.CandidateAnswer, raw.SampleAnswer))))
+            {
+                return AiValidationResult<AnswerEvaluation>.Failure("star.evidence_ungrounded", "semantic", repairable: true);
+            }
+
             // Authoritative server-computed overall score: Situation 20%, Task 20%, Action 35%, Result 25%
             var overallScore = (int)Math.Round(sit.Score * 0.20 + task.Score * 0.20 + act.Score * 0.35 + res.Score * 0.25);
 
@@ -1305,7 +1342,11 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                 act,
                 res,
                 missing,
-                raw.Star.Strengths?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [],
+                raw.Star.Strengths?.Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Select(s => s.Trim())
+                    .Where(s => raw.SampleAnswer is null || string.IsNullOrWhiteSpace(context.CandidateAnswer) ||
+                        AnswerCoachingValidator.IsGroundedReportStrength(s, context.CandidateAnswer))
+                    .Take(3).ToArray() ?? [],
                 raw.Star.CoachingTips?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Take(3).ToArray() ?? [],
                 AiOperations.ScoreScale);
         }
@@ -1327,11 +1368,91 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                 AiOperations.ScoreScale,
                 coachingResult.NormalizedValue!.Strengths,
                 coachingResult.NormalizedValue.Improvements,
-                coachingResult.NormalizedValue.ImprovedAnswer));
+                coachingResult.NormalizedValue.ImprovedAnswer,
+                sampleAnswer));
+    }
+
+    private static SampleInterviewAnswer? NormalizeSampleAnswer(SampleInterviewAnswer? raw)
+    {
+        if (raw is null || string.IsNullOrWhiteSpace(raw.Framework) || string.IsNullOrWhiteSpace(raw.FullAnswer))
+            return null;
+
+        var framework = raw.Framework.Trim();
+        if (framework is not ("star" or "self_intro" or "technical" or "direct"))
+            return null;
+
+        var fullAnswer = raw.FullAnswer.Trim();
+        if (fullAnswer.Length > 4_000)
+            return null;
+
+        if (framework != "star")
+            return new SampleInterviewAnswer(framework, null, null, null, null, fullAnswer);
+
+        var situation = NormalizeSampleSection(raw.Situation);
+        var task = NormalizeSampleSection(raw.Task);
+        var action = NormalizeSampleSection(raw.Action);
+        var result = NormalizeSampleSection(raw.Result);
+        if (situation is null || task is null || action is null || result is null)
+            return null;
+
+        return new SampleInterviewAnswer(framework, situation, task, action, result, fullAnswer);
+    }
+
+    private static string? NormalizeSampleSection(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var normalized = value.Trim();
+        return normalized.Length <= 1_200 ? normalized : null;
+    }
+
+    private static bool IsIllustrativeSampleEvidence(
+        string evidence,
+        string candidateAnswer,
+        SampleInterviewAnswer sampleAnswer)
+    {
+        if (AnswerCoachingValidator.IsGroundedReportEvidence(evidence, candidateAnswer))
+            return false;
+
+        var illustrativeText = string.Join(
+            " ",
+            new[]
+            {
+                sampleAnswer.Situation,
+                sampleAnswer.Task,
+                sampleAnswer.Action,
+                sampleAnswer.Result,
+                sampleAnswer.FullAnswer
+            }.Where(section => !string.IsNullOrWhiteSpace(section)));
+
+        return AnswerCoachingValidator.IsGroundedReportEvidence(evidence, illustrativeText);
     }
 
     public override string BuildRepairInstructions(AiValidationResult<AnswerEvaluation> priorResult, string originalInstructions)
     {
+        if (string.Equals(priorResult.FailureReason, "interview.rubric_evidence_ungrounded", StringComparison.Ordinal))
+        {
+            return $"""
+                {originalInstructions}
+
+                IMPORTANT CANDIDATE-EVIDENCE CORRECTION:
+                The prior rubric evidence was not grounded in the ORIGINAL submitted candidate answer. Rewrite every rubric evidence field using only a direct phrase or fact from that answer. The question, role/context, rubric, and hypothetical sampleAnswer are never candidate evidence. Do not copy any sample project, technology, responsibility, result, or metric into rubric evidence. Keep the four canonical criteria and score honestly; where the answer lacks detail, cite only what it actually says and score below 60 as appropriate.
+                Return a completely corrected object matching the schema. Preserve the separate sampleAnswer only as clearly illustrative teaching content.
+                """;
+        }
+
+        if (string.Equals(priorResult.FailureReason, "star.evidence_ungrounded", StringComparison.Ordinal))
+        {
+            return $"""
+                {originalInstructions}
+
+                IMPORTANT STAR-EVIDENCE CORRECTION:
+                The prior STAR evidence was not grounded in the ORIGINAL submitted candidate answer. Re-evaluate the full answer and use only direct phrases/facts from it as STAR evidence; the question, context, and hypothetical sampleAnswer are not candidate evidence. Never copy sample-only projects, technologies, responsibilities, outcomes, or metrics into STAR evidence. For a component without direct candidate evidence, set detected=false, score=0, and evidence to an empty string.
+                Return a completely corrected object matching the schema and keep any sampleAnswer clearly separate and illustrative.
+                """;
+        }
+
         if (string.Equals(priorResult.FailureReason, "rubric.criteria_missing", StringComparison.Ordinal))
         {
             return $"""

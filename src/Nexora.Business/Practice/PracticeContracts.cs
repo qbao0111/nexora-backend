@@ -523,7 +523,8 @@ public sealed record InterviewQuestionReviewView(
     StarEvaluation? Star,
     IReadOnlyCollection<string> Strengths,
     IReadOnlyCollection<string> Improvements,
-    string? SuggestedImprovedAnswer);
+    string? SuggestedImprovedAnswer,
+    SampleInterviewAnswer? SampleAnswer = null);
 public sealed record SuggestedImprovedAnswerView(
     Guid QuestionId,
     int Sequence,

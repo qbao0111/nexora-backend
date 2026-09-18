@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Nexora.Business.Ai;
 
@@ -107,6 +108,14 @@ public sealed record AnswerCoachingOutput(
     IReadOnlyCollection<string> Strengths,
     IReadOnlyCollection<string> Improvements,
     string ImprovedAnswer);
+[JsonConverter(typeof(SampleInterviewAnswerJsonConverter))]
+public sealed record SampleInterviewAnswer(
+    string Framework,
+    string? Situation,
+    string? Task,
+    string? Action,
+    string? Result,
+    string FullAnswer);
 public sealed record AnswerEvaluation(
     IReadOnlyCollection<RubricScore> Scores,
     string Feedback,
@@ -114,7 +123,90 @@ public sealed record AnswerEvaluation(
     string? ScoreScale = null,
     IReadOnlyCollection<string>? Strengths = null,
     IReadOnlyCollection<string>? Improvements = null,
-    string? ImprovedAnswer = null);
+    string? ImprovedAnswer = null,
+    SampleInterviewAnswer? SampleAnswer = null);
+
+/// <summary>
+/// Keeps optional illustrative coaching isolated from the required evaluation payload when a
+/// provider emits a malformed sample object or wrong-typed sample fields.
+/// </summary>
+public sealed class SampleInterviewAnswerJsonConverter : JsonConverter<SampleInterviewAnswer>
+{
+    public override SampleInterviewAnswer? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        using var document = JsonDocument.ParseValue(ref reader);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return new SampleInterviewAnswer("__invalid__", null, null, null, null, root.ToString());
+        }
+
+        var schemaValid = true;
+        var hasUnknownProperty = false;
+        foreach (var property in root.EnumerateObject())
+        {
+            if (property.Name is not ("framework" or "situation" or "task" or "action" or "result" or "fullAnswer"))
+            {
+                schemaValid = false;
+                hasUnknownProperty = true;
+            }
+        }
+
+        var framework = ReadRequiredString(root, "framework", ref schemaValid);
+        var situation = ReadOptionalString(root, "situation", ref schemaValid);
+        var task = ReadOptionalString(root, "task", ref schemaValid);
+        var action = ReadOptionalString(root, "action", ref schemaValid);
+        var result = ReadOptionalString(root, "result", ref schemaValid);
+        var fullAnswer = ReadRequiredString(root, "fullAnswer", ref schemaValid);
+
+        return new SampleInterviewAnswer(
+            schemaValid ? framework : "__invalid__",
+            situation,
+            task,
+            action,
+            result,
+            hasUnknownProperty ? root.ToString() : fullAnswer);
+    }
+
+    public override void Write(Utf8JsonWriter writer, SampleInterviewAnswer value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("framework", value.Framework);
+        writer.WriteString("situation", value.Situation);
+        writer.WriteString("task", value.Task);
+        writer.WriteString("action", value.Action);
+        writer.WriteString("result", value.Result);
+        writer.WriteString("fullAnswer", value.FullAnswer);
+        writer.WriteEndObject();
+    }
+
+    private static string ReadRequiredString(JsonElement root, string propertyName, ref bool schemaValid)
+    {
+        if (root.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String)
+            return property.GetString() ?? string.Empty;
+
+        schemaValid = false;
+        return root.TryGetProperty(propertyName, out property) ? property.ToString() : string.Empty;
+    }
+
+    private static string? ReadOptionalString(JsonElement root, string propertyName, ref bool schemaValid)
+    {
+        if (!root.TryGetProperty(propertyName, out var property))
+        {
+            schemaValid = false;
+            return null;
+        }
+
+        if (property.ValueKind == JsonValueKind.Null)
+            return null;
+
+        if (property.ValueKind == JsonValueKind.String)
+            return property.GetString();
+
+        schemaValid = false;
+        return property.ToString();
+    }
+}
 public sealed record InterviewReportOutput(
     IReadOnlyCollection<RubricScore> Scores,
     IReadOnlyCollection<string> Strengths,

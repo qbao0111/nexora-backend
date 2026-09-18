@@ -701,7 +701,19 @@ public sealed class PracticeApiTests
 
         var active = await GetInterviewAsync(client, interviewId);
         var firstQuestion = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
-        var firstResult = await AnswerAsync(client, interviewId, firstQuestion, "First grounded answer.", "partial-report-answer-one");
+        const string candidateAnswer = "First grounded answer.";
+        const string illustrativeText = "Ví dụ giả định: Tôi điều phối một nhóm 8 người triển khai nền tảng Atlas.";
+        EnqueueGroundedEvaluation(aiProvider, AnswerEvaluationWithoutStar() with
+        {
+            SampleAnswer = new SampleInterviewAnswer(
+                "self_intro", null, null, null, null, illustrativeText)
+        });
+        var firstResult = await AnswerAsync(client, interviewId, firstQuestion, candidateAnswer, "partial-report-answer-one");
+        var persistedAnswer = firstResult.GetProperty("answer");
+        Assert.Equal(candidateAnswer, persistedAnswer.GetProperty("content").GetString());
+        var persistedEvaluation = persistedAnswer.GetProperty("evaluation");
+        Assert.Equal(candidateAnswer, persistedEvaluation.GetProperty("improvedAnswer").GetString());
+        Assert.Equal(illustrativeText, persistedEvaluation.GetProperty("sampleAnswer").GetProperty("fullAnswer").GetString());
         var secondQuestion = firstResult.GetProperty("nextQuestion").GetProperty("id").GetGuid();
         var secondResult = await AnswerAsync(client, interviewId, secondQuestion, "Second grounded answer.", "partial-report-answer-two");
         Assert.Equal(InterviewContinuationValues.InProgress, secondResult.GetProperty("continuation").GetProperty("state").GetString());
@@ -730,11 +742,15 @@ public sealed class PracticeApiTests
             Assert.NotEmpty(review.GetProperty("improvements").EnumerateArray());
             Assert.False(string.IsNullOrWhiteSpace(review.GetProperty("suggestedImprovedAnswer").GetString()));
         });
+        var firstReview = Assert.Single(reviews, review => review.GetProperty("answer").GetString() == candidateAnswer);
+        Assert.Equal(illustrativeText, firstReview.GetProperty("sampleAnswer").GetProperty("fullAnswer").GetString());
         Assert.Equal(2, report.GetProperty("suggestedImprovedAnswers").GetArrayLength());
 
         Assert.Equal(1, aiProvider.GetCallCount(AiPurposes.InterviewReport));
         var reportInvocation = aiProvider.Invocations.Single(item => item.Purpose == AiPurposes.InterviewReport);
         Assert.DoesNotContain("A: \n", reportInvocation.UntrustedInput, StringComparison.Ordinal);
+        Assert.Contains($"A: {candidateAnswer}", reportInvocation.UntrustedInput, StringComparison.Ordinal);
+        Assert.DoesNotContain(illustrativeText, reportInvocation.UntrustedInput, StringComparison.Ordinal);
     }
 
     [Fact]

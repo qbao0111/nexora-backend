@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Nexora.Business.Ai;
 using Nexora.Business.Practice;
 
@@ -5,6 +6,9 @@ namespace Nexora.UnitTests.Ai;
 
 public sealed class AiOperationCatalogTests
 {
+    private static readonly string[] SampleFrameworks = ["star", "self_intro", "technical", "direct"];
+    private static readonly string[] RubricCriteria = ["correctness", "structure", "completeness", "clarity"];
+
     [Fact]
     public void InterviewEvaluateNonBehavioralQuestionNormalizesApplicableTrueToFalseWithoutFailing()
     {
@@ -945,6 +949,296 @@ public sealed class AiOperationCatalogTests
         Assert.Contains("Preserve all already-valid rubric scores, rubric evidence, feedback, STAR, strengths, and improvements exactly", repairInstructions, StringComparison.Ordinal);
         Assert.Contains("ONLY rewrite improvedAnswer", repairInstructions, StringComparison.Ordinal);
         Assert.Contains("Do not revise any other field", repairInstructions, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InterviewEvaluatePromptSelectsTheSampleFrameworkByQuestionType()
+    {
+        var instructions = AiOperations.InterviewEvaluate.Instructions;
+
+        Assert.Contains("Use star for questions about past experience", instructions, StringComparison.Ordinal);
+        Assert.Contains("Use self_intro for self-introduction, motivation, or role-fit", instructions, StringComparison.Ordinal);
+        Assert.Contains("Use technical for technical-knowledge questions", instructions, StringComparison.Ordinal);
+        Assert.Contains("Use direct for other questions", instructions, StringComparison.Ordinal);
+        Assert.Contains("Do not mechanically force STAR", instructions, StringComparison.Ordinal);
+        Assert.Contains("This is an EXAMPLE, not a claim about the real candidate", instructions, StringComparison.Ordinal);
+
+        var sampleSchema = AiOperations.InterviewEvaluate.OutputSchema.RootElement
+            .GetProperty("properties")
+            .GetProperty("sampleAnswer");
+        Assert.True(sampleSchema.GetProperty("nullable").GetBoolean());
+        Assert.Equal(
+            SampleFrameworks,
+            sampleSchema.GetProperty("properties").GetProperty("framework").GetProperty("enum")
+                .EnumerateArray().Select(value => value.GetString()).ToArray());
+        Assert.Equal(4_000, sampleSchema.GetProperty("properties").GetProperty("fullAnswer").GetProperty("maxLength").GetInt32());
+    }
+
+    [Fact]
+    public void InterviewEvaluateKeepsStarSampleSeparateAndNormalizesSelfIntroAndTechnicalSamples()
+    {
+        const string candidateAnswer = "I debugged the API.";
+        var behavioral = CreateCoachingEvaluation(candidateAnswer, [candidateAnswer]) with
+        {
+            Star = new StarEvaluation(
+                Applicable: true,
+                OverallScore: 80,
+                Situation: new StarComponentEvaluation(80, true, "Situation evidence", "Situation feedback"),
+                Task: new StarComponentEvaluation(80, true, "Task evidence", "Task feedback"),
+                Action: new StarComponentEvaluation(80, true, "Action evidence", "Action feedback"),
+                Result: new StarComponentEvaluation(80, true, "Result evidence", "Result feedback"),
+                MissingElements: [],
+                Strengths: [],
+                CoachingTips: []),
+            SampleAnswer = new SampleInterviewAnswer(
+                "star",
+                "Trong một chiến dịch thương mại điện tử, CPA tăng liên tục.",
+                "Em cần tìm nguyên nhân và cải thiện chuyển đổi.",
+                "Em phân nhóm dữ liệu theo kênh, kiểm tra landing page và đề xuất thử nghiệm ngân sách.",
+                "CPA giảm khoảng 15% sau hai tuần.",
+                "Trong một chiến dịch thương mại điện tử, CPA tăng liên tục. Em phân tích theo kênh, đề xuất thử nghiệm và CPA giảm khoảng 15% sau hai tuần.")
+        };
+
+        var behavioralResult = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            behavioral,
+            new AiOperationContext("sample-star", ExpectedStar: true, CandidateAnswer: candidateAnswer));
+
+        Assert.True(behavioralResult.IsValid, behavioralResult.FailureReason);
+        Assert.Equal("star", behavioralResult.NormalizedValue?.SampleAnswer?.Framework);
+        Assert.False(string.IsNullOrWhiteSpace(behavioralResult.NormalizedValue?.SampleAnswer?.Situation));
+        Assert.False(string.IsNullOrWhiteSpace(behavioralResult.NormalizedValue?.SampleAnswer?.Task));
+        Assert.False(string.IsNullOrWhiteSpace(behavioralResult.NormalizedValue?.SampleAnswer?.Action));
+        Assert.False(string.IsNullOrWhiteSpace(behavioralResult.NormalizedValue?.SampleAnswer?.Result));
+        Assert.DoesNotContain("15%", string.Join(" ", behavioralResult.NormalizedValue!.Scores.Select(score => score.Evidence)), StringComparison.Ordinal);
+        Assert.DoesNotContain("15%", string.Join(" ", behavioralResult.NormalizedValue.Strengths!), StringComparison.Ordinal);
+
+        foreach (var framework in SampleFrameworks.Where(framework => framework != "star"))
+        {
+            var nonStar = CreateCoachingEvaluation(candidateAnswer, [candidateAnswer]) with
+            {
+                SampleAnswer = new SampleInterviewAnswer(
+                    framework,
+                    "must not look like STAR",
+                    "must not look like STAR",
+                    "must not look like STAR",
+                    "must not look like STAR",
+                    "Ví dụ minh họa phù hợp với framework đã chọn.")
+            };
+
+            var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+                nonStar,
+                new AiOperationContext($"sample-{framework}", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+            Assert.True(result.IsValid, result.FailureReason);
+            Assert.Equal(framework, result.NormalizedValue?.SampleAnswer?.Framework);
+            Assert.Null(result.NormalizedValue?.SampleAnswer?.Situation);
+            Assert.Null(result.NormalizedValue?.SampleAnswer?.Task);
+            Assert.Null(result.NormalizedValue?.SampleAnswer?.Action);
+            Assert.Null(result.NormalizedValue?.SampleAnswer?.Result);
+        }
+    }
+
+    [Fact]
+    public void InterviewEvaluateMakesAnUnusableSampleNullWithoutInvalidatingCoreEvaluation()
+    {
+        const string candidateAnswer = "asdf";
+        var invalidSamples = new SampleInterviewAnswer?[]
+        {
+            new("STAR", "Context", "Task", "Action", "Result", "Unsupported framework."),
+            new("technical", null, null, null, null, "  "),
+            new("direct", null, null, null, null, new string('x', 4_001)),
+            new("star", "Context", null, "Action", "Result", "Incomplete STAR."),
+            new("star", new string('s', 1_201), "Task", "Action", "Result", "Overlong STAR section.")
+        };
+
+        foreach (var invalidSample in invalidSamples)
+        {
+            var raw = CreateCoachingEvaluation(candidateAnswer, []) with
+            {
+                Scores =
+                [
+                    new RubricScore("correctness", 20, "asdf"),
+                    new RubricScore("structure", 15, "asdf"),
+                    new RubricScore("completeness", 10, "asdf"),
+                    new RubricScore("clarity", 20, "asdf")
+                ],
+                Improvements = ["Describe one concrete detail you can support."],
+                SampleAnswer = invalidSample
+            };
+
+            var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+                raw,
+                new AiOperationContext("sample-invalid", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+            Assert.True(result.IsValid, result.FailureReason);
+            Assert.Null(result.NormalizedValue?.SampleAnswer);
+            Assert.All(result.NormalizedValue!.Scores, score => Assert.True(score.Score < 60));
+            Assert.Empty(result.NormalizedValue.Strengths!);
+            Assert.Equal("asdf", result.NormalizedValue.ImprovedAnswer);
+        }
+    }
+
+    [Fact]
+    public void InterviewEvaluateCanTeachWithoutFabricatingEvidenceForAWeakCandidateAnswer()
+    {
+        const string candidateAnswer = "I am not sure.";
+        var raw = CreateCoachingEvaluation(candidateAnswer, []) with
+        {
+            Scores = RubricCriteria.Select(criterion => new RubricScore(criterion, 20, candidateAnswer)).ToArray(),
+            Improvements = ["Explain one concrete step or example you can support."],
+            ImprovedAnswer = candidateAnswer,
+            SampleAnswer = new SampleInterviewAnswer(
+                "technical", null, null, null, null,
+                "Ví dụ, trong một hệ thống, có thể giải thích nguyên lý trước rồi nêu cách kiểm tra một trường hợp biên.")
+        };
+
+        var evaluation = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            raw,
+            new AiOperationContext("sample-weak-answer", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.True(evaluation.IsValid, evaluation.FailureReason);
+        Assert.All(evaluation.NormalizedValue!.Scores, score => Assert.True(score.Score < 60));
+        Assert.Empty(evaluation.NormalizedValue.Strengths!);
+        Assert.Equal(candidateAnswer, evaluation.NormalizedValue.ImprovedAnswer);
+        Assert.Equal("technical", evaluation.NormalizedValue.SampleAnswer?.Framework);
+        Assert.Contains("Ví dụ", evaluation.NormalizedValue.SampleAnswer?.FullAnswer, StringComparison.Ordinal);
+        Assert.DoesNotContain("Ví dụ", string.Join(" ", evaluation.NormalizedValue.Scores.Select(score => score.Evidence)), StringComparison.Ordinal);
+        Assert.DoesNotContain("Ví dụ", string.Join(" ", evaluation.NormalizedValue.Strengths!), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InterviewEvaluateIgnoresMalformedSampleJsonAndLoadsHistoricalEvaluationsWithoutIt()
+    {
+        const string malformedSampleJson = """
+            {
+              "scores": [
+                { "criterion": "correctness", "score": 20, "evidence": "asdf" },
+                { "criterion": "structure", "score": 20, "evidence": "asdf" },
+                { "criterion": "completeness", "score": 20, "evidence": "asdf" },
+                { "criterion": "clarity", "score": 20, "evidence": "asdf" }
+              ],
+              "feedback": "Câu trả lời chưa có chi tiết cụ thể.",
+              "scoreScale": "0-100",
+              "strengths": [],
+              "improvements": ["Describe one detail you can support."],
+              "improvedAnswer": "asdf",
+              "sampleAnswer": { "framework": 4, "situation": true, "task": [], "action": {}, "result": 2, "fullAnswer": false }
+            }
+            """;
+        const string historicalJson = """
+            {
+              "scores": [
+                { "criterion": "correctness", "score": 20, "evidence": "asdf" },
+                { "criterion": "structure", "score": 20, "evidence": "asdf" },
+                { "criterion": "completeness", "score": 20, "evidence": "asdf" },
+                { "criterion": "clarity", "score": 20, "evidence": "asdf" }
+              ],
+              "feedback": "Câu trả lời chưa có chi tiết cụ thể.",
+              "scoreScale": "0-100",
+              "strengths": [],
+              "improvements": ["Describe one detail you can support."],
+              "improvedAnswer": "asdf"
+            }
+            """;
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var context = new AiOperationContext("sample-json-compat", ExpectedStar: false, CandidateAnswer: "asdf");
+
+        var malformedSample = JsonSerializer.Deserialize<AnswerEvaluation>(malformedSampleJson, options);
+        Assert.NotNull(malformedSample);
+        var malformedResult = AiOperations.InterviewEvaluate.NormalizeAndValidate(malformedSample, context);
+        Assert.True(malformedResult.IsValid, malformedResult.FailureReason);
+        Assert.Null(malformedResult.NormalizedValue?.SampleAnswer);
+
+        var historical = JsonSerializer.Deserialize<AnswerEvaluation>(historicalJson, options);
+        Assert.NotNull(historical);
+        Assert.Null(historical.SampleAnswer);
+        Assert.True(AiOperations.InterviewEvaluate.NormalizeAndValidate(historical, context).IsValid);
+    }
+
+    [Fact]
+    public void InterviewEvaluateDoesNotLetSampleWeakenImprovedAnswerGrounding()
+    {
+        const string candidateAnswer = "I debugged the API.";
+        var raw = CreateCoachingEvaluation(candidateAnswer, [candidateAnswer]) with
+        {
+            ImprovedAnswer = "I debugged the API with Redis and reduced latency by 37%.",
+            SampleAnswer = new SampleInterviewAnswer(
+                "technical", null, null, null, null,
+                "Ví dụ, trong một hệ thống có thể dùng Redis để giảm độ trễ.")
+        };
+
+        var result = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            raw,
+            new AiOperationContext("sample-does-not-ground-answer", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("interview.improved_answer_fabricated", result.FailureReason);
+    }
+
+    [Fact]
+    public void InterviewEvaluateRejectsSampleOnlyFactsCopiedIntoRubricOrStarEvidence()
+    {
+        const string candidateAnswer = "I debugged the API.";
+        const string hypotheticalEvidence = "Redis caching reduced latency by 15% in the example system.";
+        var groundedRubric = Enumerable.Range(0, 4)
+            .Select(index => new RubricScore(RubricCriteria[index], 80, candidateAnswer))
+            .ToArray();
+        var contaminatedRubric = groundedRubric.Select(score => score with
+        {
+            Evidence = score.Criterion == "correctness" ? hypotheticalEvidence : score.Evidence
+        }).ToArray();
+
+        var rubricResult = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            CreateCoachingEvaluation(candidateAnswer, [candidateAnswer], rubricScores: groundedRubric) with
+            {
+                Scores = contaminatedRubric,
+                SampleAnswer = new SampleInterviewAnswer(
+                    "technical", null, null, null, null,
+                    "Ví dụ, trong một hệ thống, Redis caching giúp giảm độ trễ 15%.")
+            },
+            new AiOperationContext("sample-rubric-leak", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.False(rubricResult.IsValid);
+        Assert.Equal("interview.rubric_evidence_ungrounded", rubricResult.FailureReason);
+
+        var invalidSampleResult = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            CreateCoachingEvaluation(candidateAnswer, [candidateAnswer], rubricScores: groundedRubric) with
+            {
+                Scores = contaminatedRubric,
+                SampleAnswer = new SampleInterviewAnswer(
+                    "unsupported", null, null, null, null, hypotheticalEvidence)
+            },
+            new AiOperationContext("sample-invalid-rubric-leak", ExpectedStar: false, CandidateAnswer: candidateAnswer));
+
+        Assert.False(invalidSampleResult.IsValid);
+        Assert.Equal("interview.rubric_evidence_ungrounded", invalidSampleResult.FailureReason);
+
+        var star = new StarEvaluation(
+            Applicable: true,
+            OverallScore: 80,
+            Situation: new StarComponentEvaluation(80, true, candidateAnswer, "Context"),
+            Task: new StarComponentEvaluation(80, true, candidateAnswer, "Objective"),
+            Action: new StarComponentEvaluation(80, true, hypotheticalEvidence, "Action"),
+            Result: new StarComponentEvaluation(80, true, candidateAnswer, "Outcome"),
+            MissingElements: [],
+            Strengths: [],
+            CoachingTips: []);
+        var starResult = AiOperations.InterviewEvaluate.NormalizeAndValidate(
+            CreateCoachingEvaluation(candidateAnswer, [candidateAnswer], rubricScores: groundedRubric) with
+            {
+                Star = star,
+                SampleAnswer = new SampleInterviewAnswer(
+                    "star",
+                    "An example system uses Redis.",
+                    "Improve its response time.",
+                    hypotheticalEvidence,
+                    "The sample service responded faster.",
+                    $"In a hypothetical example, {hypotheticalEvidence}")
+            },
+            new AiOperationContext("sample-star-leak", ExpectedStar: true, CandidateAnswer: candidateAnswer));
+
+        Assert.False(starResult.IsValid);
+        Assert.Equal("star.evidence_ungrounded", starResult.FailureReason);
     }
 
     private static AnswerEvaluation CreateCoachingEvaluation(
