@@ -268,7 +268,8 @@ public sealed class LearningPathService(
 
         foreach (var planActivity in plan.Activities)
         {
-            var effectivePlan = ResolveCurrentActivityPlan(planActivity, existingByKey);
+            var planWithExistingIdentity = ResolveLegacyQualitativeActivityPlan(planActivity, existingByKey);
+            var effectivePlan = ResolveCurrentActivityPlan(planWithExistingIdentity, existingByKey);
             desiredKeys.Add(effectivePlan.Key);
             var milestone = milestonesByCode[effectivePlan.MilestoneCode];
             if (!existingByKey.TryGetValue(effectivePlan.Key, out var activity))
@@ -340,6 +341,75 @@ public sealed class LearningPathService(
             Key = pendingCycle?.ActivityKey ??
                   LearningPathRules.LearningCycleActivityKey(plan.Key, latestEvidenceAt)
         };
+    }
+
+    private static LearningPathActivityPlan ResolveLegacyQualitativeActivityPlan(
+        LearningPathActivityPlan plan,
+        IReadOnlyDictionary<string, LearningPathActivity> existingByKey)
+    {
+        if (plan.QualitativeTopicIdentity is not { } topicIdentity ||
+            existingByKey.ContainsKey(plan.Key))
+            return plan;
+
+        if (plan.LegacyQualitativeActivityKey is { } legacyKey &&
+            existingByKey.TryGetValue(legacyKey, out var exactLegacyMatch) &&
+            IsLegacyQualitativeBaseActivity(exactLegacyMatch))
+            return plan with { Key = exactLegacyMatch.ActivityKey };
+
+        var matchingActivities = existingByKey.Values
+            .Where(IsLegacyQualitativeBaseActivity)
+            .Select(activity => (Activity: activity, TopicIdentity: GetLegacyTopicIdentity(activity)))
+            .Where(item => string.Equals(item.TopicIdentity, topicIdentity, StringComparison.Ordinal))
+            .ToArray();
+
+        var evidenceReopenedCompletion = matchingActivities
+            .Where(item => item.Activity.Status == LearningPathValues.Completed &&
+                           item.Activity.CompletedAt is { } completedAt &&
+                           plan.LatestEvidenceAt is { } latestEvidenceAt &&
+                           latestEvidenceAt > completedAt)
+            .Select(item => item.Activity)
+            .OrderByDescending(item => item.CompletedAt)
+            .ThenBy(item => item.ActivityKey, StringComparer.Ordinal)
+            .FirstOrDefault();
+        var reusablePending = matchingActivities
+            .Where(item => item.Activity.Status == LearningPathValues.Pending)
+            .Select(item => item.Activity)
+            .OrderByDescending(item => item.UpdatedAt)
+            .ThenByDescending(item => item.CreatedAt)
+            .ThenBy(item => item.ActivityKey, StringComparer.Ordinal)
+            .FirstOrDefault();
+        var completed = matchingActivities
+            .Where(item => item.Activity.Status == LearningPathValues.Completed)
+            .Select(item => item.Activity)
+            .OrderByDescending(item => item.CompletedAt)
+            .ThenBy(item => item.ActivityKey, StringComparer.Ordinal)
+            .FirstOrDefault();
+        var obsolete = matchingActivities
+            .Where(item => item.Activity.Status == LearningPathValues.Obsolete)
+            .Select(item => item.Activity)
+            .OrderByDescending(item => item.UpdatedAt)
+            .ThenBy(item => item.ActivityKey, StringComparer.Ordinal)
+            .FirstOrDefault();
+        var existing = evidenceReopenedCompletion ?? reusablePending ?? completed ?? obsolete;
+
+        return existing is null ? plan : plan with { Key = existing.ActivityKey };
+    }
+
+    private static bool IsLegacyQualitativeBaseActivity(LearningPathActivity activity) =>
+        activity.Type == LearningPathValues.ResumeImprovement &&
+        activity.CompetencyCode is null &&
+        activity.ActivityKey.StartsWith("resume_improvement:qualitative:", StringComparison.Ordinal) &&
+        !activity.ActivityKey.Contains(":cycle:", StringComparison.Ordinal);
+
+    private static string? GetLegacyTopicIdentity(LearningPathActivity activity)
+    {
+        const string titlePrefix = "Resume improvement: ";
+        if (!activity.Title.StartsWith(titlePrefix, StringComparison.OrdinalIgnoreCase)) return null;
+
+        var label = activity.Title[titlePrefix.Length..].Trim();
+        return string.IsNullOrWhiteSpace(label)
+            ? null
+            : LearningPathQualitativeSignalDeduper.StableTopicIdentityForLabel(label);
     }
 
     private static LearningPathActivity CreateActivity(

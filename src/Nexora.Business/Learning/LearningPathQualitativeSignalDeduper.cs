@@ -5,9 +5,8 @@ using Nexora.Business.Skills;
 namespace Nexora.Business.Learning;
 
 /// <summary>
-/// Collapses only exact normalized labels or labels with a highly overlapping
-/// set of meaningful topic tokens. This intentionally prefers missed merges
-/// over merging distinct learning topics based on generic CV wording.
+/// Collapses labels only when their canonical topic identities match. This
+/// intentionally prefers missed merges over merging distinct learning topics.
 /// </summary>
 public static class LearningPathQualitativeSignalDeduper
 {
@@ -21,7 +20,7 @@ public static class LearningPathQualitativeSignalDeduper
         "voi", "with"
     };
 
-    public static IReadOnlyCollection<SkillProfileWeaknessSignal> Deduplicate(
+    public static IReadOnlyCollection<DeduplicatedQualitativeSignal> Deduplicate(
         IEnumerable<SkillProfileWeaknessSignal> signals)
     {
         ArgumentNullException.ThrowIfNull(signals);
@@ -35,7 +34,7 @@ public static class LearningPathQualitativeSignalDeduper
             .Select(candidate => candidate!)
             .GroupBy(candidate => candidate.ExactKey, StringComparer.Ordinal)
             .Select(group => Merge(group))
-            .OrderBy(candidate => candidate.TopicKey, StringComparer.Ordinal)
+            .OrderBy(candidate => candidate.StableTopicIdentity, StringComparer.Ordinal)
             .ThenBy(candidate => candidate.ExactKey, StringComparer.Ordinal)
             .ThenBy(candidate => candidate.Signal.Label, StringComparer.Ordinal)
             .ToArray();
@@ -56,28 +55,51 @@ public static class LearningPathQualitativeSignalDeduper
         return clusters
             .Select(Merge)
             .OrderByDescending(candidate => candidate.Signal.LatestEvidenceAt)
-            .ThenBy(candidate => candidate.TopicKey, StringComparer.Ordinal)
+            .ThenBy(candidate => candidate.StableTopicIdentity, StringComparer.Ordinal)
             .ThenBy(candidate => candidate.ExactKey, StringComparer.Ordinal)
             .ThenBy(candidate => candidate.Signal.Label, StringComparer.Ordinal)
-            .Select(candidate => candidate.Signal)
+            .Select(candidate => new DeduplicatedQualitativeSignal(candidate.Signal, candidate.StableTopicIdentity))
             .ToArray();
+    }
+
+    /// <summary>
+    /// Produces the same non-empty identity for any labels eligible to merge.
+    /// Generic-only labels use their full normalized token set as a fallback.
+    /// </summary>
+    public static string StableTopicIdentityForLabel(string label)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(label);
+
+        var tokens = NormalizeTokens(label);
+        if (tokens.Length == 0)
+            return $"fallback:{NormalizeFallbackLabel(label)}";
+
+        var significantTokens = tokens.Where(token => !GenericTokens.Contains(token)).ToArray();
+        return significantTokens.Length > 0
+            ? $"topic:{Join(significantTokens)}"
+            : $"generic:{Join(tokens)}";
     }
 
     private static Candidate? CreateCandidate(SkillProfileWeaknessSignal signal)
     {
         var label = signal.Label.Trim();
         var tokens = NormalizeTokens(label);
-        if (tokens.Length == 0) return null;
-
+        var exactKey = tokens.Length > 0 ? Join(tokens) : NormalizeFallbackLabel(label);
         var significantTokens = tokens.Where(token => !GenericTokens.Contains(token)).ToArray();
+        var stableTopicIdentity = significantTokens.Length > 0
+            ? $"topic:{Join(significantTokens)}"
+            : tokens.Length > 0
+                ? $"generic:{Join(tokens)}"
+                : $"fallback:{exactKey}";
+
         return new Candidate(
             signal with
             {
                 SourceType = SkillProfileSourceTypes.ResumeAnalysis,
                 Label = label
             },
-            Join(tokens),
-            Join(significantTokens),
+            exactKey,
+            stableTopicIdentity,
             significantTokens);
     }
 
@@ -100,18 +122,8 @@ public static class LearningPathQualitativeSignalDeduper
         };
     }
 
-    private static bool IsSameTopic(Candidate first, Candidate second)
-    {
-        if (first.TopicKey.Length == 0 || second.TopicKey.Length == 0) return false;
-        if (string.Equals(first.TopicKey, second.TopicKey, StringComparison.Ordinal)) return true;
-
-        var shared = first.SignificantTokens.Intersect(second.SignificantTokens, StringComparer.Ordinal).Count();
-        if (shared < 2) return false;
-
-        var union = first.SignificantTokens.Union(second.SignificantTokens, StringComparer.Ordinal).Count();
-        var smallest = Math.Min(first.SignificantTokens.Length, second.SignificantTokens.Length);
-        return shared / (double)union >= 0.8 && shared / (double)smallest >= 0.8;
-    }
+    private static bool IsSameTopic(Candidate first, Candidate second) =>
+        string.Equals(first.StableTopicIdentity, second.StableTopicIdentity, StringComparison.Ordinal);
 
     private static string[] NormalizeTokens(string value)
     {
@@ -143,11 +155,19 @@ public static class LearningPathQualitativeSignalDeduper
         return tokens.Distinct(StringComparer.Ordinal).OrderBy(item => item, StringComparer.Ordinal).ToArray();
     }
 
+    private static string NormalizeFallbackLabel(string label) =>
+        string.Join(' ', label.Normalize(NormalizationForm.FormKC).Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            .ToLowerInvariant();
+
     private static string Join(IEnumerable<string> tokens) => string.Join('\u001f', tokens);
 
     private sealed record Candidate(
         SkillProfileWeaknessSignal Signal,
         string ExactKey,
-        string TopicKey,
+        string StableTopicIdentity,
         string[] SignificantTokens);
 }
+
+public sealed record DeduplicatedQualitativeSignal(
+    SkillProfileWeaknessSignal Signal,
+    string StableTopicIdentity);

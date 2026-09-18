@@ -58,7 +58,14 @@ public static class LearningPathRules
         return normalized.Length <= maxLength ? normalized : normalized[..maxLength].TrimEnd();
     }
 
-    public static string QualitativeActivityKey(string label)
+    public static string QualitativeActivityKeyForTopicIdentity(string stableTopicIdentity)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(stableTopicIdentity);
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(stableTopicIdentity))).ToLowerInvariant();
+        return $"{LearningPathValues.ResumeImprovement}:qualitative:{hash[..24]}";
+    }
+
+    public static string LegacyQualitativeActivityKey(string label)
     {
         var normalized = label.Trim().ToLowerInvariant();
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized))).ToLowerInvariant();
@@ -90,6 +97,8 @@ public sealed record LearningPathActivityPlan(
     int SortOrder)
 {
     public DateTimeOffset? LatestEvidenceAt { get; init; }
+    public string? QualitativeTopicIdentity { get; init; }
+    public string? LegacyQualitativeActivityKey { get; init; }
 }
 
 public sealed record LearningPathMilestonePlan(string Code, string Title, int SortOrder);
@@ -229,13 +238,14 @@ public static class LearningPathPlanner
         }
 
         var qualitativeActivities = new List<LearningPathActivityPlan>();
-        foreach (var signal in LearningPathQualitativeSignalDeduper.Deduplicate(profile.WeaknessSignals))
+        foreach (var deduplicatedSignal in LearningPathQualitativeSignalDeduper.Deduplicate(profile.WeaknessSignals))
         {
+            var signal = deduplicatedSignal.Signal;
             var label = LearningPathRules.Truncate(signal.Label, 150);
             if (label.Length == 0) continue;
 
             qualitativeActivities.Add(new LearningPathActivityPlan(
-                LearningPathRules.QualitativeActivityKey(signal.Label),
+                LearningPathRules.QualitativeActivityKeyForTopicIdentity(deduplicatedSignal.StableTopicIdentity),
                 LearningPathValues.ResumeImprovement,
                 LearningPathRules.Truncate($"Resume improvement: {label}", LearningPathRules.ActivityTitleMaxLength),
                 LearningPathRules.Truncate($"Address this CV signal: {label}.", LearningPathRules.ActivityDescriptionMaxLength),
@@ -246,7 +256,9 @@ public static class LearningPathPlanner
                 LearningPathValues.SupportingMilestone,
                 0)
             {
-                LatestEvidenceAt = signal.LatestEvidenceAt
+                LatestEvidenceAt = signal.LatestEvidenceAt,
+                QualitativeTopicIdentity = deduplicatedSignal.StableTopicIdentity,
+                LegacyQualitativeActivityKey = LearningPathRules.LegacyQualitativeActivityKey(signal.Label)
             });
         }
 

@@ -81,8 +81,8 @@ public sealed class LearningPathPlannerTests
         ]);
 
         var signal = Assert.Single(deduplicated);
-        Assert.Equal("docker/kubernetes", signal.Label);
-        Assert.Equal(newer, signal.LatestEvidenceAt);
+        Assert.Equal("docker/kubernetes", signal.Signal.Label);
+        Assert.Equal(newer, signal.Signal.LatestEvidenceAt);
     }
 
     [Fact]
@@ -118,7 +118,42 @@ public sealed class LearningPathPlannerTests
         ]);
 
         Assert.Equal(7, signals.Count);
-        Assert.Equal(7, signals.Select(item => item.Label).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(7, signals.Select(item => item.Signal.Label).Distinct(StringComparer.Ordinal).Count());
+        Assert.NotEqual(
+            QualitativeActivityKey("Thiếu kinh nghiệm"),
+            QualitativeActivityKey("Need skills and knowledge"));
+        Assert.Equal(
+            QualitativeActivityKey("Thiếu kinh nghiệm"),
+            QualitativeActivityKey("KINH NGHIỆM THIẾU"));
+    }
+
+    [Theory]
+    [InlineData(" Docker / Kubernetes ", "docker/kubernetes")]
+    [InlineData("Thiếu kinh nghiệm với Docker và Kubernetes", "Chưa thể hiện kinh nghiệm triển khai Docker/Kubernetes")]
+    public void EquivalentQualitativeTopicsKeepTheSameKeyAcrossSeparateGenerations(string firstLabel, string laterLabel)
+    {
+        var first = QualitativeActivityKey(firstLabel);
+        var later = QualitativeActivityKey(laterLabel);
+
+        Assert.Equal(first, later);
+    }
+
+    [Fact]
+    public void QualitativeCanonicalIdentityKeepsDistinctTopicsAndLanguagesSeparate()
+    {
+        var keys = new[]
+        {
+            QualitativeActivityKey("Missing Docker and Kubernetes experience"),
+            QualitativeActivityKey("Missing SQL query optimization experience"),
+            QualitativeActivityKey("Need to improve React state management"),
+            QualitativeActivityKey("Missing C# API development experience"),
+            QualitativeActivityKey("Missing C++ API development experience")
+        };
+
+        Assert.Equal(keys.Length, keys.Distinct(StringComparer.Ordinal).Count());
+        Assert.NotEqual(
+            QualitativeActivityKey("Missing C# API development experience"),
+            QualitativeActivityKey("Missing C++ API development experience"));
     }
 
     [Fact]
@@ -244,6 +279,11 @@ public sealed class LearningPathPlannerTests
 
     private static SkillProfileCompetency Competency(string code, string name, string category, int score) =>
         new(code, name, category, score, 1, DateTimeOffset.UtcNow, []);
+
+    private static string QualitativeActivityKey(string label) =>
+        Assert.Single(LearningPathPlanner.Create(
+            new SkillProfileView([], [Weakness(label, DateTimeOffset.UnixEpoch)]),
+            []).Activities).Key;
 
     private static SkillProfileWeaknessSignal Weakness(string label, DateTimeOffset at) =>
         new(SkillProfileSourceTypes.ResumeAnalysis, label, at);

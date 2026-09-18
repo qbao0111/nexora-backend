@@ -647,6 +647,120 @@ public sealed class LearningPathApiTests
     }
 
     [Fact]
+    public async Task RefreshKeepsTheSamePendingQualitativeActivityAcrossEquivalentGenerations()
+    {
+        var firstEvidenceAt = DateTimeOffset.UtcNow.AddDays(-1);
+        var service = new MutableSkillProfileService(new SkillProfileView([], [
+            new SkillProfileWeaknessSignal(
+                SkillProfileSourceTypes.ResumeAnalysis,
+                "Thiếu kinh nghiệm với Docker và Kubernetes",
+                firstEvidenceAt)
+        ]));
+        using var factory = NewFactory(service);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        await CreateCareerGoalAsync(client, "Backend Developer");
+
+        using var generatedResponse = await client.PostAsJsonAsync("/api/v1/learning-path", new { });
+        var generated = await DataAsync(generatedResponse);
+        var original = Assert.Single(Activities(generated));
+        var originalId = original.GetProperty("id").GetGuid();
+
+        // Simulate a row created by the previous display-label-hash version.
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var stored = await db.LearningPathActivities.SingleAsync(item => item.Id == originalId);
+            stored.ActivityKey = LearningPathRules.LegacyQualitativeActivityKey("Thiếu kinh nghiệm với Docker và Kubernetes");
+            await db.SaveChangesAsync();
+        }
+
+        service.Current = new SkillProfileView([], [
+            new SkillProfileWeaknessSignal(
+                SkillProfileSourceTypes.ResumeAnalysis,
+                "Chưa thể hiện kinh nghiệm triển khai Docker/Kubernetes",
+                firstEvidenceAt.AddHours(1))
+        ]);
+        using var refreshedResponse = await client.PostAsJsonAsync("/api/v1/learning-path/refresh", new { });
+        var refreshed = await DataAsync(refreshedResponse);
+        var retained = Assert.Single(Activities(refreshed));
+
+        Assert.Equal(HttpStatusCode.OK, refreshedResponse.StatusCode);
+        Assert.Equal(originalId, retained.GetProperty("id").GetGuid());
+        Assert.Equal(LearningPathValues.Pending, retained.GetProperty("status").GetString());
+        using var finalScope = factory.Services.CreateScope();
+        var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var storedActivities = await finalDb.LearningPathActivities.AsNoTracking().ToArrayAsync();
+        Assert.Single(storedActivities);
+        Assert.Equal(originalId, storedActivities[0].Id);
+        Assert.Equal(LearningPathValues.Pending, storedActivities[0].Status);
+    }
+
+    [Fact]
+    public async Task EquivalentQualitativeEvidenceAfterCompletionCreatesOnlyOneStableCycle()
+    {
+        var firstEvidenceAt = DateTimeOffset.UtcNow.AddDays(-1);
+        var service = new MutableSkillProfileService(new SkillProfileView([], [
+            new SkillProfileWeaknessSignal(
+                SkillProfileSourceTypes.ResumeAnalysis,
+                "Thiếu kinh nghiệm với Docker và Kubernetes",
+                firstEvidenceAt)
+        ]));
+        using var factory = NewFactory(service);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        await CreateCareerGoalAsync(client, "Backend Developer");
+
+        using var generatedResponse = await client.PostAsJsonAsync("/api/v1/learning-path", new { });
+        var generated = await DataAsync(generatedResponse);
+        var original = Assert.Single(Activities(generated));
+        var originalId = original.GetProperty("id").GetGuid();
+        using var completedResponse = await client.PatchAsJsonAsync(
+            $"/api/v1/learning-path/activities/{originalId}",
+            new { status = LearningPathValues.Completed });
+        var completed = await DataAsync(completedResponse);
+        var completedAt = Assert.Single(Activities(completed)).GetProperty("completedAt").GetDateTimeOffset();
+
+        service.Current = new SkillProfileView([], [
+            new SkillProfileWeaknessSignal(
+                SkillProfileSourceTypes.ResumeAnalysis,
+                "Chưa thể hiện kinh nghiệm triển khai Docker/Kubernetes",
+                DateTimeOffset.UtcNow.AddDays(1))
+        ]);
+        using var refreshedResponse = await client.PostAsJsonAsync("/api/v1/learning-path/refresh", new { });
+        var refreshed = await DataAsync(refreshedResponse);
+        var firstCycleActivities = Activities(refreshed).ToArray();
+        var preserved = Assert.Single(firstCycleActivities, item => item.GetProperty("id").GetGuid() == originalId);
+        var cycle = Assert.Single(firstCycleActivities, item => item.GetProperty("id").GetGuid() != originalId);
+
+        Assert.Equal(LearningPathValues.Completed, preserved.GetProperty("status").GetString());
+        Assert.Equal(completedAt, preserved.GetProperty("completedAt").GetDateTimeOffset());
+        Assert.Equal(LearningPathValues.Pending, cycle.GetProperty("status").GetString());
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var storedCycle = await db.LearningPathActivities.AsNoTracking()
+                .SingleAsync(item => item.Id == cycle.GetProperty("id").GetGuid());
+            Assert.Contains(":cycle:", storedCycle.ActivityKey, StringComparison.Ordinal);
+        }
+
+        using var repeatedResponse = await client.PostAsJsonAsync("/api/v1/learning-path/refresh", new { });
+        var repeated = await DataAsync(repeatedResponse);
+        var repeatedActivities = Activities(repeated).ToArray();
+        Assert.Equal(2, repeatedActivities.Length);
+        Assert.Equal(
+            firstCycleActivities.Select(item => item.GetProperty("id").GetGuid()).OrderBy(id => id),
+            repeatedActivities.Select(item => item.GetProperty("id").GetGuid()).OrderBy(id => id));
+        using var finalScope = factory.Services.CreateScope();
+        Assert.Equal(2, await finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>()
+            .LearningPathActivities.CountAsync());
+    }
+
+    [Fact]
     public async Task ActivityKeyRemainsUniqueWithinItsLearningPath()
     {
         using var factory = NewFactory(new MutableSkillProfileService(Profile(
