@@ -403,10 +403,16 @@ public sealed class LearningPathService(
 
     private static string? GetLegacyTopicIdentity(LearningPathActivity activity)
     {
-        const string titlePrefix = "Resume improvement: ";
-        if (!activity.Title.StartsWith(titlePrefix, StringComparison.OrdinalIgnoreCase)) return null;
+        const string oldTitlePrefix = "Resume improvement: ";
+        const string localizedTitlePrefix = "Cải thiện CV: ";
+        var titlePrefix = activity.Title.StartsWith(oldTitlePrefix, StringComparison.OrdinalIgnoreCase)
+            ? oldTitlePrefix
+            : activity.Title.StartsWith(localizedTitlePrefix, StringComparison.OrdinalIgnoreCase)
+                ? localizedTitlePrefix
+                : null;
+        if (titlePrefix is null) return null;
 
-        var label = activity.Title[titlePrefix.Length..].Trim();
+        var label = LearningPathDisplayNames.CanonicalSourceLabelForDisplay(activity.Title[titlePrefix.Length..].Trim());
         return string.IsNullOrWhiteSpace(label)
             ? null
             : LearningPathQualitativeSignalDeduper.StableTopicIdentityForLabel(label);

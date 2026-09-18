@@ -26,6 +26,124 @@ public sealed class LearningPathPlannerTests
         Assert.DoesNotContain(plan.Activities, item => item.CompetencyCode == "resume.clarity");
         Assert.Equal(LearningPathValues.CriticalMilestone, plan.Activities.First().MilestoneCode);
         Assert.Equal(LearningPathValues.DevelopingMilestone, plan.Activities.Skip(1).First().MilestoneCode);
+        Assert.Equal("Khắc phục các điểm yếu quan trọng", LearningPathRules.MilestoneTitle(LearningPathValues.CriticalMilestone));
+        Assert.Equal("Phát triển các kỹ năng cần cải thiện", LearningPathRules.MilestoneTitle(LearningPathValues.DevelopingMilestone));
+        Assert.Equal("Củng cố năng lực và minh chứng", LearningPathRules.MilestoneTitle(LearningPathValues.SupportingMilestone));
+        Assert.Equal(
+            [LearningPathValues.CriticalMilestone, LearningPathValues.DevelopingMilestone],
+            plan.Milestones.Select(item => item.Code));
+    }
+
+    [Fact]
+    public void ActivityCopyIsVietnameseAndKeepsActivityIdentityAndTechnicalNames()
+    {
+        var scenarioId = Guid.Parse("10000000-0000-0000-0000-000000000001");
+        var profile = new SkillProfileView(
+            [
+                Competency("scenario.customer_service", "Customer Service", "scenario", 40),
+                Competency("scenario.prioritization", "Prioritization", "scenario", 60),
+                Competency("behavioral.situation", "Situation", "behavioral", 61),
+                Competency("interview.risk_management", "Risk Management", "interview", 74),
+                Competency("resume.impact_achievements", "Impact Achievements", "resume", 50),
+                Competency("scenario.react", "React", "scenario", 40),
+                Competency("interview.asp_net_core", "ASP.NET Core", "interview", 40),
+                Competency("resume.docker", "Docker", "resume", 40)
+            ],
+            []);
+
+        var plan = LearningPathPlanner.Create(profile, [new LearningPathScenarioResource(scenarioId, "Customer Service")]);
+        var byCode = plan.Activities.ToDictionary(item => item.CompetencyCode!, StringComparer.Ordinal);
+
+        Assert.Equal("scenario:scenario.customer_service:10000000000000000000000000000001", byCode["scenario.customer_service"].Key);
+        Assert.Equal(LearningPathValues.Scenario, byCode["scenario.customer_service"].Type);
+        Assert.Equal("Luyện tập dịch vụ khách hàng", byCode["scenario.customer_service"].Title);
+        Assert.Equal("Thực hiện một phiên luyện tập tập trung để cải thiện dịch vụ khách hàng.", byCode["scenario.customer_service"].Description);
+        Assert.Equal(LearningPathValues.CriticalMilestone, byCode["scenario.customer_service"].MilestoneCode);
+        Assert.Equal(1, byCode["scenario.customer_service"].Priority);
+        Assert.Equal("external_learning:scenario.prioritization", byCode["scenario.prioritization"].Key);
+        Assert.Equal(LearningPathValues.ExternalLearning, byCode["scenario.prioritization"].Type);
+        Assert.Equal("Học và luyện tập khả năng sắp xếp thứ tự ưu tiên", byCode["scenario.prioritization"].Title);
+        Assert.Equal("Học hoặc luyện tập khả năng sắp xếp thứ tự ưu tiên bằng một tài nguyên phù hợp.", byCode["scenario.prioritization"].Description);
+        Assert.Equal("star_drill:behavioral.situation", byCode["behavioral.situation"].Key);
+        Assert.Equal(LearningPathValues.StarDrill, byCode["behavioral.situation"].Type);
+        Assert.Equal("Luyện tình huống theo phương pháp STAR", byCode["behavioral.situation"].Title);
+        Assert.Equal("Thực hành trình bày tình huống trong câu trả lời theo phương pháp STAR.", byCode["behavioral.situation"].Description);
+        Assert.Equal("behavioral.situation", byCode["behavioral.situation"].CompetencyCode);
+        Assert.Equal(2, byCode["behavioral.situation"].Priority);
+        Assert.Equal(LearningPathValues.DevelopingMilestone, byCode["behavioral.situation"].MilestoneCode);
+        Assert.Equal("interview:interview.risk_management", byCode["interview.risk_management"].Key);
+        Assert.Equal(LearningPathValues.Interview, byCode["interview.risk_management"].Type);
+        Assert.Equal("Luyện quản lý rủi ro trong phỏng vấn", byCode["interview.risk_management"].Title);
+        Assert.Equal("Thực hiện một phiên phỏng vấn tập trung để cải thiện quản lý rủi ro.", byCode["interview.risk_management"].Description);
+        Assert.Equal("interview.risk_management", byCode["interview.risk_management"].CompetencyCode);
+        Assert.Equal(2, byCode["interview.risk_management"].Priority);
+        Assert.Equal(LearningPathValues.DevelopingMilestone, byCode["interview.risk_management"].MilestoneCode);
+        Assert.Equal("resume_improvement:resume.impact_achievements", byCode["resume.impact_achievements"].Key);
+        Assert.Equal(LearningPathValues.ResumeImprovement, byCode["resume.impact_achievements"].Type);
+        Assert.Equal("Cải thiện thành tích tạo ra tác động trong CV", byCode["resume.impact_achievements"].Title);
+        Assert.Equal("Thực hiện một phiên luyện tập tập trung để cải thiện thành tích tạo ra tác động.", byCode["resume.impact_achievements"].Description);
+        Assert.Equal("resume.impact_achievements", byCode["resume.impact_achievements"].CompetencyCode);
+        Assert.Equal(1, byCode["resume.impact_achievements"].Priority);
+        Assert.Equal(LearningPathValues.CriticalMilestone, byCode["resume.impact_achievements"].MilestoneCode);
+        Assert.Equal("external_learning:scenario.react", byCode["scenario.react"].Key);
+        Assert.Equal("Học và luyện tập React", byCode["scenario.react"].Title);
+        Assert.Equal("interview:interview.asp_net_core", byCode["interview.asp_net_core"].Key);
+        Assert.Equal("Luyện ASP.NET Core trong phỏng vấn", byCode["interview.asp_net_core"].Title);
+        Assert.Equal("resume_improvement:resume.docker", byCode["resume.docker"].Key);
+        Assert.Equal("Cải thiện Docker trong CV", byCode["resume.docker"].Title);
+        Assert.Equal(scenarioId, byCode["scenario.customer_service"].ResourceId);
+        Assert.Null(byCode["scenario.prioritization"].ResourceId);
+        Assert.Null(byCode["scenario.prioritization"].ExternalUrl);
+        Assert.Equal("scenario.customer_service", byCode["scenario.customer_service"].CompetencyCode);
+        Assert.Equal(2, byCode["scenario.prioritization"].Priority);
+        Assert.Equal(LearningPathValues.DevelopingMilestone, byCode["scenario.prioritization"].MilestoneCode);
+        Assert.All(plan.Activities, item => Assert.True(
+            item.Description.StartsWith("Thực hiện", StringComparison.Ordinal) ||
+            item.Description.StartsWith("Thực hành", StringComparison.Ordinal) ||
+            item.Description.StartsWith("Học hoặc luyện tập", StringComparison.Ordinal)));
+
+        var userCopy = string.Join('\n', plan.Milestones.Select(item => item.Title)
+            .Concat(plan.Activities.SelectMany(item => new[] { item.Title, item.Description })));
+        foreach (var obsoleteTemplate in new[]
+        {
+            "Fix critical gaps", "Develop emerging skills", "Strengthen supporting evidence", "Practice Customer Service",
+            "Drill Situation with STAR", "Practice Risk Management in an interview", "Study Prioritization with guided practice",
+            "Improve Impact Achievements in your CV", "Use a focused practice session to improve", "Resume improvement:",
+            "Address this CV signal:"
+        })
+            Assert.DoesNotContain(obsoleteTemplate, userCopy, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("behavioral.task", "Task", "nhiệm vụ")]
+    [InlineData("behavioral.action", "Action", "hành động")]
+    [InlineData("behavioral.result", "Result", "kết quả")]
+    [InlineData("interview.situation", "Situation", "tình huống")]
+    [InlineData("resume.impact_evidence", "Impact Evidence", "minh chứng về tác động")]
+    [InlineData("resume.project_evidence", "Project Evidence", "minh chứng dự án")]
+    public void KnownCanonicalLabelsUseLearningPathVietnameseDisplayCopy(string code, string name, string expected)
+    {
+        Assert.Equal(expected, LearningPathDisplayNames.ForCompetency(code, name));
+        Assert.Equal(expected, LearningPathDisplayNames.ForQualitativeLabel(name));
+    }
+
+    [Fact]
+    public void QualitativeCopyDoesNotChangeItsCanonicalOrLegacyIdentity()
+    {
+        var label = "Impact Evidence";
+        var topicIdentity = LearningPathQualitativeSignalDeduper.StableTopicIdentityForLabel(label);
+        var plan = LearningPathPlanner.Create(
+            new SkillProfileView([], [Weakness(label, DateTimeOffset.UnixEpoch)]),
+            []);
+        var activity = Assert.Single(plan.Activities);
+
+        Assert.Equal(LearningPathRules.QualitativeActivityKeyForTopicIdentity(topicIdentity), activity.Key);
+        Assert.Equal(LearningPathRules.LegacyQualitativeActivityKey(label), activity.LegacyQualitativeActivityKey);
+        Assert.Equal("Cải thiện CV: minh chứng về tác động", activity.Title);
+        Assert.Equal("Cải thiện điểm cần chú ý trong CV: minh chứng về tác động.", activity.Description);
+        Assert.Equal(LearningPathValues.ResumeImprovement, activity.Type);
+        Assert.Null(activity.CompetencyCode);
+        Assert.Equal(LearningPathValues.SupportingMilestone, activity.MilestoneCode);
     }
 
     [Fact]
