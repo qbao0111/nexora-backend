@@ -35,7 +35,7 @@ decision.
 - Trước upload/recording, hiển thị purpose, retention, quyền xoá và link Privacy Policy.
 - CV/JD/transcript không được dùng để training AI model nếu chưa có opt-in riêng, rõ ràng.
 - Người dùng có thể export dữ liệu core và yêu cầu xoá account; task xoá có audit status.
-- Owner có thể xoá riêng một resume bằng soft delete: current-library/profile/evidence reads stop selecting it immediately, the Primary Resume pointer is cleared transactionally, and private-object deletion is retried durably through the configured storage provider. Analysis/interview history and snapshots are retained; account-wide deletion remains a separate lifecycle.
+- Owner có thể xoá riêng một resume bằng soft delete: current-library/profile/evidence reads stop selecting it immediately, the Primary Resume pointer is cleared transactionally, and private-object deletion is retried durably through the configured storage provider. Analysis/interview history and snapshots are retained; an existing active interview may keep its historical ResumeId but future AI calls must not consume that deleted profile. Account-wide deletion remains a separate lifecycle.
 - Chỉ gửi amount dữ liệu cần thiết tới AI provider; không đính kèm dữ liệu account/payment không liên quan.
 - Log chỉ chứa IDs/correlation IDs, không chứa CV/transcript nguyên văn trừ khi có secure debug exception đã phê duyệt.
 

@@ -887,7 +887,10 @@ public sealed partial class PracticeService(
         AnswerEvaluation evaluation;
         AiExecutionResult<GeneratedQuestion>? generated = null;
         string? generatedTopic = null;
-        var profile = TryReadResumeProfile(snapshot.Resume?.StructuredProfile);
+        var hasUsableResumeContext = HasUsableResumeContext(snapshot.Resume);
+        var profile = hasUsableResumeContext
+            ? TryReadResumeProfile(snapshot.Resume!.StructuredProfile)
+            : null;
         var answerContext = resumeContextBuilder.BuildAnswerEvaluationContext(
             snapshot.Role,
             snapshot.Seniority,
@@ -936,7 +939,7 @@ public sealed partial class PracticeService(
                 var nextTopic = InterviewQuestionValues.FreePrimaryTopicForSequence(
                     snapshot.InterviewType,
                     nextSequence,
-                    snapshot.Resume is not null,
+                    hasUsableResumeContext,
                     snapshot.JobDescription is not null);
                 generatedTopic = nextTopic;
                 var nextContext = resumeContextBuilder.BuildInterviewQuestionContext(
@@ -1082,16 +1085,19 @@ public sealed partial class PracticeService(
         var lastQuestion = session.Questions.OrderBy(item => item.Sequence).Last();
         var lastAnswer = session.Answers.SingleOrDefault(item => item.QuestionId == lastQuestion.Id) ?? throw InvalidState();
         var lastEvaluation = TryDeserializeAnswerEvaluation(lastAnswer.Evaluation);
+        var hasUsableResumeContext = HasUsableResumeContext(session.Resume);
         var paidTopic = InterviewQuestionValues.PaidTopicForContext(
             session.InterviewType,
-            session.Resume is not null,
+            hasUsableResumeContext,
             session.JobDescription is not null);
         var useStarFollowup =
             (string.Equals(lastQuestion.Topic, InterviewQuestionValues.Behavioral, StringComparison.Ordinal) ||
              string.Equals(lastQuestion.Topic, InterviewQuestionValues.BehavioralStar, StringComparison.Ordinal)) &&
             lastQuestion.Kind == InterviewQuestionValues.Primary &&
             lastEvaluation?.Star is { Applicable: true, MissingElements.Count: > 0 };
-        var profile = session.Resume is null ? null : TryReadResumeProfile(session.Resume.StructuredProfile);
+        var profile = hasUsableResumeContext
+            ? TryReadResumeProfile(session.Resume!.StructuredProfile)
+            : null;
         AiExecutionResult<GeneratedQuestion> generated;
         try
         {
@@ -1673,6 +1679,8 @@ public sealed partial class PracticeService(
         return profile;
     }
 
+    private static bool HasUsableResumeContext(ResumeRecord? resume) => resume is { DeletedAt: null };
+
     private static ResumeProfile? TryReadResumeProfile(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
@@ -1816,11 +1824,14 @@ public sealed partial class PracticeService(
             await dbContext.SaveChangesAsync(cancellationToken);
             return;
         }
-        var profile = snapshot.Resume is null ? null : await EnsureResumeProfileAsync(snapshot.Resume, snapshot.Id, cancellationToken);
+        var hasUsableResumeContext = HasUsableResumeContext(snapshot.Resume);
+        var profile = hasUsableResumeContext
+            ? await EnsureResumeProfileAsync(snapshot.Resume!, snapshot.Id, cancellationToken)
+            : null;
         var firstTopic = snapshot.FocusTopic ?? InterviewQuestionValues.FreePrimaryTopicForSequence(
             snapshot.InterviewType,
             1,
-            snapshot.Resume is not null,
+            hasUsableResumeContext,
             snapshot.JobDescription is not null);
         var context = resumeContextBuilder.BuildInterviewQuestionContext(
             snapshot.Role,

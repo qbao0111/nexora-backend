@@ -142,6 +142,8 @@ Both schemas are strict (`additionalProperties: false`) and require bounded coll
 
 StartInterview retries must not duplicate session, question, usage event or job effect. Consumption is determined by successful question persistence plus `starting → active`, not browser receipt. After activation, disconnect/refresh/navigation/no answer or later AI/report failure does not automatically void usage; terminal report failure retains the BR-08 adjustment/support rule.
 
+Resume availability in an interview is `Resume != null && Resume.DeletedAt == null`. An active session may retain a historical ResumeId after deletion, but every future answer evaluation, automatic next-question, paid continuation or follow-up AI call must omit its profile and choose topics as if no Resume were available. Previously-issued artifacts remain immutable.
+
 For A7, the first three issued questions are always server-owned primary
 questions with topics `self_introduction`, `behavioral_star` and
 `motivation_role_fit`. The answer path never pre-generates a paid question and

@@ -2,7 +2,7 @@
 
 | Thuộc tính | Giá trị |
 | --- | --- |
-| Phiên bản | 1.2 resume-deletion corrective amendment |
+| Phiên bản | 1.3 active-interview resume-context corrective amendment |
 | Ngày | 18/09/2026 |
 | Trạng thái | Approved implementation baseline; DEC-01–04 vẫn deferred trước production enablement, không biểu thị external stakeholder/legal approval |
 | Chuẩn tham chiếu | Cấu trúc yêu cầu dựa trên tinh thần của [ISO/IEC/IEEE 29148:2018](https://www.iso.org/standard/72089.html) |
@@ -111,7 +111,7 @@ Candidate browser -> Nexora frontend -> Nexora .NET API -> PostgreSQL
 | FR-CV-03 | Extract và analysis chạy job bất đồng bộ với state `queued/processing/completed/failed`. | Must | UI có thể poll state và retry theo rule. |
 | FR-CV-04 | Analysis lưu resume/JD version, model/prompt/schema version, result và timestamp. | Must | Có thể audit result về input/version. |
 | FR-CV-05 | `POST /resume-analyses` có thể kế thừa Primary Resume và Career Goal context cho các trường bị bỏ trống; explicit owner-scoped input được ưu tiên và context hiệu lực được snapshot khi tạo analysis. | Must | Default/override, ownership, readiness, idempotency và immutable snapshot integration tests. |
-| FR-CV-06 | Owner có thể xoá riêng resume qua `DELETE /resumes/{id}`; resume được soft-delete và ẩn khỏi lựa chọn/đọc hiện hành, Primary Resume được clear transactionally, private object được dọn bất đồng bộ có retry bền vững, còn analysis/interview history được giữ. | Must | Unknown/foreign IDs cùng opaque 404; owner delete/replay 204; current selectors/evidence exclude tombstone; history retained; storage retry and queued-worker race integration tests. |
+| FR-CV-06 | Owner có thể xoá riêng resume qua `DELETE /resumes/{id}`; resume được soft-delete và ẩn khỏi lựa chọn/đọc hiện hành, Primary Resume được clear transactionally, private object được dọn bất đồng bộ có retry bền vững, còn analysis/interview history được giữ. Resume đã xoá không còn là current AI context, kể cả trong active interview đang giữ historical ResumeId. | Must | Unknown/foreign IDs cùng opaque 404; owner delete/replay 204; current selectors/evidence/interview AI context exclude tombstone; history retained; storage retry and queued-worker race integration tests. |
 
 ### 6.4 Mock interview and report
 
@@ -146,6 +146,15 @@ or mutates the source session/report. Recommendation responses may include
 nullable actionable `practice_again` metadata (`sourceInterviewId`,
 `sourceQuestionId`, `focusTopic`, `suggestedInterviewType` and canonical reason)
 so the client does not reconstruct domain joins.
+
+A soft-deleted Resume may remain linked to an existing InterviewSession for
+history, but it is not usable resume context. Future answer evaluation,
+automatic next-question generation, paid continuation and follow-up generation
+must pass no ResumeProfile and select topics as if no Resume were available.
+Previously-issued questions, persisted answers/evaluations, reports and the
+historical ResumeId are not rewritten. Practice Again still creates a new
+session through canonical owner/ready/non-deleted Resume validation and rejects
+an inherited tombstoned Resume.
 
 ### 6.5 Practice, dashboard and support
 

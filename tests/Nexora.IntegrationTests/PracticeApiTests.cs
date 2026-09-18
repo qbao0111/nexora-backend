@@ -127,6 +127,216 @@ public sealed class PracticeApiTests
     }
 
     [Fact]
+    public async Task ActiveInterviewStopsUsingDeletedResumeForFutureAiCallsAndPracticeAgain()
+    {
+        const string resumeMarker = "SECRET_DELETED_RESUME_MARKER";
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 1, questionLimit: 6);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var resumeId = await SeedReadyResumeWithProfileAsync(factory, account.UserId, aiProvider, resumeMarker);
+
+        using var start = new HttpRequestMessage(HttpMethod.Post, "/api/v1/interviews")
+        {
+            Content = JsonContent.Create(new
+            {
+                role = "Backend Engineer",
+                seniority = "senior",
+                interviewType = "technical",
+                difficulty = "medium",
+                resumeId
+            })
+        };
+        start.Headers.Add("Idempotency-Key", "deleted-resume-active-start");
+        JsonElement started;
+        using (var startResponse = await client.SendAsync(start))
+        {
+            Assert.Equal(HttpStatusCode.Created, startResponse.StatusCode);
+            started = await DataAsync(startResponse);
+        }
+        var interviewId = started.GetProperty("id").GetGuid();
+        await ProcessJobsAsync(factory);
+
+        var active = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(PracticeValues.Active, active.GetProperty("status").GetString());
+        var firstQuestion = active.GetProperty("questions")[0];
+        var firstQuestionId = firstQuestion.GetProperty("id").GetGuid();
+        var firstQuestionContent = firstQuestion.GetProperty("content").GetString();
+        var initialQuestionCall = aiProvider.Invocations.Single(item => item.Purpose == AiPurposes.InterviewFirstQuestion);
+        Assert.Contains(resumeMarker, initialQuestionCall.UntrustedInput, StringComparison.Ordinal);
+
+        var firstAnswerContent = "Tôi đã cải thiện độ tin cậy của dịch vụ bằng kiểm thử và giám sát.";
+        var firstAnswer = await AnswerAsync(client, interviewId, firstQuestionId, firstAnswerContent, "deleted-resume-active-answer-one");
+        var firstAnswerId = firstAnswer.GetProperty("answer").GetProperty("id").GetGuid();
+        var secondQuestion = firstAnswer.GetProperty("nextQuestion");
+        var secondQuestionId = secondQuestion.GetProperty("id").GetGuid();
+        var secondQuestionContent = secondQuestion.GetProperty("content").GetString();
+        Assert.Contains(resumeMarker, aiProvider.Invocations
+            .Last(item => item.Purpose == AiPurposes.InterviewEvaluate).UntrustedInput, StringComparison.Ordinal);
+        Assert.Contains(resumeMarker, aiProvider.Invocations
+            .Last(item => item.Purpose == AiPurposes.InterviewFirstQuestion).UntrustedInput, StringComparison.Ordinal);
+
+        string firstEvaluation;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            firstEvaluation = await db.InterviewAnswers.Where(item => item.Id == firstAnswerId)
+                .Select(item => item.Evaluation).SingleAsync();
+        }
+
+        var invocationCountBeforeDelete = aiProvider.Invocations.Count;
+        using (var delete = await client.DeleteAsync($"/api/v1/resumes/{resumeId}"))
+            Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
+
+        var deletedAnswer = await AnswerAsync(
+            client, interviewId, secondQuestionId,
+            "Tôi xử lý truy vấn chậm và xác nhận độ trễ giảm sau khi triển khai.",
+            "deleted-resume-active-answer-two");
+        var thirdQuestion = deletedAnswer.GetProperty("nextQuestion");
+        var thirdQuestionId = thirdQuestion.GetProperty("id").GetGuid();
+        Assert.Equal(InterviewQuestionValues.Technical, thirdQuestion.GetProperty("topic").GetString());
+        var afterDeleteAnswerCalls = aiProvider.Invocations.Skip(invocationCountBeforeDelete).ToArray();
+        Assert.Single(afterDeleteAnswerCalls, item => item.Purpose == AiPurposes.InterviewEvaluate);
+        Assert.Single(afterDeleteAnswerCalls, item => item.Purpose == AiPurposes.InterviewFirstQuestion);
+        Assert.All(afterDeleteAnswerCalls, item =>
+            Assert.DoesNotContain(resumeMarker, item.UntrustedInput, StringComparison.Ordinal));
+
+        await AnswerAsync(client, interviewId, thirdQuestionId,
+            "Tôi theo dõi chỉ số sau phát hành và chia sẻ kết quả với nhóm.",
+            "deleted-resume-active-answer-three");
+
+        JsonElement continued;
+        using (var continuation = await ContinueAsync(client, interviewId, "deleted-resume-paid-continue"))
+        {
+            Assert.Equal(HttpStatusCode.OK, continuation.StatusCode);
+            continued = await DataAsync(continuation);
+        }
+        var fourthQuestion = continued.GetProperty("questions").EnumerateArray()
+            .Single(item => item.GetProperty("sequence").GetInt32() == 4);
+        Assert.Equal(InterviewQuestionValues.Technical, fourthQuestion.GetProperty("topic").GetString());
+        var paidContinuationCall = aiProvider.Invocations.Last(item => item.Purpose == AiPurposes.InterviewFirstQuestion);
+        Assert.Contains("question-topic: technical", paidContinuationCall.UntrustedInput, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(resumeMarker, paidContinuationCall.UntrustedInput, StringComparison.Ordinal);
+
+        await AnswerAsync(client, interviewId, fourthQuestion.GetProperty("id").GetGuid(),
+            "Tôi tổng kết kết quả bằng số liệu đã theo dõi.", "deleted-resume-active-answer-four");
+        await CompleteAsync(client, interviewId, "deleted-resume-active-complete");
+        await ProcessJobsAsync(factory);
+
+        Assert.All(aiProvider.Invocations.Skip(invocationCountBeforeDelete), item =>
+            Assert.DoesNotContain(resumeMarker, item.UntrustedInput, StringComparison.Ordinal));
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var session = await db.InterviewSessions.SingleAsync(item => item.Id == interviewId);
+            Assert.Equal(PracticeValues.Completed, session.Status);
+            Assert.Equal(resumeId, session.ResumeId);
+            Assert.NotNull(await db.Resumes.Where(item => item.Id == resumeId).Select(item => item.DeletedAt).SingleAsync());
+            Assert.Equal(firstQuestionContent, await db.InterviewQuestions.Where(item => item.Id == firstQuestionId)
+                .Select(item => item.Content).SingleAsync());
+            Assert.Equal(secondQuestionContent, await db.InterviewQuestions.Where(item => item.Id == secondQuestionId)
+                .Select(item => item.Content).SingleAsync());
+            var persistedAnswer = await db.InterviewAnswers.SingleAsync(item => item.Id == firstAnswerId);
+            Assert.Equal(firstAnswerContent, persistedAnswer.Content);
+            Assert.Equal(firstEvaluation, persistedAnswer.Evaluation);
+            Assert.True(await db.InterviewReports.AnyAsync(item => item.InterviewSessionId == interviewId));
+        }
+
+        var callCountBeforePracticeAgain = aiProvider.TotalCalls;
+        using var practiceAgain = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/practice-again")
+        {
+            Content = JsonContent.Create(new { focus = (string?)null, reason = (string?)null })
+        };
+        practiceAgain.Headers.Add("Idempotency-Key", "deleted-resume-practice-again");
+        using var practiceAgainResponse = await client.SendAsync(practiceAgain);
+        Assert.Equal(HttpStatusCode.NotFound, practiceAgainResponse.StatusCode);
+        Assert.Equal(callCountBeforePracticeAgain, aiProvider.TotalCalls);
+    }
+
+    [Fact]
+    public async Task DeletedResumeIsOmittedFromPaidBehavioralFollowupContext()
+    {
+        const string resumeMarker = "SECRET_DELETED_RESUME_MARKER";
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 1, questionLimit: 6);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var resumeId = await SeedReadyResumeWithProfileAsync(factory, account.UserId, aiProvider, resumeMarker);
+
+        using var start = new HttpRequestMessage(HttpMethod.Post, "/api/v1/interviews")
+        {
+            Content = JsonContent.Create(new
+            {
+                role = "Backend Engineer",
+                seniority = "senior",
+                interviewType = "behavioral",
+                difficulty = "medium",
+                resumeId
+            })
+        };
+        start.Headers.Add("Idempotency-Key", "deleted-resume-followup-start");
+        JsonElement started;
+        using (var response = await client.SendAsync(start))
+        {
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            started = await DataAsync(response);
+        }
+        var interviewId = started.GetProperty("id").GetGuid();
+        await ProcessJobsAsync(factory);
+
+        var active = await GetInterviewAsync(client, interviewId);
+        var firstQuestionId = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        var secondQuestion = await AnswerAsync(
+            client, interviewId, firstQuestionId, "Tôi điều phối nhóm qua một sự cố khó.", "deleted-resume-followup-answer-one");
+        var secondQuestionId = secondQuestion.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        Assert.Equal(InterviewQuestionValues.BehavioralStar,
+            secondQuestion.GetProperty("nextQuestion").GetProperty("topic").GetString());
+
+        var invocationCountBeforeDelete = aiProvider.Invocations.Count;
+        using (var delete = await client.DeleteAsync($"/api/v1/resumes/{resumeId}"))
+            Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
+
+        var thirdQuestion = await AnswerAsync(
+            client, interviewId, secondQuestionId, "Tôi đã phối hợp khắc phục và kiểm tra lại.", "deleted-resume-followup-answer-two");
+        var thirdQuestionId = thirdQuestion.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        await AnswerAsync(client, interviewId, thirdQuestionId,
+            "Nhóm thống nhất được phương án và cải thiện bàn giao.", "deleted-resume-followup-answer-three");
+
+        JsonElement continued;
+        using (var response = await ContinueAsync(client, interviewId, "deleted-resume-followup-continue"))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            continued = await DataAsync(response);
+        }
+        var fourthQuestion = continued.GetProperty("questions").EnumerateArray()
+            .Single(item => item.GetProperty("sequence").GetInt32() == 4);
+        Assert.Equal(InterviewQuestionValues.Behavioral, fourthQuestion.GetProperty("topic").GetString());
+
+        await AnswerAsync(client, interviewId, fourthQuestion.GetProperty("id").GetGuid(),
+            "Tôi trình bày tình huống, hành động và kết quả.", "deleted-resume-followup-answer-four");
+        using (var response = await ContinueAsync(client, interviewId, "deleted-resume-followup-continue-two"))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var continuedFollowup = await DataAsync(response);
+            var fifthQuestion = continuedFollowup.GetProperty("questions").EnumerateArray()
+                .Single(item => item.GetProperty("sequence").GetInt32() == 5);
+            Assert.Equal(InterviewQuestionValues.Followup, fifthQuestion.GetProperty("kind").GetString());
+        }
+
+        var followupInvocation = aiProvider.Invocations.Single(item => item.Purpose == AiPurposes.InterviewFollowup);
+        Assert.DoesNotContain(resumeMarker, followupInvocation.UntrustedInput, StringComparison.Ordinal);
+        Assert.All(aiProvider.Invocations.Skip(invocationCountBeforeDelete), item =>
+            Assert.DoesNotContain(resumeMarker, item.UntrustedInput, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task PaidContinuationUsesSameSessionAndIdempotentQuestion()
     {
         var aiProvider = new TestAiProvider();
@@ -1271,6 +1481,46 @@ public sealed class PracticeApiTests
     {
         using var scope = factory.Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(CancellationToken.None);
+    }
+
+    private static async Task<Guid> SeedReadyResumeWithProfileAsync(
+        NexoraApiFactory factory,
+        Guid userId,
+        TestAiProvider aiProvider,
+        string marker)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var file = new StoredFile
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            StorageKey = $"practice/{Guid.NewGuid():N}",
+            FileName = "active-interview-context.pdf",
+            ContentType = "application/pdf",
+            Size = 100,
+            Checksum = Guid.NewGuid().ToString("N"),
+            CreatedAt = now
+        };
+        var profile = new ResumeProfile($"Candidate profile {marker}", [$"Skill {marker}"], [], [], [], [], []);
+        var resume = new ResumeRecord
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            StoredFileId = file.Id,
+            Status = PracticeValues.Ready,
+            Version = 1,
+            StructuredProfile = JsonSerializer.Serialize(profile, JsonOptions),
+            ProfileModelVersion = aiProvider.ModelVersion,
+            ProfilePromptVersion = AiOperations.ResumeProfile.PromptVersion,
+            ProfileSchemaVersion = AiOperations.ResumeProfile.SchemaVersion,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        db.AddRange(file, resume);
+        await db.SaveChangesAsync();
+        return resume.Id;
     }
 
     private static async Task<(Guid PriceId, string PlanCode)> SeedPaidContinuationPlanAsync(NexoraApiFactory factory, int questionLimit)
