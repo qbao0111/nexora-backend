@@ -134,7 +134,56 @@ public sealed class PayosBillingApiTests : IDisposable
     }
 
     [Fact]
-    public async Task InvalidWebhookSignatureAndWrongAmountDoNotFulfill()
+    public async Task SplitPaymentWebhooksFulfillOnlyAfterAggregateAmountIsPaidAndRemainIdempotent()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var price = await SeedPlanPriceAsync(1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var checkout = await CreateCheckoutAsync(client, price.Id, "payos-split-payment");
+
+        _handler.QueryStatus = PaymentLinkStatus.Underpaid;
+        _handler.QueryAmountPaid = 50_000;
+        using (var partial = await SendWebhookAsync(client, checkout.OrderId, amount: 50_000, reference: "PART-1"))
+        {
+            Assert.Equal(HttpStatusCode.OK, partial.StatusCode);
+        }
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(BillingValues.Pending, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
+            Assert.Empty(await db.Subscriptions.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
+            Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free").ToListAsync());
+        }
+
+        _handler.QueryStatus = PaymentLinkStatus.Paid;
+        _handler.QueryAmountPaid = 123_000;
+        using (var paid = await SendWebhookAsync(client, checkout.OrderId, amount: 73_000, reference: "PART-2"))
+        {
+            Assert.Equal(HttpStatusCode.OK, paid.StatusCode);
+        }
+
+        using (var replayPartial = await SendWebhookAsync(client, checkout.OrderId, amount: 50_000, reference: "PART-1"))
+        {
+            Assert.Equal(HttpStatusCode.OK, replayPartial.StatusCode);
+        }
+
+        using (var replayPaid = await SendWebhookAsync(client, checkout.OrderId, amount: 73_000, reference: "PART-2"))
+        {
+            Assert.Equal(HttpStatusCode.OK, replayPaid.StatusCode);
+        }
+
+        using var finalScope = _factory.Services.CreateScope();
+        var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(BillingValues.Fulfilled, (await finalDb.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
+        Assert.Equal(2, await finalDb.PaymentEvents.CountAsync(item => item.OrderId == checkout.OrderId));
+        Assert.Equal(1, await finalDb.Subscriptions.CountAsync(item => item.OrderId == checkout.OrderId));
+        Assert.Equal(1, await finalDb.Entitlements.CountAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free"));
+    }
+
+    [Fact]
+    public async Task InvalidWebhookSignatureAndMismatchedPaymentLinkAmountDoNotFulfill()
     {
         using var client = _factory.CreateHttpsClient();
         var account = await RegisterAsync(client);
@@ -144,7 +193,8 @@ public sealed class PayosBillingApiTests : IDisposable
 
         using var invalidSignature = await SendWebhookAsync(client, checkout.OrderId, signature: "invalid");
         Assert.Equal(HttpStatusCode.Unauthorized, invalidSignature.StatusCode);
-        using var wrongAmount = await SendWebhookAsync(client, checkout.OrderId, amount: 1);
+        _handler.QueryAmount = 1;
+        using var wrongAmount = await SendWebhookAsync(client, checkout.OrderId);
         Assert.Equal(HttpStatusCode.BadRequest, wrongAmount.StatusCode);
 
         using var scope = _factory.Services.CreateScope();
@@ -225,14 +275,20 @@ public sealed class PayosBillingApiTests : IDisposable
         return new CheckoutResponse(data.GetProperty("orderId").GetGuid(), data.GetProperty("checkout").GetProperty("url").GetString()!);
     }
 
-    private async Task<HttpResponseMessage> SendWebhookAsync(HttpClient client, Guid orderId, string? signature = null, long? amount = null)
+    private async Task<HttpResponseMessage> SendWebhookAsync(
+        HttpClient client,
+        Guid orderId,
+        string? signature = null,
+        long? amount = null,
+        string reference = "PAYOS-INTEGRATION-REFERENCE")
     {
         using var scope = _factory.Services.CreateScope();
         var order = await scope.ServiceProvider.GetRequiredService<NexoraDbContext>().Orders.AsNoTracking().SingleAsync(item => item.Id == orderId);
         return await SendWebhookPayloadAsync(client, BuildWebhook(
             long.Parse(order.ProviderTransactionId, CultureInfo.InvariantCulture),
             amount ?? order.AmountMinor,
-            signature));
+            signature,
+            reference));
     }
 
     private static async Task<HttpResponseMessage> SendWebhookPayloadAsync(HttpClient client, byte[] payload)
@@ -242,7 +298,11 @@ public sealed class PayosBillingApiTests : IDisposable
         return await client.SendAsync(request);
     }
 
-    private static byte[] BuildWebhook(long orderCode, long amount, string? signature = null)
+    private static byte[] BuildWebhook(
+        long orderCode,
+        long amount,
+        string? signature = null,
+        string reference = "PAYOS-INTEGRATION-REFERENCE")
     {
         var data = new WebhookData
         {
@@ -250,7 +310,7 @@ public sealed class PayosBillingApiTests : IDisposable
             Amount = amount,
             Description = "Nexora",
             AccountNumber = string.Empty,
-            Reference = "PAYOS-INTEGRATION-REFERENCE",
+            Reference = reference,
             TransactionDateTime = "2026-09-18 10:30:00",
             Currency = "VND",
             PaymentLinkId = $"link-{orderCode}",
@@ -283,6 +343,7 @@ public sealed class PayosBillingApiTests : IDisposable
     {
         public List<string> CreatedOrderCodes { get; } = [];
         public PaymentLinkStatus QueryStatus { get; set; } = PaymentLinkStatus.Paid;
+        public long? QueryAmount { get; set; }
         public long? QueryAmountPaid { get; set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -310,14 +371,15 @@ public sealed class PayosBillingApiTests : IDisposable
             {
                 var orderCodeText = request.RequestUri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries).Last();
                 var orderCode = long.Parse(orderCodeText, CultureInfo.InvariantCulture);
-                var amountPaid = QueryAmountPaid ?? (QueryStatus == PaymentLinkStatus.Paid ? 123_000 : 0);
+                var amount = QueryAmount ?? 123_000;
+                var amountPaid = QueryAmountPaid ?? (QueryStatus == PaymentLinkStatus.Paid ? amount : 0);
                 return SignedResponse(new PaymentLink
                 {
                     Id = $"link-{orderCode}",
                     OrderCode = orderCode,
-                    Amount = 123_000,
+                    Amount = amount,
                     AmountPaid = amountPaid,
-                    AmountRemaining = 123_000 - amountPaid,
+                    AmountRemaining = Math.Max(0L, amount - amountPaid),
                     Status = QueryStatus,
                     CreatedAt = "2026-09-18T03:30:00.000Z",
                     Transactions = []

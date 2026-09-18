@@ -169,19 +169,10 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
         ValidateWebhookPaymentLink(paymentLink, data, paymentLinkId);
 
         var paidAmountMatchesLink = paymentLink.AmountPaid == paymentLink.Amount;
-        if (paymentLink.Status == PaymentLinkStatus.Paid && paidAmountMatchesLink && data.Amount != paymentLink.AmountPaid)
-            throw AmountMismatch();
-
         var isPaid = paymentLink.Status == PaymentLinkStatus.Paid && paidAmountMatchesLink;
         var isFinal = isPaid || paymentLink.Status is PaymentLinkStatus.Cancelled or PaymentLinkStatus.Expired or PaymentLinkStatus.Failed;
         return new VerifiedPaymentEvent(
-            BuildProviderEventId(
-                "webhook",
-                orderCode,
-                paymentLink.Id,
-                reference,
-                paymentLink.Status.ToString(),
-                paymentLink.AmountPaid.ToString(CultureInfo.InvariantCulture)),
+            BuildProviderEventId("webhook", orderCode, paymentLinkId, reference),
             null,
             orderCode,
             paymentLink.Amount,

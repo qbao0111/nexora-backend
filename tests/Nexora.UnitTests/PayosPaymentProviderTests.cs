@@ -221,6 +221,26 @@ public sealed class PayosPaymentProviderTests
         Assert.Equal(2, handler.RequestPaths.Count(path => path == "/v2/payment-requests/1234567890123456"));
     }
 
+    [Fact]
+    public async Task WebhookEventIdentityRemainsStableWhenPaymentLinkReconciliationChanges()
+    {
+        var status = PaymentLinkStatus.Underpaid;
+        var amountPaid = 10_000L;
+        var handler = new PayosHandler(_ => SignedResponse(PaymentLink(status, amountPaid: amountPaid)));
+        using var provider = NewProvider(handler: handler);
+        var payload = BuildWebhook(amount: 10_000, reference: "PAYOS-REFERENCE-SPLIT");
+
+        var underpaid = await provider.VerifyWebhookAsync(Callback(payload), CancellationToken.None);
+        status = PaymentLinkStatus.Paid;
+        amountPaid = 49_000;
+        var paid = await provider.VerifyWebhookAsync(Callback(payload), CancellationToken.None);
+
+        Assert.False(underpaid.IsPaid);
+        Assert.True(paid.IsPaid);
+        Assert.Equal(49_000, paid.AmountMinor);
+        Assert.Equal(underpaid.ProviderEventId, paid.ProviderEventId);
+    }
+
     [Theory]
     [InlineData(PaymentLinkStatus.Pending, 0L)]
     [InlineData(PaymentLinkStatus.Processing, 0L)]
@@ -313,7 +333,11 @@ public sealed class PayosPaymentProviderTests
     private static PaymentCallbackRequest Callback(byte[] body) =>
         new("POST", new Dictionary<string, string>(), new Dictionary<string, string>(), body);
 
-    private static byte[] BuildWebhook(long? orderCode = null, long amount = 49_000, string? signature = null)
+    private static byte[] BuildWebhook(
+        long? orderCode = null,
+        long amount = 49_000,
+        string? signature = null,
+        string reference = "PAYOS-REFERENCE-1")
     {
         var data = new WebhookData
         {
@@ -321,7 +345,7 @@ public sealed class PayosPaymentProviderTests
             Amount = amount,
             Description = "Nexora",
             AccountNumber = string.Empty,
-            Reference = "PAYOS-REFERENCE-1",
+            Reference = reference,
             TransactionDateTime = "2026-09-18 10:30:00",
             Currency = "VND",
             PaymentLinkId = "test-payment-link",
