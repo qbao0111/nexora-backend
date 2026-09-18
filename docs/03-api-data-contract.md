@@ -389,6 +389,24 @@ Worker terminal failure before activation:
 
 Worker retries are idempotent and must not duplicate sessions, questions, usage events or job effects. Consumption is based on persisted server state and successful activation, not proof of browser receipt. Once `active`, disconnect, refresh, navigation away, no answer or later AI/report failure does not automatically void usage; report retry remains idempotent and free of another interview charge.
 
+### Cấp Azure Speech token cho TTS trong interview
+
+`POST /api/v1/speech/interviews/{interviewId}/token` yêu cầu access token Nexora. Backend xác minh interview thuộc user hiện tại rồi mới cấp Azure Speech authorization token ngắn hạn; không nhận `userId`, key, region hoặc endpoint từ client. Unknown/foreign interview dùng cùng lỗi `404 NOT_FOUND` opaque như interview API hiện tại.
+
+Thành công trả envelope chuẩn:
+
+```json
+{
+  "data": {
+    "token": "<short-lived-authorization-token>",
+    "region": "southeastasia",
+    "expiresAt": "2026-09-18T15:00:00Z"
+  }
+}
+```
+
+Response dùng `Cache-Control: no-store, private`, `Pragma: no-cache` và `Expires: 0`. Token/key không được lưu vào database; key Azure chỉ tồn tại ở backend. Token chỉ dùng cho browser-side Speech SDK, không phải endpoint synthesize audio. Endpoint có rate limit riêng theo user; disabled feature trả `503 FEATURE_DISABLED`, Azure failure trả `503 SPEECH_PROVIDER_UNAVAILABLE`, vượt giới hạn trả `429 RATE_LIMITED` kèm `Retry-After`.
+
 ### Trả lời interview
 
 ```json

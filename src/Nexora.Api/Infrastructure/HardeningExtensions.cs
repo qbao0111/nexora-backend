@@ -17,6 +17,7 @@ public static class RateLimitPolicies
     public const string Checkout = "checkout";
     public const string AiJob = "ai-job";
     public const string Answer = "answer";
+    public const string SpeechToken = "speech-token";
 }
 
 public sealed class LoginEmailRateLimiter(IConfiguration configuration) : IDisposable
@@ -51,6 +52,7 @@ public sealed class FeatureOptions
     public bool Ai { get; set; } = true;
     public bool Payment { get; set; } = true;
     public bool Upload { get; set; } = true;
+    public bool Speech { get; set; }
 }
 
 public static class HardeningExtensions
@@ -67,6 +69,7 @@ public static class HardeningExtensions
             AddFixedWindow(options, configuration, RateLimitPolicies.Upload, "Upload", 10, 60, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.Checkout, "Checkout", 5, 60, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.AiJob, "AiJob", 10, 60, ByUser);
+            AddFixedWindow(options, configuration, RateLimitPolicies.SpeechToken, "SpeechToken", 10, 15, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.Answer, "Answer", 20, 5,
                 context => $"{ByUser(context)}:{context.Request.RouteValues["id"]}");
             options.OnRejected = async (context, cancellationToken) =>
@@ -144,6 +147,7 @@ public sealed class FeatureGateMiddleware(RequestDelegate next, IOptions<Feature
         if (!options.Upload && path == "/api/v1/uploads/presign") return "upload";
         if (!options.Payment && path == "/api/v1/checkout-sessions") return "payment";
         if (!options.Ai && (path == "/api/v1/resume-analyses" || path.StartsWithSegments("/api/v1/interviews"))) return "AI";
+        if (!options.Speech && path.StartsWithSegments("/api/v1/speech")) return "speech";
         return null;
     }
 }
