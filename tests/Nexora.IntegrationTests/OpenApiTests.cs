@@ -47,6 +47,10 @@ public sealed class OpenApiTests
         Assert.True(paths.GetProperty("/api/v1/me").GetProperty("get").GetProperty("security")[0].TryGetProperty("Bearer", out _));
         Assert.False(paths.GetProperty("/api/v1/auth/login").GetProperty("post").TryGetProperty("security", out _));
         Assert.False(paths.GetProperty("/api/v1/plans").GetProperty("get").TryGetProperty("security", out _));
+        var speechToken = paths.GetProperty("/api/v1/speech/interviews/{interviewId}/token").GetProperty("post");
+        Assert.True(speechToken.GetProperty("security")[0].TryGetProperty("Bearer", out _));
+        Assert.True(speechToken.GetProperty("responses").TryGetProperty("200", out _));
+        Assert.False(speechToken.TryGetProperty("requestBody", out _));
         foreach (var path in new[] { "/api/v1/checkout-sessions", "/api/v1/resume-analyses", "/api/v1/interviews",
                      "/api/v1/interviews/{id}/answers", "/api/v1/interviews/{id}/complete", "/api/v1/me/deletion-requests",
                      "/api/v1/interviews/{id}/report/retry", "/api/v1/dev/resume-analysis" })
