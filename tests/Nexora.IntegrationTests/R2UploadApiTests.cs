@@ -95,6 +95,36 @@ public sealed class R2UploadApiTests
     }
 
     [Fact]
+    public async Task FinalizeReplayCannotResurrectASoftDeletedResume()
+    {
+        var objectClient = new FakeR2ObjectClient(R2Endpoint);
+        using var factory = CreateFactory(objectClient);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var bytes = CreatePdf();
+
+        var intent = await PresignAsync(client, "cv.pdf", PdfContentType, bytes.Length);
+        objectClient.Seed(objectClient.LastPresignKey!, bytes);
+        using var finalize = await client.PostAsJsonAsync("/api/v1/resumes", new { uploadToken = intent.Token });
+        Assert.Equal(HttpStatusCode.Created, finalize.StatusCode);
+        var resumeId = (await DataAsync(finalize)).GetProperty("id").GetGuid();
+
+        using (var delete = await client.DeleteAsync($"/api/v1/resumes/{resumeId}"))
+            Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
+        using var replay = await client.PostAsJsonAsync("/api/v1/resumes", new { uploadToken = intent.Token });
+        Assert.Equal(HttpStatusCode.Conflict, replay.StatusCode);
+        Assert.Contains("RESUME_DELETED", await replay.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(1, await db.Resumes.CountAsync(item => item.UserId == account.UserId));
+        Assert.NotNull(await db.Resumes.Where(item => item.Id == resumeId).Select(item => item.DeletedAt).SingleAsync());
+        Assert.Equal(1, await db.OutboxEvents.CountAsync(item => item.AggregateId == resumeId));
+    }
+
+    [Fact]
     public async Task WrongOwnerCannotFinalizeAndCorruptObjectCreatesNoResume()
     {
         var objectClient = new FakeR2ObjectClient(R2Endpoint);

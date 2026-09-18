@@ -1,7 +1,7 @@
 # API và mô hình dữ liệu
 
 **Status:** Approved implementation baseline  
-**Last updated:** 2026-09-11
+**Last updated:** 2026-09-18
 
 ## Quy ước API
 
@@ -44,6 +44,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/resumes` | Ghi metadata file sau upload. |
 | GET | `/resumes` | Liệt kê CV của owner theo thứ tự mới nhất. |
 | GET | `/resumes/:id` | Đọc trạng thái xử lý CV và lỗi an toàn của owner. |
+| DELETE | `/resumes/:id` | Xoá CV riêng lẻ theo owner; giữ lịch sử phân tích/phỏng vấn. |
 | POST | `/resume-analyses` | Tạo job phân tích CV theo mode `job_targeted` hoặc `field_benchmark`. |
 | GET | `/resume-analyses/:id` | Trạng thái/kết quả phân tích. |
 | POST | `/career-goals` | Tạo Career Goal/Target Role của owner; goal mới trở thành active. |
@@ -104,7 +105,7 @@ Frontend gửi `userId`, `token` và `newPassword` tới `POST /api/v1/auth/rese
 
 ### Export và xoá dữ liệu cá nhân
 
-`GET /api/v1/me/export` chỉ trả core data thuộc owner. `POST /api/v1/me/deletion-requests` tạo audit state `queued → processing → completed|failed`; cùng user và `Idempotency-Key` trả request gốc. Sau khi accepted, access/refresh session hiện tại không còn hợp lệ. Worker xoá private object và personal practice records rồi anonymize Identity account; billing/usage ledger được giữ làm audit theo retention được phê duyệt. Thời hạn retention production vẫn do DEC-03 quyết định.
+`GET /api/v1/me/export` chỉ trả core data thuộc owner; danh sách resume phản ánh library hiện hành và bỏ qua resume đã soft-delete, còn analysis/interview history vẫn được export. `POST /api/v1/me/deletion-requests` tạo audit state `queued → processing → completed|failed`; cùng user và `Idempotency-Key` trả request gốc. Sau khi accepted, access/refresh session hiện tại không còn hợp lệ. Worker xoá private object và personal practice records rồi anonymize Identity account; billing/usage ledger được giữ làm audit theo retention được phê duyệt. Thời hạn retention production vẫn do DEC-03 quyết định.
 
 ### Candidate practice loop navigation
 
@@ -263,9 +264,13 @@ Ranking rule deterministic theo thứ tự: `priority` tăng dần; `EvidenceCou
 
 ### Primary Resume and Career Profile
 
-`GET /api/v1/resumes` requires Bearer authentication and returns `{ "data": [ ... ] }` containing only the authenticated user's `ResumeView` metadata (`id`, `fileName`, `contentType`, `size`, `status`, `createdAt`, and safe failure fields). Results are ordered by `createdAt` descending and then `id` descending. The response never includes extracted CV text, structured profile, storage key, or provider fields; an account with no resumes receives an empty array.
+`GET /api/v1/resumes` requires Bearer authentication and returns `{ "data": [ ... ] }` containing only the authenticated user's non-deleted `ResumeView` metadata (`id`, `fileName`, `contentType`, `size`, `status`, `createdAt`, and safe failure fields). Results are ordered by `createdAt` descending and then `id` descending. The response never includes extracted CV text, structured profile, storage key, or provider fields; an account with no active resumes receives an empty array. `GET /api/v1/resumes/{id}` returns the same safe owner-scoped view, or opaque `404 NOT_FOUND` for unknown, foreign, or soft-deleted IDs.
 
-`PUT /api/v1/me/primary-resume` requires Bearer authentication and accepts `{ "resumeId": "..." }` or `{ "resumeId": null }`. A non-null resume must belong to the authenticated user and have status `ready`; missing, foreign, or unavailable resumes are rejected without revealing ownership. Sending `null` clears the current Primary Resume and returns `200` with `{ "data": null }`; the operation is idempotent and does not change career goals, skill evidence, learning-path history, or resume records. The mutation updates one nullable `primaryResumeId` in `user_profiles` inside a transaction, so selecting the same resume is safe and replacing the previous resume never creates multiple primary rows. The MVP does not auto-select the first resume; the client selects it explicitly after extraction completes. There is currently no standalone resume-delete API; a database delete clears the reference through the foreign key `SET NULL` action.
+`DELETE /api/v1/resumes/{id}` requires Bearer authentication and is owner-scoped. It returns `204 No Content`; an unknown or foreign ID returns the same opaque `404 NOT_FOUND`, while repeating DELETE for an already soft-deleted resume owned by the caller also returns `204`. In one transaction, the service sets the resume tombstone and clears `user_profiles.primary_resume_id` only when it points to that resume. New resume selections, analyses, interviews and profile/evidence computations exclude tombstoned resumes. Existing `resume_analyses`, `interview_sessions`, snapshots and reports remain intact as history; account deletion retains its independent full-account cleanup behavior.
+
+Physical storage removal is asynchronous and provider-neutral: a worker calls `IStorageProvider.DeleteAsync` with the server-owned stored key, persists completion/attempt/next-attempt state, and retries failures with capped exponential backoff without a terminal attempt limit. Cleanup is deferred while that resume's extraction job is pending or processing; a queued analysis or interview that has not started before deletion is finalized without starting new AI work, with any quota reservation voided. The extraction/analysis/interview job that crossed its start gate before deletion may finish but cannot make a tombstoned resume visible again. The resume emits the existing `resourceChanged` event with status `deleted`; clients invalidate/prune that resume and refetch `/api/v1/me/career-profile` because its Primary Resume may have been cleared. The client should treat `404` from the canonical resume refetch as deletion, not as a transient failure.
+
+`PUT /api/v1/me/primary-resume` requires Bearer authentication and accepts `{ "resumeId": "..." }` or `{ "resumeId": null }`. A non-null resume must belong to the authenticated user, be non-deleted, and have status `ready`; missing, foreign, deleted, or unavailable resumes are rejected without revealing ownership. Sending `null` clears the current Primary Resume and returns `200` with `{ "data": null }`; the operation is idempotent and does not change career goals, skill evidence, learning-path history, or resume records. The mutation updates one nullable `primaryResumeId` in `user_profiles` inside a transaction, so selecting the same resume is safe and replacing the previous resume never creates multiple primary rows. The MVP does not auto-select the first resume; the client selects it explicitly after extraction completes.
 
 `PATCH /api/v1/me/profile` requires Bearer authentication and accepts a partial `{ "displayName": "...", "yearsOfExperience": 2 }` body. A supplied display name is trimmed, non-empty and at most 120 characters; a supplied years value is an integer from 0 through 60. Omitted fields remain unchanged, repeated values are safe, and email is not writable. The response preserves the existing `UserResponse` fields (`id`, `email`, `displayName`, `roles`, and nullable `billing`, which remains null for this update) and additively includes nullable `yearsOfExperience`; identity fields are always taken from the authenticated account.
 

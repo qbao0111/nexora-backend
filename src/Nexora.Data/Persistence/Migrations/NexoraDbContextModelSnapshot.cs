@@ -1981,6 +1981,9 @@ namespace Nexora.Data.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("ExtractedText")
                         .HasColumnType("text");
 
@@ -2000,6 +2003,15 @@ namespace Nexora.Data.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
+
+                    b.Property<int>("StorageDeleteAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("StorageDeleteNextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("StorageDeletedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("StoredFileId")
                         .HasColumnType("uuid");
@@ -2022,6 +2034,8 @@ namespace Nexora.Data.Persistence.Migrations
                         .IsUnique();
 
                     b.HasIndex("UserId", "CreatedAt");
+
+                    b.HasIndex("DeletedAt", "StorageDeletedAt", "StorageDeleteNextAttemptAt");
 
                     b.ToTable("resumes", (string)null);
                 });

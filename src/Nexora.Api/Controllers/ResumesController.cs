@@ -24,4 +24,11 @@ public sealed class ResumesController(IPracticeService practiceService) : Contro
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<ApiResponse<ResumeView>>> Get(Guid id, CancellationToken cancellationToken) =>
         Ok(new ApiResponse<ResumeView>(await practiceService.GetResumeAsync(User.GetRequiredUserId(), id, cancellationToken)));
+
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
+    {
+        await practiceService.DeleteResumeAsync(User.GetRequiredUserId(), id, cancellationToken);
+        return NoContent();
+    }
 }

@@ -434,6 +434,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.HasKey(resume => resume.Id);
             entity.HasIndex(resume => new { resume.UserId, resume.CreatedAt });
             entity.HasIndex(resume => resume.StoredFileId).IsUnique();
+            entity.HasIndex(resume => new { resume.DeletedAt, resume.StorageDeletedAt, resume.StorageDeleteNextAttemptAt });
             entity.Property(resume => resume.Status).HasMaxLength(20).IsRequired();
             entity.Property(resume => resume.StructuredProfile).HasColumnType("jsonb");
             entity.Property(resume => resume.ProfileModelVersion).HasMaxLength(80);

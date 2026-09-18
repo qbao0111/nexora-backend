@@ -32,7 +32,7 @@ public sealed partial class PrivacyService(
             .SingleOrDefaultAsync(item => item.Id == userId && item.DeletionRequestedAt == null && item.DeletedAt == null, cancellationToken)
             ?? throw NotFound();
         var resumes = await dbContext.Resumes.AsNoTracking().Include(item => item.StoredFile)
-            .Where(item => item.UserId == userId).ToArrayAsync(cancellationToken);
+            .Where(item => item.UserId == userId && item.DeletedAt == null).ToArrayAsync(cancellationToken);
         var jobDescriptions = await dbContext.JobDescriptions.AsNoTracking().Where(item => item.UserId == userId)
             .ToArrayAsync(cancellationToken);
         var careerGoals = await dbContext.CareerGoals.AsNoTracking().Where(item => item.UserId == userId)

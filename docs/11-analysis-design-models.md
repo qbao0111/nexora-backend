@@ -1,8 +1,8 @@
 # Analysis and Design Models — Nexora
 
-**Status:** Approved planned-design baseline  
-**Last updated:** 2026-08-21  
-Các diagram/spec dưới đây mô tả mục tiêu implementation .NET 10, không phải bằng chứng rằng backend đã tồn tại.
+**Status:** Approved planned-design baseline; source-consistency appendix included
+**Last updated:** 2026-09-18
+Các diagram/spec dưới đây mô tả mục tiêu implementation .NET 10; appendix phân biệt source evidence hiện có với design còn lại.
 
 ## 1. System scope
 
@@ -47,7 +47,7 @@ flowchart LR
 | UC-01 | Guest | None | Authenticated session/profile exists. |
 | UC-02 | Guest | None | Demo/plan shown; no personal data created. |
 | UC-03 | Candidate | Authenticated | Profile/consent updated or deletion request tracked. |
-| UC-04 | Candidate | Authenticated | Private resume/JD record and job state exist. |
+| UC-04 | Candidate | Authenticated | Private resume/JD record and job state exist, or an owner resume is tombstoned with history retained. |
 | UC-05 | Candidate | Resume/JD valid + entitlement | Async analysis is queued/completed. |
 | UC-06 | Candidate | Context valid + quota | One session becomes `active` with one persisted first question and consumed reservation. |
 | UC-07 | Candidate | Own active session | Answer persists; session/report progresses exactly once. |
@@ -72,7 +72,7 @@ flowchart LR
 4. `ResumeService` persists `stored_file` + `resume` with state `uploaded` and writes extraction outbox event.
 5. Worker validates/extracts text and changes resume to `ready`, or to `failed` with safe error code.
 
-**Alternative sequences:** invalid MIME/size → 400 without record; expired signed URL → request new intent; extraction failure → resume remains accessible for retry/delete but cannot start analysis.  
+**Alternative sequences:** invalid MIME/size → 400 without record; expired signed URL → request new intent; extraction failure → resume remains accessible for retry/delete but cannot start analysis; owner `DELETE /api/v1/resumes/{id}` → transactional tombstone and Primary Resume clear, `204` even on repeat, then durable provider-neutral object cleanup retries while history rows remain. Unknown/foreign IDs return the same `404`; new selectors exclude tombstones and queued analysis/interview jobs do not start new AI work from one.
 **Postconditions:** no public URL is stored; only owner can request download/analysis.
 
 ### UC-06 — Start mock interview
@@ -252,8 +252,15 @@ When backend exists, add implementation evidence: source path, concrete particip
 | FR-AUTH-01..04 | UC-01/03 | Auth/Profile service | T-01, T-02, T-09 |
 | FR-BILL-01..07 | UC-10/12 | BillingService | T-03, T-04, T-05 |
 | FR-CV-01..04 | UC-04/05 | ResumeService/worker | T-06, T-07 |
+| FR-CV-06 | UC-04 | PracticeService, CareerProfileService, privacy export, worker | T-11 |
 | FR-INT-01..04 | UC-06/07/08 | InterviewService/worker | T-03, T-07, T-08 |
 | FR-PRAC-01..02 | UC-09 | StarService/ScenarioService | owner isolation test |
 | FR-ADM-01 | UC-11 | Admin policy/Billing support | admin 403/audit test |
 | NFR-PERF-01 | All APIs | API + worker topology | k6 baseline results |
 | NFR-PRIV-01 | UC-03/04 | deletion/storage lifecycle | T-09, retention review |
+
+## Appendix A — Source consistency review — 2026-09-18
+
+FR-CV-06 is implemented as owner-scoped `DELETE /api/v1/resumes/{id}` in `ResumesController` and `PracticeService`. `ResumeRecord` stores the soft-delete tombstone and durable object-cleanup retry state through the additive `ResumeDeletionAndStorageCleanup` migration. `CareerProfileService` clears/filters Primary Resume, `SkillProfileService` excludes evidence from deleted resumes, and `PrivacyService.ExportAsync` excludes deleted resumes from the current library while preserving analysis/interview history. The practice worker defers object deletion while extraction is pending/processing, uses `IStorageProvider`, and skips queued analysis/interview work when deletion wins the start gate.
+
+Automated source evidence is in `CareerProfileApiTests.ResumeDeleteIsOwnerScopedIdempotentAndPreservesHistory`, `RealtimeWorkerTests.DeletedResumeSkipsQueuedWorkAndRetriesProviderNeutralObjectCleanup`, `RealtimeWorkerTests.ResumeStorageCleanupDefersWhileExtractionOutboxIsProcessing`, `PrivacyApiTests.DeletedResumeExportOmitsCurrentLibraryButRetainsSafeAnalysisHistory`, and `R2UploadApiTests.FinalizeReplayCannotResurrectASoftDeletedResume`. This appendix does not claim a production migration rollout, live PostgreSQL concurrency test, external storage call, or deployment verification.

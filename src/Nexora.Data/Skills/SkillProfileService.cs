@@ -16,7 +16,7 @@ public sealed class SkillProfileService(NexoraDbContext dbContext) : ISkillProfi
     public async Task<SkillProfileView> GetAsync(Guid userId, CancellationToken cancellationToken)
     {
         var resumeAnalyses = await dbContext.ResumeAnalyses.AsNoTracking()
-            .Where(item => item.UserId == userId && item.Status == PracticeValues.Completed && item.Result != null)
+            .Where(item => item.UserId == userId && item.Status == PracticeValues.Completed && item.Result != null && item.Resume.DeletedAt == null)
             .Select(item => new ResumeAnalysisRow(item.Id, item.Mode, item.Result, item.CompletedAt, item.UpdatedAt))
             .ToArrayAsync(cancellationToken);
 

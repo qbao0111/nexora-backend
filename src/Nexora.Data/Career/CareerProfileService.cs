@@ -43,7 +43,7 @@ public sealed class CareerProfileService(
         }
 
         var resume = await dbContext.Resumes.AsNoTracking()
-            .Where(item => item.Id == resumeId.Value && item.UserId == userId)
+            .Where(item => item.Id == resumeId.Value && item.UserId == userId && item.DeletedAt == null)
             .Select(item => new PrimaryResumeRow(item.Id, item.StoredFile.FileName, item.Status, item.CreatedAt))
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw NotFound();
@@ -144,7 +144,7 @@ public sealed class CareerProfileService(
         if (primaryResumeId is not { } resumeId) return null;
 
         var resume = await dbContext.Resumes.AsNoTracking()
-            .Where(item => item.Id == resumeId && item.UserId == userId && item.Status == PracticeValues.Ready)
+            .Where(item => item.Id == resumeId && item.UserId == userId && item.DeletedAt == null && item.Status == PracticeValues.Ready)
             .Select(item => new PrimaryResumeRow(item.Id, item.StoredFile.FileName, item.Status, item.CreatedAt))
             .SingleOrDefaultAsync(cancellationToken);
         if (resume is null) return null;

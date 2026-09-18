@@ -1,7 +1,7 @@
 # Realtime resource notifications
 
 SignalR is an optional invalidation channel. REST remains the only command/query
-API and source of truth. This addition supports FR-AUTH-02/03, FR-CV-03,
+API and source of truth. This addition supports FR-AUTH-02/03, FR-CV-03/06,
 FR-INT-02/04 and NFR-REL/OBS without changing their existing business rules.
 
 ## Connection and authentication
@@ -47,6 +47,7 @@ answers, evaluation, report, provider information or secrets.
 | Resource type | Status | Canonical REST refetch |
 | --- | --- | --- |
 | `resume` | `ready`, `failed` | `GET /api/v1/resumes/{id}` |
+| `resume` | `deleted` | `GET /api/v1/resumes/{id}` returns owner-scoped 404; prune the resume and also refetch `/api/v1/me/career-profile` to reconcile Primary Resume. |
 | `resumeAnalysis` | `completed`, `failed` | `GET /api/v1/resume-analyses/{id}` |
 | `interview` | `active`, `failed` | `GET /api/v1/interviews/{id}` |
 | `interview` | `completed` | `GET /api/v1/interviews/{id}/report` (or interview state if that is the mounted view) |

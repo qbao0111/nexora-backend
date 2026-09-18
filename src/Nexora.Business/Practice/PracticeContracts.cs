@@ -557,6 +557,7 @@ public interface IPracticeService
         Guid userId, Stream content, string fileName, string contentType, long size, string jobDescription, string idempotencyKey,
         CancellationToken cancellationToken);
     Task<ResumeView> CreateResumeAsync(Guid userId, string uploadToken, CancellationToken cancellationToken);
+    Task DeleteResumeAsync(Guid userId, Guid resumeId, CancellationToken cancellationToken);
     Task<IReadOnlyList<ResumeView>> GetResumesAsync(Guid userId, CancellationToken cancellationToken);
     Task<ResumeView> GetResumeAsync(Guid userId, Guid resumeId, CancellationToken cancellationToken);
     Task<JobDescriptionView> CreateJobDescriptionAsync(Guid userId, string title, string content, CancellationToken cancellationToken, string? idempotencyKey = null);

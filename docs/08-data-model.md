@@ -1,7 +1,7 @@
 # Data Model Specification — Nexora
 
 **Status:** Approved implementation baseline; retention values deferred  
-**Last updated:** 2026-09-12
+**Last updated:** 2026-09-18
 
 ## 1. Aggregates và ownership
 
@@ -26,7 +26,7 @@ ApplicationUser 1--N Subscription 1--N Entitlement 1--N UsageEvent
 | `orders`, `payment_events` | Payment lifecycle | unique provider event/transaction ID. |
 | `subscriptions`, `entitlements` | Quyền theo thời hạn | Có `starts_at`, `ends_at`, `status`, snapshot. |
 | `usage_events` | Ledger reserve/consume/void/adjustment quota | immutable, unique idempotency key. |
-| `resumes`, `stored_files` | CV file + extracted text | `storage_key` private; checksum, MIME, scan/extract state. |
+| `resumes`, `stored_files` | CV file + extracted text | `storage_key` private; checksum, MIME, scan/extract state; `DeletedAt` tombstone and durable storage cleanup state (`StorageDeletedAt`, attempts, next attempt). |
 | `upload_intents` | Durable browser-upload capability state | owner-scoped token hash, private storage key, expected/actual size, expiry, checksum and finalized timestamp; unique token/storage-key constraints. |
 | `job_descriptions`, `resume_analyses` | JD và output analysis | input snapshot/model/prompt version. |
 | `interview_sessions`, `interview_questions`, `interview_answers`, `interview_reports` | Practice loop | answer unique per official question, session state machine. `kind` is `primary` or `followup`; `topic` is explicit and `parent_question_id` links a follow-up to its parent. |
@@ -69,7 +69,9 @@ B12 adds no persisted model. `GET /api/v1/recommendations/next` flattens the aut
 
 ### Primary Resume and Career Profile read model
 
-`user_profiles.primary_resume_id` is a nullable owner-side reference to `resumes.id`, with an index and a `SET NULL` foreign key action when a resume is deleted. `user_profiles.years_of_experience` is a nullable integer constrained by the application to 0 through 60; the nullable column preserves existing profiles. The service only permits an authenticated owner to select a `ready` resume, so each user has zero or one explicit Primary Resume without an `IsPrimary` column on every resume. The MVP does not auto-select a newly uploaded resume; the client calls `PUT /api/v1/me/primary-resume` after extraction is ready, while `PATCH /api/v1/me/profile` updates only display name and years of experience. Career Profile is an aggregate read model, not a new table: `GET /api/v1/me/career-profile` composes identity/profile, the explicit Primary Resume, that resume's latest analysis, active Career Goal, computed Skill Profile summary, and the Learning Path for the active goal. It is read-only, does not create a path, and does not copy CV, AI, or practice content. Onboarding `isComplete` requires display name, years of experience, Primary Resume and active Career Goal; avatar, JD, target company, skill evidence and Learning Path remain optional.
+`user_profiles.primary_resume_id` is a nullable owner-side reference to `resumes.id`, with an index and a `SET NULL` foreign key action for physical deletion. `user_profiles.years_of_experience` is a nullable integer constrained by the application to 0 through 60; the nullable column preserves existing profiles. The service only permits an authenticated owner to select a non-deleted `ready` resume, so each user has zero or one explicit Primary Resume without an `IsPrimary` column on every resume. The MVP does not auto-select a newly uploaded resume; the client calls `PUT /api/v1/me/primary-resume` after extraction is ready, while `PATCH /api/v1/me/profile` updates only display name and years of experience. Career Profile is an aggregate read model, not a new table: `GET /api/v1/me/career-profile` composes identity/profile, the explicit Primary Resume, that resume's latest analysis, active Career Goal, computed Skill Profile summary, and the Learning Path for the active goal. It is read-only, does not create a path, and does not copy CV, AI, or practice content. Onboarding `isComplete` requires display name, years of experience, Primary Resume and active Career Goal; avatar, JD, target company, skill evidence and Learning Path remain optional.
+
+`DELETE /api/v1/resumes/{id}` is an owner-scoped soft-delete transition. In the same transaction as setting `resumes.DeletedAt`, the service clears a matching `user_profiles.PrimaryResumeId`; this explicit clearing is required because the row is retained, so the physical foreign-key `SET NULL` action does not run. Reads and selectors for the current resume library exclude tombstoned rows. The retained resume row and restrictive foreign keys preserve `ResumeAnalysis` and `InterviewSession` history. `StorageDeletedAt`, `StorageDeleteAttempts`, and `StorageDeleteNextAttemptAt` durably track provider-neutral object removal retries; due cleanup is leased with a compare-and-set update and uses capped exponential backoff without a terminal attempt limit. The worker defers removal while extraction is pending/processing and skips queued analysis/interview AI work when their resume was deleted before the worker start gate. `SkillProfile` excludes analysis evidence from a deleted resume, while historical analysis/interview reads and exports remain available; the current resume-library portion of the privacy export excludes deleted resumes. Account deletion continues to enumerate stored-file metadata, so already-removed objects are safely handled by idempotent provider deletion.
 
 ### Progress Dashboard v2 read model
 
