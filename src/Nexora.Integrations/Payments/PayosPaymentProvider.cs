@@ -52,6 +52,11 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
         return GenerateOrderCode().ToString(CultureInfo.InvariantCulture);
     }
 
+    public CheckoutAction? RestoreCheckoutAction(string checkoutUrl) =>
+        IsValidCheckoutUrl(checkoutUrl)
+            ? new CheckoutAction("GET", checkoutUrl, Array.Empty<CheckoutFormField>())
+            : null;
+
     public void Dispose() => _client.Dispose();
 
     public async Task<PaymentCheckout> CreateCheckoutAsync(PaymentOrderRequest request, CancellationToken cancellationToken)
@@ -146,16 +151,45 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
         if (!TryParseWebhookTimestamp(data.TransactionDateTime, out var occurredAt)) throw InvalidPayload();
 
         var orderCode = data.OrderCode.ToString(CultureInfo.InvariantCulture);
+        if (data.OrderCode < MinimumGeneratedOrderCode)
+        {
+            return new VerifiedPaymentEvent(
+                BuildProviderEventId("webhook", orderCode, paymentLinkId, reference),
+                null,
+                orderCode,
+                data.Amount,
+                "VND",
+                false,
+                false,
+                occurredAt,
+                true);
+        }
+
+        var paymentLink = await GetPaymentLinkForWebhookAsync(data.OrderCode, cancellationToken);
+        ValidateWebhookPaymentLink(paymentLink, data, paymentLinkId);
+
+        var paidAmountMatchesLink = paymentLink.AmountPaid == paymentLink.Amount;
+        if (paymentLink.Status == PaymentLinkStatus.Paid && paidAmountMatchesLink && data.Amount != paymentLink.AmountPaid)
+            throw AmountMismatch();
+
+        var isPaid = paymentLink.Status == PaymentLinkStatus.Paid && paidAmountMatchesLink;
+        var isFinal = isPaid || paymentLink.Status is PaymentLinkStatus.Cancelled or PaymentLinkStatus.Expired or PaymentLinkStatus.Failed;
         return new VerifiedPaymentEvent(
-            BuildProviderEventId("webhook", orderCode, paymentLinkId, reference),
+            BuildProviderEventId(
+                "webhook",
+                orderCode,
+                paymentLink.Id,
+                reference,
+                paymentLink.Status.ToString(),
+                paymentLink.AmountPaid.ToString(CultureInfo.InvariantCulture)),
             null,
             orderCode,
-            data.Amount,
+            paymentLink.Amount,
             "VND",
-            true,
-            true,
+            isPaid,
+            isFinal,
             occurredAt,
-            data.OrderCode < MinimumGeneratedOrderCode);
+            false);
     }
 
     public async Task<VerifiedPaymentEvent?> QueryPaymentAsync(PaymentOrderRequest request, CancellationToken cancellationToken)
@@ -251,6 +285,53 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
             throw InvalidResponse();
         if (response.Amount != request.AmountMinor)
             throw AmountMismatch();
+    }
+
+    private async Task<PaymentLink> GetPaymentLinkForWebhookAsync(long orderCode, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _client.PaymentRequests.GetAsync(
+                orderCode,
+                new RequestOptions
+                {
+                    CancellationToken = cancellationToken,
+                    MaxRetries = 0
+                });
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw ProviderUnavailable();
+        }
+        catch (HttpRequestException)
+        {
+            throw ProviderUnavailable();
+        }
+        catch (ApiException exception) when (exception.StatusCode == 404)
+        {
+            throw InvalidPayload();
+        }
+        catch (ApiException exception)
+        {
+            throw MapQueryException(exception);
+        }
+        catch (PayOSException)
+        {
+            throw QueryFailed();
+        }
+        catch (JsonException)
+        {
+            throw InvalidResponse();
+        }
+    }
+
+    private static void ValidateWebhookPaymentLink(PaymentLink? response, WebhookData data, string paymentLinkId)
+    {
+        if (response is null || response.OrderCode != data.OrderCode ||
+            !IsValidIdentifier(response.Id) ||
+            !string.Equals(response.Id, paymentLinkId, StringComparison.Ordinal) ||
+            response.Amount <= 0 || response.AmountPaid < 0 || response.AmountRemaining < 0)
+            throw InvalidResponse();
     }
 
     private static bool IsSuccessCode(string? value) => string.Equals(value, "00", StringComparison.Ordinal);

@@ -554,6 +554,9 @@ namespace Nexora.Data.Persistence.Migrations
                     b.Property<long>("AmountMinor")
                         .HasColumnType("bigint");
 
+                    b.Property<string>("CheckoutActionSnapshot")
+                        .HasColumnType("jsonb");
+
                     b.Property<string>("CheckoutUrl")
                         .IsRequired()
                         .HasMaxLength(2048)

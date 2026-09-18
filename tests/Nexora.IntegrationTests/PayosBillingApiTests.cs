@@ -52,7 +52,7 @@ public sealed class PayosBillingApiTests : IDisposable
     }
 
     [Fact]
-    public async Task CheckoutPersistsNumericPayosOrderCodeAndReusesItForIdempotentRetry()
+    public async Task CheckoutCreatesPayosPaymentLinkOnceAndReturnsPersistedActionForRetryAndRead()
     {
         using var client = _factory.CreateHttpsClient();
         var account = await RegisterAsync(client);
@@ -60,12 +60,23 @@ public sealed class PayosBillingApiTests : IDisposable
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
 
         var first = await CreateCheckoutAsync(client, price.Id, "payos-checkout");
+        Assert.Single(_handler.CreatedOrderCodes);
         var second = await CreateCheckoutAsync(client, price.Id, "payos-checkout");
 
         Assert.Equal(first.OrderId, second.OrderId);
         Assert.Equal(first.CheckoutUrl, second.CheckoutUrl);
-        Assert.Equal(2, _handler.CreatedOrderCodes.Count);
-        Assert.Single(_handler.CreatedOrderCodes.Distinct());
+        Assert.Single(_handler.CreatedOrderCodes);
+
+        using (var existing = await client.GetAsync($"/api/v1/checkout-sessions/{first.OrderId}"))
+        {
+            Assert.Equal(HttpStatusCode.OK, existing.StatusCode);
+            using var json = JsonDocument.Parse(await existing.Content.ReadAsStringAsync());
+            var action = json.RootElement.GetProperty("data").GetProperty("checkout");
+            Assert.Equal("GET", action.GetProperty("method").GetString());
+            Assert.Equal(first.CheckoutUrl, action.GetProperty("url").GetString());
+            Assert.Empty(action.GetProperty("fields").EnumerateArray());
+        }
+        Assert.Single(_handler.CreatedOrderCodes);
 
         using var scope = _factory.Services.CreateScope();
         var order = await scope.ServiceProvider.GetRequiredService<NexoraDbContext>().Orders.SingleAsync(item => item.Id == first.OrderId);
@@ -95,6 +106,31 @@ public sealed class PayosBillingApiTests : IDisposable
         Assert.Equal(1, await db.Subscriptions.CountAsync(item => item.OrderId == checkout.OrderId));
         Assert.Equal(1, await db.Entitlements.CountAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free"));
         Assert.Equal(BillingValues.Fulfilled, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
+    }
+
+    [Theory]
+    [InlineData(PaymentLinkStatus.Pending, 0L)]
+    [InlineData(PaymentLinkStatus.Processing, 0L)]
+    [InlineData(PaymentLinkStatus.Underpaid, 50_000L)]
+    public async Task ValidNonFinalWebhookIsAcknowledgedAndKeepsOrderPendingWithoutEntitlement(PaymentLinkStatus providerStatus, long amountPaid)
+    {
+        using var client = _factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var price = await SeedPlanPriceAsync(1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var checkout = await CreateCheckoutAsync(client, price.Id, $"payos-non-final-{providerStatus}");
+        _handler.QueryStatus = providerStatus;
+        _handler.QueryAmountPaid = amountPaid;
+
+        using var response = await SendWebhookAsync(client, checkout.OrderId, amount: amountPaid == 0 ? 123_000 : amountPaid);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(BillingValues.Pending, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
+        Assert.Single(await db.PaymentEvents.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
+        Assert.Empty(await db.Subscriptions.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
+        Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free").ToListAsync());
     }
 
     [Fact]
@@ -217,7 +253,7 @@ public sealed class PayosBillingApiTests : IDisposable
             Reference = "PAYOS-INTEGRATION-REFERENCE",
             TransactionDateTime = "2026-09-18 10:30:00",
             Currency = "VND",
-            PaymentLinkId = "integration-payment-link",
+            PaymentLinkId = $"link-{orderCode}",
             Code = "00",
             Description2 = "success",
             CounterAccountBankId = string.Empty,
@@ -246,7 +282,8 @@ public sealed class PayosBillingApiTests : IDisposable
     private sealed class PayosHttpHandler : HttpMessageHandler
     {
         public List<string> CreatedOrderCodes { get; } = [];
-        public PaymentLinkStatus QueryStatus { get; set; } = PaymentLinkStatus.Pending;
+        public PaymentLinkStatus QueryStatus { get; set; } = PaymentLinkStatus.Paid;
+        public long? QueryAmountPaid { get; set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -273,7 +310,7 @@ public sealed class PayosBillingApiTests : IDisposable
             {
                 var orderCodeText = request.RequestUri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries).Last();
                 var orderCode = long.Parse(orderCodeText, CultureInfo.InvariantCulture);
-                var amountPaid = QueryStatus == PaymentLinkStatus.Paid ? 123_000 : 0;
+                var amountPaid = QueryAmountPaid ?? (QueryStatus == PaymentLinkStatus.Paid ? 123_000 : 0);
                 return SignedResponse(new PaymentLink
                 {
                     Id = $"link-{orderCode}",

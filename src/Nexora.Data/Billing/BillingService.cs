@@ -16,6 +16,7 @@ public sealed partial class BillingService(
     ILogger<BillingService> logger) : IBillingService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private const int MaximumProviderTransactionIdAttempts = 5;
 
     private static int? Available(int? limit, int reserved, int consumed, int adjustment) =>
         limit is null ? null : limit.Value + adjustment - reserved - consumed;
@@ -56,120 +57,45 @@ public sealed partial class BillingService(
             ?? throw new BusinessException("PLAN_PRICE_NOT_FOUND", "Gói hoặc mức giá không còn khả dụng.", BusinessErrorKind.NotFound);
         if (price.AmountMinor == 0 || price.DurationDays is null)
             throw new BusinessException("CHECKOUT_NOT_REQUIRED", "Gói miễn phí không cần thanh toán.", BusinessErrorKind.Validation);
-        var now = timeProvider.GetUtcNow();
-        var orderId = Guid.NewGuid();
-        var providerTransactionId = paymentProvider.CreateProviderTransactionId(orderId);
         var featuresSnapshot = price.Features
             .Where(feature => !string.Equals(feature.FeatureDefinition.Code, FeatureValues.Interview, StringComparison.OrdinalIgnoreCase))
             .Select(feature => new PlanFeatureSnapshot(
                 feature.FeatureDefinition.Code, feature.IsEnabled, feature.Limit)).ToArray();
-        var order = new Order
-        {
-            Id = orderId,
-            UserId = userId,
-            PlanPriceId = price.Id,
-            PlanCodeSnapshot = price.Plan.Code,
-            AmountMinor = price.AmountMinor,
-            Currency = price.Currency,
-            DurationDays = price.DurationDays,
-            InterviewQuota = price.InterviewQuota,
-            FeaturesSnapshot = JsonSerializer.Serialize(featuresSnapshot, JsonOptions),
-            Status = BillingValues.Processing,
-            PaymentProvider = paymentProvider.ProviderName,
-            ProviderTransactionId = providerTransactionId,
-            CheckoutUrl = string.Empty,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
+        var featuresSnapshotJson = JsonSerializer.Serialize(featuresSnapshot, JsonOptions);
 
-        Order targetOrder;
-        var transaction = await BeginTransactionAsync(cancellationToken);
-        if (transaction is null)
+        for (var attempt = 0; attempt < MaximumProviderTransactionIdAttempts; attempt++)
         {
-            existing = await FindCheckoutAsync(userId, key, fingerprint, cancellationToken);
-            if (existing is not null)
-            {
-                targetOrder = existing;
-            }
-            else
-            {
-                dbContext.Orders.Add(order);
-                dbContext.IdempotencyRecords.Add(new IdempotencyRecord
-                {
-                    Id = Guid.NewGuid(),
-                    ActorId = userId,
-                    Operation = "checkout.create",
-                    Key = key,
-                    RequestFingerprint = fingerprint,
-                    ResourceId = order.Id,
-                    CreatedAt = now
-                });
-                dbContext.OutboxEvents.Add(CreateOutbox("CheckoutCreated", "order", order.Id, new { order.Id, order.UserId }, now));
-                try
-                {
-                    await dbContext.SaveChangesAsync(cancellationToken);
-                    targetOrder = order;
-                }
-                catch (DbUpdateException)
-                {
-                    dbContext.ChangeTracker.Clear();
-                    var reloaded = await FindCheckoutAsync(userId, key, fingerprint, cancellationToken);
-                    if (reloaded is null) throw;
-                    targetOrder = reloaded;
-                }
-            }
-        }
-        else
-        {
-            var rolledBack = false;
-            DbUpdateException? capturedConflict = null;
-            await using (transaction)
-            {
-                existing = await FindCheckoutAsync(userId, key, fingerprint, cancellationToken);
-                if (existing is not null)
-                {
-                    targetOrder = existing;
-                }
-                else
-                {
-                    dbContext.Orders.Add(order);
-                    dbContext.IdempotencyRecords.Add(new IdempotencyRecord
-                    {
-                        Id = Guid.NewGuid(),
-                        ActorId = userId,
-                        Operation = "checkout.create",
-                        Key = key,
-                        RequestFingerprint = fingerprint,
-                        ResourceId = order.Id,
-                        CreatedAt = now
-                    });
-                    dbContext.OutboxEvents.Add(CreateOutbox("CheckoutCreated", "order", order.Id, new { order.Id, order.UserId }, now));
-                    try
-                    {
-                        await dbContext.SaveChangesAsync(cancellationToken);
-                        await transaction.CommitAsync(cancellationToken);
-                        targetOrder = order;
-                    }
-                    catch (DbUpdateException ex)
-                    {
-                        await transaction.RollbackAsync(cancellationToken);
-                        rolledBack = true;
-                        capturedConflict = ex;
-                        targetOrder = null!;
-                    }
-                }
-            }
+            var now = timeProvider.GetUtcNow();
+            var orderId = Guid.NewGuid();
+            var providerTransactionId = paymentProvider.CreateProviderTransactionId(orderId);
+            if (string.IsNullOrWhiteSpace(providerTransactionId) || providerTransactionId.Length > 160)
+                throw new BusinessException("PAYMENT_REFERENCE_INVALID", "Không thể tạo tham chiếu thanh toán hợp lệ.", BusinessErrorKind.ExternalFailure);
 
-            if (rolledBack)
+            var order = new Order
             {
-                dbContext.ChangeTracker.Clear();
-                var reloaded = await FindCheckoutAsync(userId, key, fingerprint, cancellationToken);
-                if (reloaded is null) throw (Exception?)capturedConflict ?? new InvalidOperationException("Checkout record missing after conflict.");
-                targetOrder = reloaded;
-            }
+                Id = orderId,
+                UserId = userId,
+                PlanPriceId = price.Id,
+                PlanCodeSnapshot = price.Plan.Code,
+                AmountMinor = price.AmountMinor,
+                Currency = price.Currency,
+                DurationDays = price.DurationDays,
+                InterviewQuota = price.InterviewQuota,
+                FeaturesSnapshot = featuresSnapshotJson,
+                Status = BillingValues.Processing,
+                PaymentProvider = paymentProvider.ProviderName,
+                ProviderTransactionId = providerTransactionId,
+                CheckoutUrl = string.Empty,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            var targetOrder = await TryPersistCheckoutOrderAsync(order, key, fingerprint, now, cancellationToken);
+            if (targetOrder is not null)
+                return await EnsureProviderCheckoutAsync(targetOrder, ipAddress, cancellationToken);
         }
 
-        return await EnsureProviderCheckoutAsync(targetOrder, ipAddress, cancellationToken);
+        throw new BusinessException("PAYMENT_REFERENCE_COLLISION", "Không thể tạo tham chiếu thanh toán. Vui lòng thử lại.", BusinessErrorKind.Conflict);
     }
 
     public async Task<CheckoutStatus> GetCheckoutAsync(Guid userId, Guid orderId, CancellationToken cancellationToken)
@@ -573,30 +499,111 @@ public sealed partial class BillingService(
         return await dbContext.Orders.AsNoTracking().SingleAsync(order => order.Id == record.ResourceId, cancellationToken);
     }
 
+    private async Task<Order?> TryPersistCheckoutOrderAsync(
+        Order order,
+        string idempotencyKey,
+        string fingerprint,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var transaction = await BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var existing = await FindCheckoutAsync(order.UserId, idempotencyKey, fingerprint, cancellationToken);
+            if (existing is not null) return existing;
+
+            var providerReferenceExists = await dbContext.Orders.AsNoTracking().AnyAsync(item =>
+                item.PaymentProvider == order.PaymentProvider &&
+                item.ProviderTransactionId == order.ProviderTransactionId,
+                cancellationToken);
+            if (providerReferenceExists) return null;
+
+            dbContext.Orders.Add(order);
+            dbContext.IdempotencyRecords.Add(new IdempotencyRecord
+            {
+                Id = Guid.NewGuid(),
+                ActorId = order.UserId,
+                Operation = "checkout.create",
+                Key = idempotencyKey,
+                RequestFingerprint = fingerprint,
+                ResourceId = order.Id,
+                CreatedAt = now
+            });
+            dbContext.OutboxEvents.Add(CreateOutbox("CheckoutCreated", "order", order.Id, new { order.Id, order.UserId }, now));
+
+            try
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await CommitAsync(transaction, cancellationToken);
+                return order;
+            }
+            catch (DbUpdateException)
+            {
+                if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
+                dbContext.ChangeTracker.Clear();
+
+                existing = await FindCheckoutAsync(order.UserId, idempotencyKey, fingerprint, cancellationToken);
+                if (existing is not null) return existing;
+
+                providerReferenceExists = await dbContext.Orders.AsNoTracking().AnyAsync(item =>
+                    item.PaymentProvider == order.PaymentProvider &&
+                    item.ProviderTransactionId == order.ProviderTransactionId,
+                    cancellationToken);
+                if (providerReferenceExists) return null;
+                throw;
+            }
+        }
+        finally
+        {
+            if (transaction is not null) await transaction.DisposeAsync();
+        }
+    }
+
     private async Task<CheckoutSession> EnsureProviderCheckoutAsync(Order order, string? ipAddress, CancellationToken cancellationToken)
     {
         if (!string.Equals(order.PaymentProvider, paymentProvider.ProviderName, StringComparison.Ordinal))
             throw new BusinessException("PAYMENT_PROVIDER_NOT_SUPPORTED", "Cổng thanh toán không được hỗ trợ.", BusinessErrorKind.NotFound);
         if (order.Status is not (BillingValues.Processing or BillingValues.Pending)) return MapCheckout(order, null);
 
-        var providerCheckout = await paymentProvider.CreateCheckoutAsync(
-            new PaymentOrderRequest(order.Id, order.AmountMinor, order.Currency, order.ProviderTransactionId, order.CreatedAt, ipAddress), cancellationToken);
-        if (!string.Equals(providerCheckout.Provider, paymentProvider.ProviderName, StringComparison.Ordinal) ||
-            !string.Equals(providerCheckout.ProviderTransactionId, order.ProviderTransactionId, StringComparison.Ordinal) ||
-            providerCheckout.Action is null || string.IsNullOrWhiteSpace(providerCheckout.Action.Method) ||
-            string.IsNullOrWhiteSpace(providerCheckout.Action.Url))
-            throw new BusinessException("PAYMENT_CHECKOUT_FAILED", "Không thể tạo phiên thanh toán.", BusinessErrorKind.ExternalFailure);
-
-        var current = await FindOrderForUpdateAsync(order.Id, cancellationToken)
-            ?? throw new BusinessException("ORDER_NOT_FOUND", "Không tìm thấy order thanh toán.", BusinessErrorKind.NotFound);
-        if (current.Status == BillingValues.Processing || string.IsNullOrWhiteSpace(current.CheckoutUrl))
+        var transaction = await BeginTransactionAsync(cancellationToken);
+        try
         {
+            var current = await FindOrderForUpdateAsync(order.Id, cancellationToken)
+                ?? throw new BusinessException("ORDER_NOT_FOUND", "Không tìm thấy order thanh toán.", BusinessErrorKind.NotFound);
+            if (current.Status is not (BillingValues.Processing or BillingValues.Pending)) return MapCheckout(current, null);
+
+            var persistedAction = RestorePersistedCheckoutAction(current);
+            if (persistedAction is not null)
+            {
+                if (string.IsNullOrWhiteSpace(current.CheckoutActionSnapshot))
+                {
+                    current.CheckoutActionSnapshot = SerializeCheckoutAction(persistedAction);
+                    current.UpdatedAt = timeProvider.GetUtcNow();
+                    await dbContext.SaveChangesAsync(cancellationToken);
+                    await CommitAsync(transaction, cancellationToken);
+                }
+                return MapCheckout(current, persistedAction);
+            }
+
+            var providerCheckout = await paymentProvider.CreateCheckoutAsync(
+                new PaymentOrderRequest(current.Id, current.AmountMinor, current.Currency, current.ProviderTransactionId, current.CreatedAt, ipAddress), cancellationToken);
+            if (!string.Equals(providerCheckout.Provider, paymentProvider.ProviderName, StringComparison.Ordinal) ||
+                !string.Equals(providerCheckout.ProviderTransactionId, current.ProviderTransactionId, StringComparison.Ordinal) ||
+                !IsValidCheckoutAction(providerCheckout.Action))
+                throw new BusinessException("PAYMENT_CHECKOUT_FAILED", "Không thể tạo phiên thanh toán.", BusinessErrorKind.ExternalFailure);
+
             current.Status = BillingValues.Pending;
             current.CheckoutUrl = providerCheckout.Action.Url;
+            current.CheckoutActionSnapshot = SerializeCheckoutAction(providerCheckout.Action);
             current.UpdatedAt = timeProvider.GetUtcNow();
             await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(transaction, cancellationToken);
+            return MapCheckout(current, providerCheckout.Action);
         }
-        return MapCheckout(current, current.Status is BillingValues.Processing or BillingValues.Pending ? providerCheckout.Action : null);
+        finally
+        {
+            if (transaction is not null) await transaction.DisposeAsync();
+        }
     }
 
     private async Task<CheckoutStatus> BuildCheckoutStatusAsync(Order order, CancellationToken cancellationToken)
@@ -683,6 +690,44 @@ public sealed partial class BillingService(
     private static int? Available(Entitlement entitlement) =>
         entitlement.InterviewLimit is null ? null : entitlement.InterviewLimit.Value + entitlement.Adjustment - entitlement.Reserved - entitlement.Consumed;
 
+    private CheckoutAction? RestorePersistedCheckoutAction(Order order)
+    {
+        if (order.Status != BillingValues.Pending || string.IsNullOrWhiteSpace(order.CheckoutUrl)) return null;
+
+        if (!string.IsNullOrWhiteSpace(order.CheckoutActionSnapshot))
+        {
+            try
+            {
+                var snapshot = JsonSerializer.Deserialize<CheckoutActionSnapshot>(order.CheckoutActionSnapshot, JsonOptions);
+                if (snapshot?.Fields is not null)
+                {
+                    var action = new CheckoutAction(snapshot.Method ?? string.Empty, snapshot.Url ?? string.Empty, snapshot.Fields);
+                    if (IsValidCheckoutAction(action) && string.Equals(action.Url, order.CheckoutUrl, StringComparison.Ordinal))
+                        return action;
+                }
+            }
+            catch (JsonException)
+            {
+                // A legacy/corrupt snapshot is not trusted. The provider compatibility fallback below
+                // may still restore a redirect-only checkout without creating a second payment link.
+            }
+        }
+
+        var restored = paymentProvider.RestoreCheckoutAction(order.CheckoutUrl);
+        if (restored is null || !IsValidCheckoutAction(restored)) return null;
+        return string.Equals(restored.Url, order.CheckoutUrl, StringComparison.Ordinal) ? restored : null;
+    }
+
+    private static string SerializeCheckoutAction(CheckoutAction action) =>
+        JsonSerializer.Serialize(new CheckoutActionSnapshot(action.Method, action.Url, action.Fields.ToArray()), JsonOptions);
+
+    private static bool IsValidCheckoutAction(CheckoutAction? action) =>
+        action is not null &&
+        !string.IsNullOrWhiteSpace(action.Method) &&
+        !string.IsNullOrWhiteSpace(action.Url) &&
+        action.Fields is not null &&
+        action.Fields.All(field => field is not null && !string.IsNullOrWhiteSpace(field.Name) && field.Value is not null);
+
     private static CheckoutSession MapCheckout(Order order, CheckoutAction? action) =>
         new(order.Id, order.Status, order.AmountMinor, order.Currency, order.PaymentProvider, action);
 
@@ -701,6 +746,8 @@ public sealed partial class BillingService(
     };
 
     private static string CorrelationId() => Activity.Current?.TraceId.ToString() ?? "none";
+
+    private sealed record CheckoutActionSnapshot(string? Method, string? Url, CheckoutFormField[]? Fields);
 
     [LoggerMessage(LogLevel.Information,
         "Payment event {ProviderEventId} for order {OrderId} processed with status {OrderStatus}; correlation {CorrelationId}")]

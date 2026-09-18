@@ -104,6 +104,10 @@ public interface IPaymentProvider
 {
     string ProviderName { get; }
     string CreateProviderTransactionId(Guid orderId);
+    // Some providers can safely rebuild a redirect-only checkout action from a persisted URL.
+    // New checkout actions are persisted in full by BillingService; this is only a compatibility
+    // fallback for orders created before action snapshots existed.
+    CheckoutAction? RestoreCheckoutAction(string checkoutUrl) => null;
     Task<PaymentCheckout> CreateCheckoutAsync(PaymentOrderRequest request, CancellationToken cancellationToken);
     Task<VerifiedPaymentEvent> VerifyWebhookAsync(PaymentCallbackRequest request, CancellationToken cancellationToken);
     Task<VerifiedPaymentEvent?> QueryPaymentAsync(PaymentOrderRequest request, CancellationToken cancellationToken);

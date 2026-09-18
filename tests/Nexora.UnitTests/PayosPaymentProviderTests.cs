@@ -203,7 +203,8 @@ public sealed class PayosPaymentProviderTests
     [Fact]
     public async Task ValidWebhookIsCryptographicallyVerifiedAndHasStableDuplicateIdentity()
     {
-        using var provider = NewProvider();
+        var handler = new PayosHandler(_ => SignedResponse(PaymentLink(PaymentLinkStatus.Paid, amountPaid: 49_000)));
+        using var provider = NewProvider(handler: handler);
         var payload = BuildWebhook();
 
         var first = await provider.VerifyWebhookAsync(Callback(payload), CancellationToken.None);
@@ -217,6 +218,38 @@ public sealed class PayosPaymentProviderTests
         Assert.True(first.IsFinal);
         Assert.False(first.IsVerificationProbe);
         Assert.Equal(first.ProviderEventId, second.ProviderEventId);
+        Assert.Equal(2, handler.RequestPaths.Count(path => path == "/v2/payment-requests/1234567890123456"));
+    }
+
+    [Theory]
+    [InlineData(PaymentLinkStatus.Pending, 0L)]
+    [InlineData(PaymentLinkStatus.Processing, 0L)]
+    [InlineData(PaymentLinkStatus.Underpaid, 10_000L)]
+    public async Task ValidNonFinalWebhookReconcilesStatusWithoutMarkingPaymentPaid(PaymentLinkStatus status, long amountPaid)
+    {
+        var handler = new PayosHandler(_ => SignedResponse(PaymentLink(status, amountPaid: amountPaid)));
+        using var provider = NewProvider(handler: handler);
+
+        var result = await provider.VerifyWebhookAsync(
+            Callback(BuildWebhook(amount: amountPaid == 0 ? 49_000 : amountPaid)),
+            CancellationToken.None);
+
+        Assert.False(result.IsPaid);
+        Assert.False(result.IsFinal);
+        Assert.Equal(49_000, result.AmountMinor);
+        Assert.Single(handler.RequestPaths, path => path == "/v2/payment-requests/1234567890123456");
+    }
+
+    [Fact]
+    public async Task PaidStatusWithPartialTotalDoesNotProducePaidEvent()
+    {
+        var handler = new PayosHandler(_ => SignedResponse(PaymentLink(PaymentLinkStatus.Paid, amountPaid: 10_000)));
+        using var provider = NewProvider(handler: handler);
+
+        var result = await provider.VerifyWebhookAsync(Callback(BuildWebhook(amount: 10_000)), CancellationToken.None);
+
+        Assert.False(result.IsPaid);
+        Assert.False(result.IsFinal);
     }
 
     [Fact]
@@ -237,11 +270,13 @@ public sealed class PayosPaymentProviderTests
     [Fact]
     public async Task VerifiedDashboardProbeIsAcknowledgedWithoutBeingTreatedAsAnOrder()
     {
-        using var provider = NewProvider();
+        var handler = new PayosHandler(_ => throw new InvalidOperationException("The dashboard verification probe must not query payment-link status."));
+        using var provider = NewProvider(handler: handler);
         var result = await provider.VerifyWebhookAsync(Callback(BuildWebhook(orderCode: 123)), CancellationToken.None);
 
         Assert.True(result.IsVerificationProbe);
         Assert.Null(result.OrderId);
+        Assert.Empty(handler.RequestPaths);
     }
 
     private static IConfiguration CreatePayosConfiguration() =>
@@ -347,9 +382,11 @@ public sealed class PayosPaymentProviderTests
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _responseFactory = responseFactory;
 
         public List<string> RequestBodies { get; } = [];
+        public List<string> RequestPaths { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            RequestPaths.Add(request.RequestUri?.AbsolutePath ?? string.Empty);
             if (request.Content is not null)
                 RequestBodies.Add(await request.Content.ReadAsStringAsync(cancellationToken));
             return _responseFactory(request);

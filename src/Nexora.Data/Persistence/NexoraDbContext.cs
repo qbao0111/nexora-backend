@@ -326,6 +326,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.Property(order => order.PaymentProvider).HasMaxLength(40).IsRequired();
             entity.Property(order => order.ProviderTransactionId).HasMaxLength(160).IsRequired();
             entity.Property(order => order.CheckoutUrl).HasMaxLength(2048).IsRequired();
+            entity.Property(order => order.CheckoutActionSnapshot).HasColumnType("jsonb");
             entity.Property(order => order.FeaturesSnapshot).HasColumnType("jsonb").IsRequired();
             entity.HasOne(order => order.User).WithMany().HasForeignKey(order => order.UserId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(order => order.PlanPrice).WithMany().HasForeignKey(order => order.PlanPriceId).OnDelete(DeleteBehavior.Restrict);
