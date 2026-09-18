@@ -9,6 +9,7 @@ using Nexora.Business.Storage;
 using Nexora.Integrations.Ai;
 using Nexora.Integrations.Email;
 using Nexora.Integrations.Payments;
+using Nexora.Integrations.Speech;
 using Nexora.Integrations.Storage;
 
 namespace Nexora.Integrations;
@@ -26,6 +27,7 @@ public static class DependencyInjection
     public static IServiceCollection AddIntegrations(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddEmail(configuration);
+        services.AddSpeech(configuration);
         var storageProvider = configuration.GetValue<string?>($"{StorageOptions.SectionName}:Provider")?.Trim().ToLowerInvariant() ?? "local";
         if (storageProvider is not ("local" or "r2"))
             throw new InvalidOperationException("Storage:Provider must be local or r2.");
