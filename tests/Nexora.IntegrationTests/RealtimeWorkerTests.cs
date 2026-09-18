@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -11,6 +12,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Nexora.Business.Ai;
 using Nexora.Business.Billing;
 using Nexora.Business.Practice;
+using Nexora.Business.Storage;
 using Nexora.Data.Billing;
 using Nexora.Data.Persistence;
 using Nexora.Data.Practice;
@@ -23,6 +25,182 @@ namespace Nexora.IntegrationTests;
 public sealed class RealtimeWorkerTests
 {
     private const string DocxType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+    [Fact]
+    public async Task DeletedResumeSkipsQueuedWorkAndRetriesProviderNeutralObjectCleanup()
+    {
+        var storage = new RetryOnceStorageProvider();
+        using var factory = CreateFactory(configure: services =>
+        {
+            services.RemoveAll<IStorageProvider>();
+            services.AddSingleton<IStorageProvider>(storage);
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.Token);
+
+        var resumeId = Guid.NewGuid();
+        var analysisId = Guid.NewGuid();
+        var reclaimedAnalysisId = Guid.NewGuid();
+        var storageKey = $"private/{owner.UserId:N}/resume-delete-test";
+        var now = DateTimeOffset.UtcNow;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var storedFile = new StoredFile
+            {
+                Id = Guid.NewGuid(), UserId = owner.UserId, StorageKey = storageKey, FileName = "delete-test.pdf",
+                ContentType = "application/pdf", Size = 1, Checksum = "00", CreatedAt = now
+            };
+            var resume = new ResumeRecord
+            {
+                Id = resumeId, UserId = owner.UserId, StoredFileId = storedFile.Id, Status = PracticeValues.Ready,
+                Version = 1, CreatedAt = now, UpdatedAt = now
+            };
+            var analysis = new ResumeAnalysis
+            {
+                Id = analysisId, UserId = owner.UserId, ResumeId = resumeId, ResumeVersion = 1,
+                Mode = ResumeAnalysisModes.FieldBenchmark, Status = PracticeValues.Queued,
+                ModelVersion = "test-model", PromptVersion = "test-prompt", SchemaVersion = "test-schema",
+                CreatedAt = now, UpdatedAt = now
+            };
+            var reclaimedAnalysis = new ResumeAnalysis
+            {
+                Id = reclaimedAnalysisId, UserId = owner.UserId, ResumeId = resumeId, ResumeVersion = 1,
+                Mode = ResumeAnalysisModes.FieldBenchmark, Status = PracticeValues.Processing,
+                ModelVersion = "test-model", PromptVersion = "test-prompt", SchemaVersion = "test-schema",
+                CreatedAt = now, UpdatedAt = now
+            };
+            db.AddRange(storedFile, resume, analysis, reclaimedAnalysis,
+                new OutboxEvent
+                {
+                    Id = Guid.NewGuid(), Type = "ResumeExtractionRequested", AggregateType = "resume", AggregateId = resumeId,
+                    Payload = "{}", Status = BillingValues.Pending, CreatedAt = now
+                },
+                new OutboxEvent
+                {
+                    Id = Guid.NewGuid(), Type = "ResumeAnalysisRequested", AggregateType = "resume_analysis", AggregateId = analysisId,
+                    Payload = "{}", Status = BillingValues.Pending, CreatedAt = now
+                },
+                new OutboxEvent
+                {
+                    Id = Guid.NewGuid(), Type = "ResumeAnalysisRequested", AggregateType = "resume_analysis", AggregateId = reclaimedAnalysisId,
+                    Payload = "{}", Status = BillingValues.Processing, ProcessedAt = now.AddMinutes(-15), CreatedAt = now
+                });
+            await db.SaveChangesAsync();
+        }
+
+        using (var primary = await client.PutAsJsonAsync("/api/v1/me/primary-resume", new { resumeId }))
+            Assert.Equal(HttpStatusCode.OK, primary.StatusCode);
+        var interview = await PostAsync(client, "/api/v1/interviews", new
+        {
+            role = "Backend developer", seniority = "junior", interviewType = "technical", difficulty = "medium", resumeId
+        });
+        var interviewId = interview.GetProperty("id").GetGuid();
+
+        using (var delete = await client.DeleteAsync($"/api/v1/resumes/{resumeId}"))
+            Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
+        await ProcessJobsAsync(factory);
+
+        var aiProvider = Assert.IsType<TestAiProvider>(factory.Services.GetRequiredService<IAiProvider>());
+        Assert.Equal(0, aiProvider.GetCallCount(AiPurposes.ResumeAnalysis));
+        Assert.Equal(0, aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion));
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var analysis = await db.ResumeAnalyses.SingleAsync(item => item.Id == analysisId);
+            var reclaimedAnalysis = await db.ResumeAnalyses.SingleAsync(item => item.Id == reclaimedAnalysisId);
+            var session = await db.InterviewSessions.SingleAsync(item => item.Id == interviewId);
+            var resume = await db.Resumes.SingleAsync(item => item.Id == resumeId);
+            Assert.Equal(PracticeValues.Failed, analysis.Status);
+            Assert.Equal("RESUME_DELETED", analysis.ErrorCode);
+            Assert.Equal(PracticeValues.Failed, reclaimedAnalysis.Status);
+            Assert.Equal("RESUME_DELETED", reclaimedAnalysis.ErrorCode);
+            Assert.Equal(PracticeValues.Failed, session.Status);
+            Assert.NotNull(resume.DeletedAt);
+            Assert.Null(resume.StorageDeletedAt);
+            Assert.Equal(1, resume.StorageDeleteAttempts);
+            Assert.Equal(storageKey, Assert.Single(storage.DeletedKeys));
+            Assert.Empty(storage.OpenedKeys);
+
+            await db.Resumes.Where(item => item.Id == resumeId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.StorageDeleteNextAttemptAt, now.AddSeconds(-1)));
+        }
+
+        await ProcessJobsAsync(factory);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var resume = await db.Resumes.SingleAsync(item => item.Id == resumeId);
+            Assert.NotNull(resume.DeletedAt);
+            Assert.NotNull(resume.StorageDeletedAt);
+            Assert.Equal(2, resume.StorageDeleteAttempts);
+            Assert.Equal(2, storage.DeleteCount);
+            Assert.All(storage.DeletedKeys, key => Assert.Equal(storageKey, key));
+            Assert.Null(await db.UserProfiles.Where(item => item.UserId == owner.UserId)
+                .Select(item => item.PrimaryResumeId).SingleAsync());
+            Assert.True(await db.InterviewSessions.AnyAsync(item => item.Id == interviewId));
+            Assert.True(await db.ResumeAnalyses.AnyAsync(item => item.Id == analysisId));
+        }
+
+        using var retainedInterview = await client.GetAsync($"/api/v1/interviews/{interviewId}");
+        Assert.Equal(HttpStatusCode.OK, retainedInterview.StatusCode);
+        Assert.Equal(PracticeValues.Failed, (await DataAsync(retainedInterview)).GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task ResumeStorageCleanupDefersWhileExtractionOutboxIsProcessing()
+    {
+        var storage = new RetryOnceStorageProvider();
+        using var factory = CreateFactory(configure: services =>
+        {
+            services.RemoveAll<IStorageProvider>();
+            services.AddSingleton<IStorageProvider>(storage);
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client);
+        var resumeId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var storedFile = new StoredFile
+            {
+                Id = Guid.NewGuid(), UserId = owner.UserId, StorageKey = "private/active-extraction",
+                FileName = "active.pdf", ContentType = "application/pdf", Size = 1, Checksum = "00", CreatedAt = now
+            };
+            db.AddRange(storedFile, new ResumeRecord
+            {
+                Id = resumeId, UserId = owner.UserId, StoredFileId = storedFile.Id, Status = PracticeValues.Extracting,
+                Version = 1, CreatedAt = now, UpdatedAt = now, DeletedAt = now, StorageDeleteNextAttemptAt = now
+            }, new OutboxEvent
+            {
+                Id = Guid.NewGuid(), Type = "ResumeExtractionRequested", AggregateType = "resume", AggregateId = resumeId,
+                Payload = "{}", Status = BillingValues.Processing, CreatedAt = now, ProcessedAt = now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await ProcessJobsAsync(factory);
+        Assert.Equal(0, storage.DeleteCount);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(0, await db.Resumes.Where(item => item.Id == resumeId).Select(item => item.StorageDeleteAttempts).SingleAsync());
+            await db.OutboxEvents.Where(item => item.AggregateId == resumeId && item.Type == "ResumeExtractionRequested")
+                .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.Status, BillingValues.Processed));
+        }
+
+        await ProcessJobsAsync(factory);
+        Assert.Equal(1, storage.DeleteCount);
+        Assert.Empty(storage.OpenedKeys);
+        using var verify = factory.Services.CreateScope();
+        var verifyDb = verify.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(1, await verifyDb.Resumes.Where(item => item.Id == resumeId).Select(item => item.StorageDeleteAttempts).SingleAsync());
+    }
 
     [Theory]
     [InlineData(false)]
@@ -345,6 +523,31 @@ public sealed class RealtimeWorkerTests
     {
         public Task<DocumentOcrResult> ExtractAsync(Stream content, string contentType, CancellationToken cancellationToken) =>
             Task.FromException<DocumentOcrResult>(new InvalidDataException("Synthetic document fallback failure"));
+    }
+
+    private sealed class RetryOnceStorageProvider : IStorageProvider
+    {
+        private int _deleteCount;
+        public int DeleteCount => _deleteCount;
+        public List<string> DeletedKeys { get; } = [];
+        public List<string> OpenedKeys { get; } = [];
+
+        public Task<StoredObject> SaveAsync(Stream content, string fileName, string contentType, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<Stream> OpenReadAsync(string storageKey, CancellationToken cancellationToken)
+        {
+            OpenedKeys.Add(storageKey);
+            return Task.FromException<Stream>(new FileNotFoundException());
+        }
+
+        public Task DeleteAsync(string storageKey, CancellationToken cancellationToken)
+        {
+            DeletedKeys.Add(storageKey);
+            if (Interlocked.Increment(ref _deleteCount) == 1)
+                return Task.FromException(new IOException("Synthetic storage outage"));
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RejectActiveNotificationOnce : SaveChangesInterceptor

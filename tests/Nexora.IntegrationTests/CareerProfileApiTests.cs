@@ -221,6 +221,117 @@ public sealed class CareerProfileApiTests
     }
 
     [Fact]
+    public async Task ResumeDeleteIsOwnerScopedIdempotentAndPreservesHistory()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var ownerClient = factory.CreateHttpsClient();
+        using var otherClient = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(ownerClient, "Resume deletion owner");
+        var other = await RegisterAsync(otherClient, "Resume deletion other");
+        Authorize(ownerClient, owner);
+        Authorize(otherClient, other);
+
+        var primaryResumeId = await SeedResumeAsync(factory, owner.UserId, PracticeValues.Ready, At(1), "primary.pdf");
+        var deletedResumeId = await SeedResumeAsync(factory, owner.UserId, PracticeValues.Ready, At(2), "deleted.pdf");
+        var foreignResumeId = await SeedResumeAsync(factory, other.UserId, PracticeValues.Ready, At(3), "foreign.pdf");
+        var historicalAnalysisId = await SeedResumeAnalysisAsync(factory, owner.UserId, deletedResumeId, At(4));
+        using (var selection = await ownerClient.PutAsJsonAsync(
+                   "/api/v1/me/primary-resume", new { resumeId = primaryResumeId }))
+            Assert.Equal(HttpStatusCode.OK, selection.StatusCode);
+
+        using var foreignDelete = await ownerClient.DeleteAsync($"/api/v1/resumes/{foreignResumeId}");
+        using var unknownDelete = await ownerClient.DeleteAsync($"/api/v1/resumes/{Guid.NewGuid()}");
+        Assert.Equal(HttpStatusCode.NotFound, foreignDelete.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unknownDelete.StatusCode);
+
+        var concurrentDeletes = await Task.WhenAll(
+            ownerClient.DeleteAsync($"/api/v1/resumes/{deletedResumeId}"),
+            ownerClient.DeleteAsync($"/api/v1/resumes/{deletedResumeId}"));
+        using (concurrentDeletes[0])
+            Assert.Equal(HttpStatusCode.NoContent, concurrentDeletes[0].StatusCode);
+        using (concurrentDeletes[1])
+            Assert.Equal(HttpStatusCode.NoContent, concurrentDeletes[1].StatusCode);
+        using (var replay = await ownerClient.DeleteAsync($"/api/v1/resumes/{deletedResumeId}"))
+            Assert.Equal(HttpStatusCode.NoContent, replay.StatusCode);
+        using (var selectDeleted = await ownerClient.PutAsJsonAsync(
+                   "/api/v1/me/primary-resume", new { resumeId = deletedResumeId }))
+            Assert.Equal(HttpStatusCode.NotFound, selectDeleted.StatusCode);
+
+        using (var analysisRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/resume-analyses")
+        {
+            Content = JsonContent.Create(new
+            {
+                resumeId = deletedResumeId,
+                mode = ResumeAnalysisModes.FieldBenchmark,
+                industry = "Fintech",
+                targetRole = "Backend Engineer",
+                seniority = "senior"
+            })
+        })
+        {
+            analysisRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+            using var response = await ownerClient.SendAsync(analysisRequest);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+        using (var interviewRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/interviews")
+        {
+            Content = JsonContent.Create(new
+            {
+                role = "Backend developer", seniority = "junior", interviewType = "technical",
+                difficulty = "medium", resumeId = deletedResumeId
+            })
+        })
+        {
+            interviewRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+            using var response = await ownerClient.SendAsync(interviewRequest);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+
+        using (var careerProfile = await ownerClient.GetAsync("/api/v1/me/career-profile"))
+        {
+            var data = await DataAsync(careerProfile);
+            Assert.Equal(primaryResumeId, data.GetProperty("primaryResume").GetProperty("id").GetGuid());
+        }
+        using (var profile = await ownerClient.GetAsync("/api/v1/skill-profile"))
+        {
+            var data = await DataAsync(profile);
+            Assert.Empty(data.GetProperty("competencies").EnumerateArray());
+            Assert.Empty(data.GetProperty("weaknessSignals").EnumerateArray());
+        }
+        using (var deletedRead = await ownerClient.GetAsync($"/api/v1/resumes/{deletedResumeId}"))
+            Assert.Equal(HttpStatusCode.NotFound, deletedRead.StatusCode);
+        using (var resumeList = await ownerClient.GetAsync("/api/v1/resumes"))
+            Assert.DoesNotContain(deletedResumeId,
+                (await DataAsync(resumeList)).EnumerateArray().Select(item => item.GetProperty("id").GetGuid()));
+        using (var foreignRead = await ownerClient.GetAsync($"/api/v1/resumes/{foreignResumeId}"))
+            Assert.Equal(HttpStatusCode.NotFound, foreignRead.StatusCode);
+        using (var otherRead = await otherClient.GetAsync($"/api/v1/resumes/{foreignResumeId}"))
+            Assert.Equal(HttpStatusCode.OK, otherRead.StatusCode);
+
+        using (var deletePrimary = await ownerClient.DeleteAsync($"/api/v1/resumes/{primaryResumeId}"))
+            Assert.Equal(HttpStatusCode.NoContent, deletePrimary.StatusCode);
+        using (var careerProfile = await ownerClient.GetAsync("/api/v1/me/career-profile"))
+        {
+            var data = await DataAsync(careerProfile);
+            Assert.Equal(JsonValueKind.Null, data.GetProperty("primaryResume").ValueKind);
+            Assert.False(data.GetProperty("onboarding").GetProperty("hasPrimaryResume").GetBoolean());
+        }
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.NotNull(await db.Resumes.Where(item => item.Id == deletedResumeId).Select(item => item.DeletedAt).SingleAsync());
+        Assert.NotNull(await db.Resumes.Where(item => item.Id == primaryResumeId).Select(item => item.DeletedAt).SingleAsync());
+        Assert.Equal(historicalAnalysisId, await db.ResumeAnalyses.Where(item => item.Id == historicalAnalysisId)
+            .Select(item => item.Id).SingleAsync());
+        Assert.Null(await db.UserProfiles.Where(item => item.UserId == owner.UserId)
+            .Select(item => item.PrimaryResumeId).SingleAsync());
+        Assert.Equal("deleted", await db.RealtimeNotifications
+            .Where(item => item.UserId == owner.UserId && item.ResourceType == "resume" && item.ResourceId == primaryResumeId)
+            .Select(item => item.Status).SingleAsync());
+    }
+
+    [Fact]
     public async Task PrimaryResumeIsOwnerScopedIdempotentAndNotAutoSelected()
     {
         using var factory = new NexoraApiFactory();

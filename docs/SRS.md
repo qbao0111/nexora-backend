@@ -2,8 +2,8 @@
 
 | Thuộc tính | Giá trị |
 | --- | --- |
-| Phiên bản | 1.1 implementation-freeze baseline |
-| Ngày | 21/08/2026 |
+| Phiên bản | 1.3 active-interview resume-context corrective amendment |
+| Ngày | 18/09/2026 |
 | Trạng thái | Approved implementation baseline; DEC-01–04 vẫn deferred trước production enablement, không biểu thị external stakeholder/legal approval |
 | Chuẩn tham chiếu | Cấu trúc yêu cầu dựa trên tinh thần của [ISO/IEC/IEEE 29148:2018](https://www.iso.org/standard/72089.html) |
 | Phạm vi release | Nexora MVP production — mock interview và career-preparation, không phải live interview copilot |
@@ -111,6 +111,7 @@ Candidate browser -> Nexora frontend -> Nexora .NET API -> PostgreSQL
 | FR-CV-03 | Extract và analysis chạy job bất đồng bộ với state `queued/processing/completed/failed`. | Must | UI có thể poll state và retry theo rule. |
 | FR-CV-04 | Analysis lưu resume/JD version, model/prompt/schema version, result và timestamp. | Must | Có thể audit result về input/version. |
 | FR-CV-05 | `POST /resume-analyses` có thể kế thừa Primary Resume và Career Goal context cho các trường bị bỏ trống; explicit owner-scoped input được ưu tiên và context hiệu lực được snapshot khi tạo analysis. | Must | Default/override, ownership, readiness, idempotency và immutable snapshot integration tests. |
+| FR-CV-06 | Owner có thể xoá riêng resume qua `DELETE /resumes/{id}`; resume được soft-delete và ẩn khỏi lựa chọn/đọc hiện hành, Primary Resume được clear transactionally, private object được dọn bất đồng bộ có retry bền vững, còn analysis/interview history được giữ. Resume đã xoá không còn là current AI context, kể cả trong active interview đang giữ historical ResumeId. | Must | Unknown/foreign IDs cùng opaque 404; owner delete/replay 204; current selectors/evidence/interview AI context exclude tombstone; history retained; storage retry and queued-worker race integration tests. |
 
 ### 6.4 Mock interview and report
 
@@ -145,6 +146,15 @@ or mutates the source session/report. Recommendation responses may include
 nullable actionable `practice_again` metadata (`sourceInterviewId`,
 `sourceQuestionId`, `focusTopic`, `suggestedInterviewType` and canonical reason)
 so the client does not reconstruct domain joins.
+
+A soft-deleted Resume may remain linked to an existing InterviewSession for
+history, but it is not usable resume context. Future answer evaluation,
+automatic next-question generation, paid continuation and follow-up generation
+must pass no ResumeProfile and select topics as if no Resume were available.
+Previously-issued questions, persisted answers/evaluations, reports and the
+historical ResumeId are not rewritten. Practice Again still creates a new
+session through canonical owner/ready/non-deleted Resume validation and rejects
+an inherited tombstoned Resume.
 
 ### 6.5 Practice, dashboard and support
 
@@ -203,10 +213,11 @@ Mọi kiểm thử hiệu năng/khả dụng MVP dùng dataset staging tối thi
 | New user → plan → payment sandbox | FR-AUTH-01, FR-BILL-01..04 | E2E recording + automated webhook tests. |
 | Upload → analysis → report | FR-CV-01..04, FR-INT-04 | Automated integration test + staging smoke test. |
 | Owner isolation | FR-AUTH-03, FR-CV-02, FR-PRAC-01 | Negative tests for each resource endpoint. |
+| Individual resume deletion | FR-CV-06, NFR-SEC-01, NFR-PRIV-01 | Owner/idempotency, primary clearing, retained history, worker/storage retry tests. |
 | Quota race | FR-BILL-05, BR-02..04 | Concurrent integration test. |
 | Account deletion | FR-AUTH-04, NFR-PRIV-01 | DB/storage deletion job test. |
 
-Use-case specification, sequence/class/package/deployment diagrams và ma trận FR → UC → API → test được quản lý tại [11-analysis-design-models.md](11-analysis-design-models.md). Đây là artefact thiết kế trước implementation; sau khi có BE source phải thêm appendix “source consistency review” tương tự report mẫu.
+Use-case specification, sequence/class/package/deployment diagrams và ma trận FR → UC → API → test được quản lý tại [11-analysis-design-models.md](11-analysis-design-models.md). Đây là artefact thiết kế trước implementation; source consistency evidence được ghi ở appendix trong design model.
 
 ## 11. Deferred production enablement decisions
 

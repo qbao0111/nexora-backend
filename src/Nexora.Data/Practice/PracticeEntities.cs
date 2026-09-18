@@ -48,6 +48,10 @@ public sealed class ResumeRecord
     public int Version { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+    public DateTimeOffset? DeletedAt { get; set; }
+    public DateTimeOffset? StorageDeletedAt { get; set; }
+    public int StorageDeleteAttempts { get; set; }
+    public DateTimeOffset? StorageDeleteNextAttemptAt { get; set; }
     public ApplicationUser User { get; set; } = null!;
     public StoredFile StoredFile { get; set; } = null!;
 }

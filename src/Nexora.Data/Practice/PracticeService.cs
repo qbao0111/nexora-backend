@@ -96,11 +96,14 @@ public sealed partial class PracticeService(
     {
         var upload = await uploadProvider.GetCompletedAsync(userId, uploadToken, cancellationToken);
         await using var transaction = await BeginTransactionAsync(cancellationToken);
+        await LockUserAsync(userId, cancellationToken);
         var duplicate = await dbContext.StoredFiles.AsNoTracking().SingleOrDefaultAsync(file => file.StorageKey == upload.StorageKey, cancellationToken);
         if (duplicate is not null)
         {
             var existing = await dbContext.Resumes.AsNoTracking().Include(resume => resume.StoredFile)
                 .SingleAsync(resume => resume.StoredFileId == duplicate.Id && resume.UserId == userId, cancellationToken);
+            if (existing.DeletedAt is not null)
+                throw Conflict("RESUME_DELETED", "CV đã bị xóa và không thể khôi phục bằng finalize lại.");
             return MapResume(existing);
         }
 
@@ -136,29 +139,71 @@ public sealed partial class PracticeService(
         }
         catch (DbUpdateException)
         {
-            if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                await transaction.DisposeAsync();
+            }
             dbContext.ChangeTracker.Clear();
+            await using var recoveryTransaction = await BeginTransactionAsync(cancellationToken);
+            await LockUserAsync(userId, cancellationToken);
             var concurrent = await dbContext.StoredFiles.AsNoTracking()
                 .SingleOrDefaultAsync(file => file.StorageKey == upload.StorageKey && file.UserId == userId, cancellationToken);
             if (concurrent is null) throw;
             var existing = await dbContext.Resumes.AsNoTracking().Include(item => item.StoredFile)
                 .SingleOrDefaultAsync(item => item.StoredFileId == concurrent.Id && item.UserId == userId, cancellationToken);
             if (existing is null) throw;
+            if (existing.DeletedAt is not null)
+                throw Conflict("RESUME_DELETED", "CV đã bị xóa và không thể khôi phục bằng finalize lại.");
+            await CommitAsync(recoveryTransaction, cancellationToken);
             return MapResume(existing);
         }
+    }
+
+    public async Task DeleteResumeAsync(Guid userId, Guid resumeId, CancellationToken cancellationToken)
+    {
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        await LockUserAsync(userId, cancellationToken);
+
+        var resume = await dbContext.Resumes.SingleOrDefaultAsync(
+            item => item.Id == resumeId && item.UserId == userId,
+            cancellationToken) ?? throw NotFound();
+        if (resume.DeletedAt is not null)
+        {
+            await CommitAsync(transaction, cancellationToken);
+            return;
+        }
+
+        var now = timeProvider.GetUtcNow();
+        resume.DeletedAt = now;
+        resume.UpdatedAt = now;
+        resume.StorageDeleteNextAttemptAt = now;
+
+        var profile = await dbContext.UserProfiles.SingleOrDefaultAsync(
+            item => item.UserId == userId && item.PrimaryResumeId == resumeId,
+            cancellationToken);
+        if (profile is not null)
+        {
+            profile.PrimaryResumeId = null;
+            profile.UpdatedAt = now;
+        }
+
+        EnqueueResourceChanged(userId, "resume", resumeId, "deleted", now);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
     }
 
     public async Task<ResumeView> GetResumeAsync(Guid userId, Guid resumeId, CancellationToken cancellationToken)
     {
         var resume = await dbContext.Resumes.AsNoTracking().Include(item => item.StoredFile)
-            .SingleOrDefaultAsync(item => item.Id == resumeId && item.UserId == userId, cancellationToken)
+            .SingleOrDefaultAsync(item => item.Id == resumeId && item.UserId == userId && item.DeletedAt == null, cancellationToken)
             ?? throw NotFound();
         return MapResume(resume);
     }
 
     public async Task<IReadOnlyList<ResumeView>> GetResumesAsync(Guid userId, CancellationToken cancellationToken)
     {
-        var query = dbContext.Resumes.AsNoTracking().Where(item => item.UserId == userId);
+        var query = dbContext.Resumes.AsNoTracking().Where(item => item.UserId == userId && item.DeletedAt == null);
         if (string.Equals(dbContext.Database.ProviderName, "Microsoft.EntityFrameworkCore.Sqlite", StringComparison.Ordinal))
         {
             return (await query.Select(item => new ResumeView(
@@ -195,10 +240,12 @@ public sealed partial class PracticeService(
     {
         for (var attempt = 0; attempt < 30; attempt++)
         {
-            var status = await dbContext.Resumes.AsNoTracking().Where(item => item.Id == resumeId).Select(item => item.Status)
+            var state = await dbContext.Resumes.AsNoTracking().Where(item => item.Id == resumeId)
+                .Select(item => new { item.Status, item.DeletedAt })
                 .SingleAsync(cancellationToken);
-            if (status == PracticeValues.Ready) return;
-            if (status == PracticeValues.Failed)
+            if (state.DeletedAt is not null) throw NotFound();
+            if (state.Status == PracticeValues.Ready) return;
+            if (state.Status == PracticeValues.Failed)
                 throw Conflict("RESUME_EXTRACTION_FAILED", ResumeExtractionFailureMessage);
 
             await ProcessPendingAsync(cancellationToken);
@@ -318,7 +365,9 @@ public sealed partial class PracticeService(
             normalized.Seniority);
         var prior = await FindIdempotentAsync(userId, "resume-analysis.create", key, fingerprint, cancellationToken);
         if (prior is not null) return await GetResumeAnalysisAsync(userId, prior.ResourceId, cancellationToken);
-        var resume = await dbContext.Resumes.AsNoTracking().SingleOrDefaultAsync(item => item.Id == normalized.ResumeId && item.UserId == userId, cancellationToken)
+        var resume = await dbContext.Resumes.AsNoTracking().SingleOrDefaultAsync(
+            item => item.Id == normalized.ResumeId && item.UserId == userId && item.DeletedAt == null,
+            cancellationToken)
             ?? throw NotFound();
         if (resume.Status != PracticeValues.Ready) throw Conflict("RESUME_NOT_READY", "CV chưa sẵn sàng để phân tích.");
         var jd = normalized.JobDescriptionId is null
@@ -330,6 +379,12 @@ public sealed partial class PracticeService(
         var access = await featureEntitlementService.GetAsync(userId, FeatureValues.CvAnalysis, cancellationToken);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
+        await LockUserAsync(userId, cancellationToken);
+        resume = await dbContext.Resumes.AsNoTracking().SingleOrDefaultAsync(
+            item => item.Id == normalized.ResumeId && item.UserId == userId && item.DeletedAt == null,
+            cancellationToken)
+            ?? throw NotFound();
+        if (resume.Status != PracticeValues.Ready) throw Conflict("RESUME_NOT_READY", "CV chưa sẵn sàng để phân tích.");
         prior = await FindIdempotentAsync(userId, "resume-analysis.create", key, fingerprint, cancellationToken);
         if (prior is not null) return await GetResumeAnalysisAsync(userId, prior.ResourceId, cancellationToken);
 
@@ -485,11 +540,12 @@ public sealed partial class PracticeService(
         CancellationToken cancellationToken)
     {
         ValidateInterview(context.Role, context.Seniority, context.InterviewType, context.Difficulty);
-        await ValidateOwnedContextAsync(userId, context.ResumeId, context.JobDescriptionId, cancellationToken);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
+        await LockUserAsync(userId, cancellationToken);
         var prior = await FindIdempotentAsync(userId, operation, key, fingerprint, cancellationToken);
         if (prior is not null) return await GetInterviewAsync(userId, prior.ResourceId, cancellationToken);
+        await ValidateOwnedContextAsync(userId, context.ResumeId, context.JobDescriptionId, cancellationToken);
         var entitlement = await FindActiveEntitlementForUpdateAsync(userId, cancellationToken)
             ?? throw new BusinessException("QUOTA_EXCEEDED", "Bạn đã dùng hết lượt phỏng vấn của gói hiện tại.", BusinessErrorKind.Forbidden);
         if (Available(entitlement) < 1)
@@ -566,10 +622,15 @@ public sealed partial class PracticeService(
             role ??= TrimToNull(goal.TargetRole);
             seniority ??= TrimToNull(goal.Seniority);
             jobDescriptionId ??= goal.TargetJobDescriptionId;
-            resumeId ??= await dbContext.UserProfiles.AsNoTracking()
+            var primaryResumeId = await dbContext.UserProfiles.AsNoTracking()
                 .Where(item => item.UserId == userId)
                 .Select(item => item.PrimaryResumeId)
                 .SingleOrDefaultAsync(cancellationToken);
+            if (resumeId is null && primaryResumeId is { } selectedResumeId &&
+                await dbContext.Resumes.AsNoTracking().AnyAsync(item =>
+                    item.Id == selectedResumeId && item.UserId == userId &&
+                    item.DeletedAt == null && item.Status == PracticeValues.Ready, cancellationToken))
+                resumeId = selectedResumeId;
         }
 
         ValidateInterview(role, seniority, interviewType, difficulty);
@@ -826,7 +887,10 @@ public sealed partial class PracticeService(
         AnswerEvaluation evaluation;
         AiExecutionResult<GeneratedQuestion>? generated = null;
         string? generatedTopic = null;
-        var profile = TryReadResumeProfile(snapshot.Resume?.StructuredProfile);
+        var hasUsableResumeContext = HasUsableResumeContext(snapshot.Resume);
+        var profile = hasUsableResumeContext
+            ? TryReadResumeProfile(snapshot.Resume!.StructuredProfile)
+            : null;
         var answerContext = resumeContextBuilder.BuildAnswerEvaluationContext(
             snapshot.Role,
             snapshot.Seniority,
@@ -875,7 +939,7 @@ public sealed partial class PracticeService(
                 var nextTopic = InterviewQuestionValues.FreePrimaryTopicForSequence(
                     snapshot.InterviewType,
                     nextSequence,
-                    snapshot.Resume is not null,
+                    hasUsableResumeContext,
                     snapshot.JobDescription is not null);
                 generatedTopic = nextTopic;
                 var nextContext = resumeContextBuilder.BuildInterviewQuestionContext(
@@ -1021,16 +1085,19 @@ public sealed partial class PracticeService(
         var lastQuestion = session.Questions.OrderBy(item => item.Sequence).Last();
         var lastAnswer = session.Answers.SingleOrDefault(item => item.QuestionId == lastQuestion.Id) ?? throw InvalidState();
         var lastEvaluation = TryDeserializeAnswerEvaluation(lastAnswer.Evaluation);
+        var hasUsableResumeContext = HasUsableResumeContext(session.Resume);
         var paidTopic = InterviewQuestionValues.PaidTopicForContext(
             session.InterviewType,
-            session.Resume is not null,
+            hasUsableResumeContext,
             session.JobDescription is not null);
         var useStarFollowup =
             (string.Equals(lastQuestion.Topic, InterviewQuestionValues.Behavioral, StringComparison.Ordinal) ||
              string.Equals(lastQuestion.Topic, InterviewQuestionValues.BehavioralStar, StringComparison.Ordinal)) &&
             lastQuestion.Kind == InterviewQuestionValues.Primary &&
             lastEvaluation?.Star is { Applicable: true, MissingElements.Count: > 0 };
-        var profile = session.Resume is null ? null : TryReadResumeProfile(session.Resume.StructuredProfile);
+        var profile = hasUsableResumeContext
+            ? TryReadResumeProfile(session.Resume!.StructuredProfile)
+            : null;
         AiExecutionResult<GeneratedQuestion> generated;
         try
         {
@@ -1312,15 +1379,109 @@ public sealed partial class PracticeService(
                     queueLagSeconds, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
         }
-        return claimedCount;
+        return claimedCount + await ProcessPendingResumeStorageCleanupAsync(cancellationToken);
     }
+
+    private async Task<int> ProcessPendingResumeStorageCleanupAsync(CancellationToken cancellationToken)
+    {
+        const int batchSize = 20;
+        var now = timeProvider.GetUtcNow();
+        var pendingCleanup = dbContext.Resumes.AsNoTracking().Where(resume =>
+            resume.DeletedAt != null && resume.StorageDeletedAt == null &&
+            !dbContext.OutboxEvents.Any(job => job.AggregateId == resume.Id &&
+                job.Type == "ResumeExtractionRequested" &&
+                (job.Status == BillingValues.Pending || job.Status == BillingValues.Processing)));
+
+        ResumeStorageCleanupCandidate[] candidates;
+        if (dbContext.Database.IsNpgsql())
+        {
+            candidates = await pendingCleanup
+                .Where(resume => resume.StorageDeleteNextAttemptAt == null || resume.StorageDeleteNextAttemptAt <= now)
+                .OrderBy(resume => resume.StorageDeleteNextAttemptAt)
+                .ThenBy(resume => resume.DeletedAt)
+                .Take(batchSize)
+                .Select(resume => new ResumeStorageCleanupCandidate(
+                    resume.Id, resume.StorageDeleteAttempts, resume.StorageDeleteNextAttemptAt))
+                .ToArrayAsync(cancellationToken);
+        }
+        else
+        {
+            var rows = await pendingCleanup
+                .Select(resume => new ResumeStorageCleanupCandidate(
+                    resume.Id, resume.StorageDeleteAttempts, resume.StorageDeleteNextAttemptAt))
+                .ToArrayAsync(cancellationToken);
+            candidates = rows
+                .Where(resume => resume.NextAttemptAt is null || resume.NextAttemptAt <= now)
+                .Take(batchSize)
+                .ToArray();
+        }
+
+        var attempted = 0;
+        foreach (var candidate in candidates)
+        {
+            var leaseUntil = now.AddMinutes(5);
+            var claim = dbContext.Resumes.Where(resume =>
+                resume.Id == candidate.ResumeId && resume.DeletedAt != null && resume.StorageDeletedAt == null &&
+                resume.StorageDeleteNextAttemptAt == candidate.NextAttemptAt &&
+                !dbContext.OutboxEvents.Any(job => job.AggregateId == resume.Id &&
+                    job.Type == "ResumeExtractionRequested" &&
+                    (job.Status == BillingValues.Pending || job.Status == BillingValues.Processing)));
+            var claimed = await claim.ExecuteUpdateAsync(setters => setters
+                .SetProperty(resume => resume.StorageDeleteAttempts, resume => resume.StorageDeleteAttempts + 1)
+                .SetProperty(resume => resume.StorageDeleteNextAttemptAt, leaseUntil), cancellationToken);
+            if (claimed == 0) continue;
+
+            attempted++;
+            var attemptNumber = candidate.Attempts + 1;
+            var storageKey = await dbContext.Resumes.AsNoTracking()
+                .Where(resume => resume.Id == candidate.ResumeId)
+                .Select(resume => resume.StoredFile.StorageKey)
+                .SingleAsync(cancellationToken);
+            try
+            {
+                await storageProvider.DeleteAsync(storageKey, cancellationToken);
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                var retryAt = timeProvider.GetUtcNow().Add(ResumeStorageCleanupDelay(attemptNumber));
+                await dbContext.Resumes
+                    .Where(resume => resume.Id == candidate.ResumeId && resume.StorageDeletedAt == null &&
+                                     resume.StorageDeleteNextAttemptAt == leaseUntil)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(resume => resume.StorageDeleteNextAttemptAt, retryAt), cancellationToken);
+                ResumeStorageCleanupFailed(logger, candidate.ResumeId, attemptNumber);
+                continue;
+            }
+
+            var deletedAt = timeProvider.GetUtcNow();
+            await dbContext.Resumes
+                .Where(resume => resume.Id == candidate.ResumeId && resume.DeletedAt != null &&
+                                 resume.StorageDeletedAt == null && resume.StorageDeleteNextAttemptAt == leaseUntil)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(resume => resume.StorageDeletedAt, deletedAt)
+                    .SetProperty(resume => resume.StorageDeleteNextAttemptAt, (DateTimeOffset?)null), cancellationToken);
+        }
+
+        return attempted;
+    }
+
+    private static TimeSpan ResumeStorageCleanupDelay(int attemptNumber)
+    {
+        var exponent = Math.Clamp(attemptNumber - 1, 0, 10);
+        return TimeSpan.FromSeconds(Math.Min(21_600, 30 * (1 << exponent)));
+    }
+
+    private sealed record ResumeStorageCleanupCandidate(
+        Guid ResumeId,
+        int Attempts,
+        DateTimeOffset? NextAttemptAt);
 
     private async Task ExtractResumeAsync(OutboxEvent job, CancellationToken cancellationToken)
     {
         var resume = await dbContext.Resumes.Include(item => item.StoredFile).SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
-        resume.Status = PracticeValues.Extracting;
-        resume.UpdatedAt = timeProvider.GetUtcNow();
-        await dbContext.SaveChangesAsync(cancellationToken);
+        if (!await TrySetResumeExtractionStatusAsync(
+                resume, job, PracticeValues.Extracting, notify: false, markProcessed: false, cancellationToken))
+            return;
 
         await using var source = await storageProvider.OpenReadAsync(resume.StoredFile.StorageKey, cancellationToken);
         await using var buffered = await ReadStoredFileBoundedAsync(source, resume.StoredFile.Size, cancellationToken);
@@ -1330,12 +1491,9 @@ public sealed partial class PracticeService(
         if (buffered.Length != resume.StoredFile.Size ||
             !string.Equals(actualChecksum, resume.StoredFile.Checksum, StringComparison.OrdinalIgnoreCase))
         {
-            resume.Status = PracticeValues.Failed;
-            resume.UpdatedAt = timeProvider.GetUtcNow();
-            EnqueueResourceChanged(resume.UserId, "resume", resume.Id, resume.Status, resume.UpdatedAt);
-            MarkProcessed(job);
+            await TrySetResumeExtractionStatusAsync(
+                resume, job, PracticeValues.Failed, notify: true, markProcessed: true, cancellationToken);
             StorageIntegrityFailed(logger, resume.Id, buffered.Length, resume.StoredFile.Size);
-            await dbContext.SaveChangesAsync(cancellationToken);
             return;
         }
         buffered.Position = 0;
@@ -1357,9 +1515,9 @@ public sealed partial class PracticeService(
             return;
         }
 
-        resume.Status = PracticeValues.OcrFallback;
-        resume.UpdatedAt = timeProvider.GetUtcNow();
-        await dbContext.SaveChangesAsync(cancellationToken);
+        if (!await TrySetResumeExtractionStatusAsync(
+                resume, job, PracticeValues.OcrFallback, notify: false, markProcessed: false, cancellationToken))
+            return;
         OcrFallbackStarted(logger, resume.Id, localExtraction?.Quality.ToString() ?? DocumentExtractionQuality.Failed.ToString());
 
         buffered.Position = 0;
@@ -1375,6 +1533,34 @@ public sealed partial class PracticeService(
 
         ValidateResumeProfile(fallback.Profile);
         await CompleteResumeExtractionAsync(resume, job, extraction, fallback.Profile, ocrFallbackUsed: true, cancellationToken: cancellationToken);
+    }
+
+    private async Task<bool> TrySetResumeExtractionStatusAsync(
+        ResumeRecord resume,
+        OutboxEvent job,
+        string status,
+        bool notify,
+        bool markProcessed,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        await LockUserAsync(resume.UserId, cancellationToken);
+        await dbContext.Entry(resume).ReloadAsync(cancellationToken);
+        if (resume.DeletedAt is not null)
+        {
+            MarkProcessed(job);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(transaction, cancellationToken);
+            return false;
+        }
+
+        resume.Status = status;
+        resume.UpdatedAt = timeProvider.GetUtcNow();
+        if (notify) EnqueueResourceChanged(resume.UserId, "resume", resume.Id, status, resume.UpdatedAt);
+        if (markProcessed) MarkProcessed(job);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
+        return true;
     }
 
     private static async Task<MemoryStream> ReadStoredFileBoundedAsync(
@@ -1414,6 +1600,17 @@ public sealed partial class PracticeService(
         bool ocrFallbackUsed,
         CancellationToken cancellationToken)
     {
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        await LockUserAsync(resume.UserId, cancellationToken);
+        await dbContext.Entry(resume).ReloadAsync(cancellationToken);
+        if (resume.DeletedAt is not null)
+        {
+            MarkProcessed(job);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(transaction, cancellationToken);
+            return;
+        }
+
         resume.ExtractedText = extraction.Text;
         if (profile is not null)
         {
@@ -1442,6 +1639,7 @@ public sealed partial class PracticeService(
             extraction.ExtractionMethod.ToString(), extraction.QualityScore, string.Join(',', extraction.Warnings), ocrFallbackUsed);
         MarkProcessed(job);
         await dbContext.SaveChangesAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
     }
 
     private async Task<ResumeProfile> EnsureResumeProfileAsync(
@@ -1481,6 +1679,8 @@ public sealed partial class PracticeService(
         return profile;
     }
 
+    private static bool HasUsableResumeContext(ResumeRecord? resume) => resume is { DeletedAt: null };
+
     private static ResumeProfile? TryReadResumeProfile(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
@@ -1504,9 +1704,42 @@ public sealed partial class PracticeService(
     {
         var analysis = await dbContext.ResumeAnalyses.Include(item => item.Resume).Include(item => item.JobDescription)
             .SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
-        analysis.Status = PracticeValues.Processing;
-        analysis.UpdatedAt = timeProvider.GetUtcNow();
-        await dbContext.SaveChangesAsync(cancellationToken);
+
+        await using (var startTransaction = await BeginTransactionAsync(cancellationToken))
+        {
+            await LockUserAsync(analysis.UserId, cancellationToken);
+            await dbContext.Entry(analysis.Resume).ReloadAsync(cancellationToken);
+            if (analysis.Resume.DeletedAt is not null &&
+                analysis.Status is PracticeValues.Queued or PracticeValues.Processing)
+            {
+                var now = timeProvider.GetUtcNow();
+                analysis.Status = PracticeValues.Failed;
+                analysis.ErrorCode = "RESUME_DELETED";
+                analysis.UpdatedAt = now;
+                EnqueueResourceChanged(analysis.UserId, "resumeAnalysis", analysis.Id, analysis.Status, now);
+                MarkProcessed(job);
+                if (analysis.UsageReservationId.HasValue)
+                    await featureEntitlementService.VoidAsync(analysis.UserId, analysis.UsageReservationId.Value, cancellationToken);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await CommitAsync(startTransaction, cancellationToken);
+                return;
+            }
+
+            if (analysis.Status == PracticeValues.Queued)
+            {
+                analysis.Status = PracticeValues.Processing;
+                analysis.UpdatedAt = timeProvider.GetUtcNow();
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+            else if (analysis.Status != PracticeValues.Processing)
+            {
+                MarkProcessed(job);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await CommitAsync(startTransaction, cancellationToken);
+                return;
+            }
+            await CommitAsync(startTransaction, cancellationToken);
+        }
         var profile = await EnsureResumeProfileAsync(analysis.Resume, analysis.Id, cancellationToken);
         analysis.ProfileSnapshot = JsonSerializer.Serialize(profile, JsonOptions);
         analysis.ProfileModelVersion = analysis.Resume.ProfileModelVersion;
@@ -1558,11 +1791,47 @@ public sealed partial class PracticeService(
         var snapshot = await dbContext.InterviewSessions.Include(item => item.Resume).Include(item => item.JobDescription)
             .SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
         if (snapshot.Status != PracticeValues.Starting) { MarkProcessed(job); await dbContext.SaveChangesAsync(cancellationToken); return; }
-        var profile = snapshot.Resume is null ? null : await EnsureResumeProfileAsync(snapshot.Resume, snapshot.Id, cancellationToken);
+
+        await using (var activationGate = await BeginTransactionAsync(cancellationToken))
+        {
+            await LockUserAsync(snapshot.UserId, cancellationToken);
+            await dbContext.Entry(snapshot).ReloadAsync(cancellationToken);
+            if (snapshot.Resume is not null)
+                await dbContext.Entry(snapshot.Resume).ReloadAsync(cancellationToken);
+            if (snapshot.Status == PracticeValues.Starting && snapshot.Resume?.DeletedAt is not null)
+            {
+                var deletedReservation = await dbContext.UsageEvents.AsNoTracking()
+                    .SingleAsync(item => item.Id == snapshot.ReservationEventId, cancellationToken);
+                var deletedEntitlement = await FindEntitlementForUpdateAsync(deletedReservation.EntitlementId, cancellationToken)
+                    ?? throw InvalidState();
+                var deletionGateAt = timeProvider.GetUtcNow();
+                FinalizeReservation(deletedEntitlement, deletedReservation, BillingValues.Void, deletionGateAt);
+                snapshot.Status = PracticeValues.Failed;
+                snapshot.Version++;
+                snapshot.UpdatedAt = deletionGateAt;
+                EnqueueResourceChanged(snapshot.UserId, "interview", snapshot.Id, snapshot.Status, deletionGateAt);
+                MarkProcessed(job);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await CommitAsync(activationGate, cancellationToken);
+                return;
+            }
+            await CommitAsync(activationGate, cancellationToken);
+        }
+
+        if (snapshot.Status != PracticeValues.Starting)
+        {
+            MarkProcessed(job);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return;
+        }
+        var hasUsableResumeContext = HasUsableResumeContext(snapshot.Resume);
+        var profile = hasUsableResumeContext
+            ? await EnsureResumeProfileAsync(snapshot.Resume!, snapshot.Id, cancellationToken)
+            : null;
         var firstTopic = snapshot.FocusTopic ?? InterviewQuestionValues.FreePrimaryTopicForSequence(
             snapshot.InterviewType,
             1,
-            snapshot.Resume is not null,
+            hasUsableResumeContext,
             snapshot.JobDescription is not null);
         var context = resumeContextBuilder.BuildInterviewQuestionContext(
             snapshot.Role,
@@ -1718,9 +1987,14 @@ public sealed partial class PracticeService(
         else if (current.Type == "ResumeExtractionRequested")
         {
             var resume = await dbContext.Resumes.SingleAsync(item => item.Id == current.AggregateId, cancellationToken);
-            resume.Status = PracticeValues.Failed;
-            resume.UpdatedAt = current.ProcessedAt.Value;
-            EnqueueResourceChanged(resume.UserId, "resume", resume.Id, resume.Status, resume.UpdatedAt);
+            await LockUserAsync(resume.UserId, cancellationToken);
+            await dbContext.Entry(resume).ReloadAsync(cancellationToken);
+            if (resume.DeletedAt is null)
+            {
+                resume.Status = PracticeValues.Failed;
+                resume.UpdatedAt = current.ProcessedAt.Value;
+                EnqueueResourceChanged(resume.UserId, "resume", resume.Id, resume.Status, resume.UpdatedAt);
+            }
         }
         else if (current.Type == "ResumeAnalysisRequested")
         {
@@ -1797,7 +2071,9 @@ public sealed partial class PracticeService(
 
     private async Task ValidateOwnedContextAsync(Guid userId, Guid? resumeId, Guid? jobDescriptionId, CancellationToken cancellationToken)
     {
-        if (resumeId is not null && !await dbContext.Resumes.AnyAsync(item => item.Id == resumeId && item.UserId == userId && item.Status == PracticeValues.Ready, cancellationToken))
+        if (resumeId is not null && !await dbContext.Resumes.AnyAsync(item =>
+                item.Id == resumeId && item.UserId == userId && item.DeletedAt == null && item.Status == PracticeValues.Ready,
+                cancellationToken))
             throw NotFound();
         if (jobDescriptionId is not null && !await dbContext.JobDescriptions.AnyAsync(item => item.Id == jobDescriptionId && item.UserId == userId, cancellationToken))
             throw NotFound();
@@ -1845,6 +2121,15 @@ public sealed partial class PracticeService(
 
         return await dbContext.InterviewSessions
             .SingleOrDefaultAsync(item => item.Id == interviewId && item.UserId == userId, cancellationToken);
+    }
+
+    private async Task LockUserAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = dbContext.Database.IsNpgsql()
+            ? await dbContext.Users.FromSqlInterpolated($"SELECT * FROM asp_net_users WHERE \"Id\" = {userId} FOR UPDATE")
+                .SingleOrDefaultAsync(cancellationToken)
+            : await dbContext.Users.SingleOrDefaultAsync(item => item.Id == userId, cancellationToken);
+        if (user is null) throw NotFound();
     }
 
     private async Task<Entitlement?> FindActiveEntitlementForUpdateAsync(Guid userId, CancellationToken cancellationToken)
@@ -2272,6 +2557,10 @@ public sealed partial class PracticeService(
     [LoggerMessage(LogLevel.Information, "Resume {ResumeId} entered document OCR fallback after {LocalQuality} local quality")]
     private static partial void OcrFallbackStarted(ILogger logger, Guid resumeId, string localQuality);
 
+    [LoggerMessage(LogLevel.Warning,
+        "Resume storage cleanup failed for resume {ResumeId}; retry scheduled after attempt {AttemptNumber}.")]
+    private static partial void ResumeStorageCleanupFailed(ILogger logger, Guid resumeId, int attemptNumber);
+
     private static ResumeView MapResume(ResumeRecord resume) => new(
         resume.Id,
         resume.StoredFile.FileName,
@@ -2547,10 +2836,15 @@ public sealed partial class PracticeService(
         var resumeId = command.ResumeId;
         if (resumeId is null)
         {
-            resumeId = await dbContext.UserProfiles.AsNoTracking()
+            var primaryResumeId = await dbContext.UserProfiles.AsNoTracking()
                 .Where(item => item.UserId == userId)
                 .Select(item => item.PrimaryResumeId)
                 .SingleOrDefaultAsync(cancellationToken);
+            if (primaryResumeId is { } selectedResumeId &&
+                await dbContext.Resumes.AsNoTracking().AnyAsync(item =>
+                    item.Id == selectedResumeId && item.UserId == userId && item.DeletedAt == null,
+                    cancellationToken))
+                resumeId = selectedResumeId;
             if (resumeId is null || resumeId == Guid.Empty)
                 throw NotFound();
         }

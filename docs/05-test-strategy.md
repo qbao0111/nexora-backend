@@ -1,7 +1,7 @@
 # Test Strategy — Nexora .NET 10 MVP
 
 **Status:** Approved implementation baseline; canonical Definition of Done  
-**Last updated:** 2026-08-21
+**Last updated:** 2026-09-18
 
 ## 1. Mục tiêu
 
@@ -31,6 +31,8 @@ Chứng minh requirement trong SRS hoạt động đúng, đặc biệt là quy�
 | T-08 | Refresh sau answer | Question/answer order và report không mất. |
 | T-09 | Account deletion | Personal records/object theo retention policy được xoá/anonymise. |
 | T-10 | Restore backup vào môi trường cô lập | API đọc được dữ liệu hợp lệ sau restore. |
+| T-11 | Owner deletes one resume while another user, profile, history, and workers reference resumes | Foreign/unknown delete remains opaque 404; owner delete/replay is 204; only matching Primary Resume is cleared; current list/selector/Skill Profile/export exclude the tombstone; analysis/interview history remains; storage failure retries durably and extraction/queued AI work cannot race cleanup. |
+| T-12 | Resume is deleted after an interview becomes active | Existing questions/answers/evaluations/report and historical ResumeId remain; future answer evaluation, next/follow-up and paid continuation AI inputs contain no deleted ResumeProfile; topic selection treats resume availability as false; Practice Again rejects an inherited deleted Resume. |
 
 ### A2 upload-intent coverage
 
@@ -46,7 +48,7 @@ Khi corresponding projects tồn tại, baseline local/CI bắt buộc gồm `do
 | Staging | Migration fresh + upgrade pass; E2E critical paths pass; payment sandbox pass. |
 | Production | Smoke test health/auth/plan read; error rate và queue lag bình thường sau deploy. |
 
-Coverage phần trăm không thay thế test risk-based. Mục tiêu initial: business services quan trọng ≥80% line coverage; 100% scenario trong bảng T-01..T-10 phải có automated hoặc checklist evidence.
+Coverage phần trăm không thay thế test risk-based. Mục tiêu initial: business services quan trọng ≥80% line coverage; 100% scenario trong bảng T-01..T-11 phải có automated hoặc checklist evidence.
 
 ## 5. Canonical Definition of Done
 

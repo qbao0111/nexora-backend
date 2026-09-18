@@ -96,7 +96,7 @@ public sealed class PrivacyApiTests
     }
 
     [Fact]
-    public async Task FieldBenchmarkExportIncludesSafeProvenanceWithoutProfileSnapshot()
+    public async Task DeletedResumeExportOmitsCurrentLibraryButRetainsSafeAnalysisHistory()
     {
         using var factory = new NexoraApiFactory();
         factory.InitializeDatabase();
@@ -134,7 +134,8 @@ public sealed class PrivacyApiTests
                 ProfileSchemaVersion = "resume-profile-v2",
                 Version = 3,
                 CreatedAt = now,
-                UpdatedAt = now
+                UpdatedAt = now,
+                DeletedAt = now
             });
             db.Add(new ResumeAnalysis
             {
@@ -164,6 +165,8 @@ public sealed class PrivacyApiTests
         using var response = await client.GetAsync("/api/v1/me/export");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var exported = await DataAsync(response);
+        Assert.Empty(exported.GetProperty("resumes").EnumerateArray());
+        Assert.Single(exported.GetProperty("analyses").EnumerateArray());
         var analysis = exported.GetProperty("analyses")[0];
         Assert.Equal("field_benchmark", analysis.GetProperty("mode").GetString());
         Assert.Equal("Fintech", analysis.GetProperty("context").GetProperty("industry").GetString());
