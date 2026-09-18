@@ -26,7 +26,9 @@ public static class LearningPathRules
 {
     public const int NumericGapThreshold = 75;
     public const int CriticalGapThreshold = 60;
-    public const int MaximumQualitativeActivities = 12;
+    // These limits apply only to the newly generated plan, never persisted history.
+    public const int MaximumCurrentActivities = 10;
+    public const int MaximumQualitativeActivities = 4;
     public const int ActivityKeyMaxLength = 160;
     public const int ActivityTitleMaxLength = 200;
     public const int ActivityDescriptionMaxLength = 500;
@@ -226,18 +228,13 @@ public static class LearningPathPlanner
             });
         }
 
-        foreach (var signal in profile.WeaknessSignals
-                     .Where(item => item is not null &&
-                                    string.Equals(item.SourceType, SkillProfileSourceTypes.ResumeAnalysis, StringComparison.Ordinal) &&
-                                    !string.IsNullOrWhiteSpace(item.Label))
-                     .OrderByDescending(item => item.LatestEvidenceAt)
-                     .ThenBy(item => item.Label, StringComparer.Ordinal)
-                     .Take(LearningPathRules.MaximumQualitativeActivities))
+        var qualitativeActivities = new List<LearningPathActivityPlan>();
+        foreach (var signal in LearningPathQualitativeSignalDeduper.Deduplicate(profile.WeaknessSignals))
         {
             var label = LearningPathRules.Truncate(signal.Label, 150);
             if (label.Length == 0) continue;
 
-            activities.Add(new LearningPathActivityPlan(
+            qualitativeActivities.Add(new LearningPathActivityPlan(
                 LearningPathRules.QualitativeActivityKey(signal.Label),
                 LearningPathValues.ResumeImprovement,
                 LearningPathRules.Truncate($"Resume improvement: {label}", LearningPathRules.ActivityTitleMaxLength),
@@ -253,7 +250,7 @@ public static class LearningPathPlanner
             });
         }
 
-        var orderedActivities = activities
+        var selectedStructuredActivities = activities
             .GroupBy(item => item.Key, StringComparer.Ordinal)
             .Select(group => group.OrderBy(item => item.Type, StringComparer.Ordinal).First())
             .OrderBy(item => item.Priority)
@@ -261,6 +258,17 @@ public static class LearningPathPlanner
             .ThenBy(item => item.Type, StringComparer.Ordinal)
             .ThenBy(item => item.CompetencyCode ?? string.Empty, StringComparer.Ordinal)
             .ThenBy(item => item.Key, StringComparer.Ordinal)
+            .Take(LearningPathRules.MaximumCurrentActivities)
+            .ToArray();
+
+        var remainingSlots = LearningPathRules.MaximumCurrentActivities - selectedStructuredActivities.Length;
+        var selectedQualitativeActivities = qualitativeActivities
+            .OrderByDescending(item => item.LatestEvidenceAt)
+            .ThenBy(item => item.Key, StringComparer.Ordinal)
+            .Take(Math.Min(LearningPathRules.MaximumQualitativeActivities, remainingSlots));
+
+        var orderedActivities = selectedStructuredActivities
+            .Concat(selectedQualitativeActivities)
             .GroupBy(item => item.MilestoneCode, StringComparer.Ordinal)
             .SelectMany(group => group.Select((item, index) => item with { SortOrder = index }))
             .ToArray();

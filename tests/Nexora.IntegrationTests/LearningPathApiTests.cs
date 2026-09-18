@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Nexora.Business.Learning;
 using Nexora.Business.Practice;
 using Nexora.Business.Skills;
+using Nexora.Data.Learning;
 using Nexora.Data.Persistence;
 using Nexora.Data.Practice;
 
@@ -610,11 +611,15 @@ public sealed class LearningPathApiTests
     }
 
     [Fact]
-    public async Task QualitativeCvSignalCreatesOnlyAResumeImprovementActivity()
+    public async Task QualitativeCvSignalsAreDeduplicatedAndRemainStableAcrossRefresh()
     {
+        var evidenceAt = new DateTimeOffset(2026, 9, 10, 8, 0, 0, TimeSpan.Zero);
         using var factory = NewFactory(new MutableSkillProfileService(new SkillProfileView(
             [],
-            [new SkillProfileWeaknessSignal("cv_analysis", "Missing SQL evidence", DateTimeOffset.UtcNow)])));
+            [
+                new SkillProfileWeaknessSignal("cv_analysis", " Missing SQL / query optimization ", evidenceAt),
+                new SkillProfileWeaknessSignal("cv_analysis", "missing sql, query optimization", evidenceAt.AddDays(1))
+            ])));
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
         var account = await RegisterAsync(client);
@@ -624,11 +629,59 @@ public sealed class LearningPathApiTests
         using var response = await client.PostAsJsonAsync("/api/v1/learning-path", new { });
         var data = await DataAsync(response);
         var activity = Assert.Single(Activities(data));
+        using var repeatedGenerate = await client.PostAsJsonAsync("/api/v1/learning-path", new { });
+        var repeated = await DataAsync(repeatedGenerate);
+        using var refreshedResponse = await client.PostAsJsonAsync("/api/v1/learning-path/refresh", new { });
+        var refreshed = await DataAsync(refreshedResponse);
 
         Assert.Equal("resume_improvement", activity.GetProperty("type").GetString());
         Assert.Equal(JsonValueKind.Null, activity.GetProperty("competencyCode").ValueKind);
         Assert.Equal(JsonValueKind.Null, activity.GetProperty("resourceId").ValueKind);
         Assert.Equal(3, activity.GetProperty("priority").GetInt32());
+        Assert.Equal(HttpStatusCode.OK, repeatedGenerate.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, refreshedResponse.StatusCode);
+        Assert.Equal(activity.GetProperty("id").GetGuid(), Assert.Single(Activities(repeated)).GetProperty("id").GetGuid());
+        Assert.Equal(activity.GetProperty("id").GetGuid(), Assert.Single(Activities(refreshed)).GetProperty("id").GetGuid());
+        using var scope = factory.Services.CreateScope();
+        Assert.Equal(1, await scope.ServiceProvider.GetRequiredService<NexoraDbContext>().LearningPathActivities.CountAsync());
+    }
+
+    [Fact]
+    public async Task ActivityKeyRemainsUniqueWithinItsLearningPath()
+    {
+        using var factory = NewFactory(new MutableSkillProfileService(Profile(
+            Competency("resume.clarity", "Clarity", "resume", 50))));
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        await CreateCareerGoalAsync(client, "Backend Developer");
+        using var generated = await client.PostAsJsonAsync("/api/v1/learning-path", new { });
+        Assert.Equal(HttpStatusCode.Created, generated.StatusCode);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var existing = await db.LearningPathActivities.SingleAsync();
+        db.LearningPathActivities.Add(new LearningPathActivity
+        {
+            Id = Guid.NewGuid(),
+            LearningPathId = existing.LearningPathId,
+            LearningPathMilestoneId = existing.LearningPathMilestoneId,
+            ActivityKey = existing.ActivityKey,
+            Type = existing.Type,
+            Title = existing.Title,
+            Description = existing.Description,
+            CompetencyCode = existing.CompetencyCode,
+            ResourceId = existing.ResourceId,
+            ExternalUrl = existing.ExternalUrl,
+            Priority = existing.Priority,
+            SortOrder = existing.SortOrder + 1,
+            Status = LearningPathValues.Pending,
+            CreatedAt = existing.CreatedAt,
+            UpdatedAt = existing.UpdatedAt
+        });
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
     }
 
     [Fact]
