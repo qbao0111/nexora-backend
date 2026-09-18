@@ -121,7 +121,7 @@ public sealed partial class BillingService(
         if (order.Status != BillingValues.Pending) return MapCheckoutStatus(order, null);
 
         var verified = await paymentProvider.QueryPaymentAsync(
-            new PaymentOrderRequest(order.Id, order.AmountMinor, order.Currency, order.ProviderTransactionId, order.CreatedAt, null), cancellationToken);
+            new PaymentOrderRequest(order.Id, order.AmountMinor, order.Currency, order.ProviderTransactionId, order.CreatedAt, null, order.PlanCodeSnapshot), cancellationToken);
         if (verified is not null) await ApplyPaymentEventAsync(verified, cancellationToken);
 
         var refreshed = await dbContext.Orders.AsNoTracking().SingleAsync(item => item.Id == orderId, cancellationToken);
@@ -593,7 +593,7 @@ public sealed partial class BillingService(
             }
 
             var providerCheckout = await paymentProvider.CreateCheckoutAsync(
-                new PaymentOrderRequest(current.Id, current.AmountMinor, current.Currency, current.ProviderTransactionId, current.CreatedAt, ipAddress), cancellationToken);
+                new PaymentOrderRequest(current.Id, current.AmountMinor, current.Currency, current.ProviderTransactionId, current.CreatedAt, ipAddress, current.PlanCodeSnapshot), cancellationToken);
             if (!string.Equals(providerCheckout.Provider, paymentProvider.ProviderName, StringComparison.Ordinal) ||
                 !string.Equals(providerCheckout.ProviderTransactionId, current.ProviderTransactionId, StringComparison.Ordinal) ||
                 !IsValidCheckoutAction(providerCheckout.Action))
