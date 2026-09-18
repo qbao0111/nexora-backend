@@ -121,9 +121,11 @@ public static class DependencyInjection
         services.AddHttpClient<GeminiDocumentOcrProvider>();
         services.AddSingleton<IDocumentOcrProvider>(provider => provider.GetRequiredService<GeminiDocumentOcrProvider>());
         var paymentProvider = configuration.GetValue($"{PaymentProviderOptions.SectionName}:Provider", "fake")?.Trim().ToLowerInvariant() ?? "fake";
+        var payosEnabled = string.Equals(paymentProvider, "payos", StringComparison.Ordinal);
         services.AddOptions<PaymentProviderOptions>().Bind(configuration.GetSection(PaymentProviderOptions.SectionName))
             .Validate(options => string.Equals(options.Provider, "fake", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(options.Provider, "sepay", StringComparison.OrdinalIgnoreCase), "Billing:Payment:Provider must be fake or sepay.")
+                string.Equals(options.Provider, "sepay", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(options.Provider, "payos", StringComparison.OrdinalIgnoreCase), "Billing:Payment:Provider must be fake, sepay or payos.")
             .ValidateOnStart();
         services.AddOptions<FakePaymentOptions>().Bind(configuration.GetSection(FakePaymentOptions.SectionName))
             .Validate(options => options.TimestampToleranceMinutes is > 0 and <= 60, "Fake payment timestamp tolerance must be between 1 and 60 minutes.");
@@ -153,7 +155,28 @@ public static class DependencyInjection
             var sepay = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<SepayOptions>>().Value;
             client.Timeout = TimeSpan.FromSeconds(sepay.TimeoutSeconds);
         });
-        if (string.Equals(paymentProvider, "sepay", StringComparison.OrdinalIgnoreCase))
+        services.AddOptions<PayosOptions>().Bind(configuration.GetSection(PayosOptions.SectionName))
+            .Validate(options => !payosEnabled || !string.IsNullOrWhiteSpace(options.ClientId),
+                "Billing:Payos:ClientId is required when Billing:Payment:Provider=payos.")
+            .Validate(options => !payosEnabled || !string.IsNullOrWhiteSpace(options.ApiKey),
+                "Billing:Payos:ApiKey is required when Billing:Payment:Provider=payos.")
+            .Validate(options => !payosEnabled || !string.IsNullOrWhiteSpace(options.ChecksumKey),
+                "Billing:Payos:ChecksumKey is required when Billing:Payment:Provider=payos.")
+            .Validate(options => !payosEnabled || PayosConfigurationValidation.IsValidCallbackUrl(options.ReturnUrl),
+                "Billing:Payos:ReturnUrl must be an absolute HTTPS URL, or an HTTP loopback URL for local development, without credentials or a fragment.")
+            .Validate(options => !payosEnabled || PayosConfigurationValidation.IsValidCallbackUrl(options.CancelUrl),
+                "Billing:Payos:CancelUrl must be an absolute HTTPS URL, or an HTTP loopback URL for local development, without credentials or a fragment.")
+            .Validate(options => !payosEnabled || options.TimeoutSeconds is >= 5 and <= 60,
+                "Billing:Payos:TimeoutSeconds must be between 5 and 60 seconds.")
+            .ValidateOnStart();
+        services.AddHttpClient<PayosPaymentProvider>((provider, client) =>
+        {
+            var payos = provider.GetRequiredService<IOptions<PayosOptions>>().Value;
+            client.Timeout = TimeSpan.FromSeconds(payos.TimeoutSeconds);
+        });
+        if (payosEnabled)
+            services.AddSingleton<IPaymentProvider>(provider => provider.GetRequiredService<PayosPaymentProvider>());
+        else if (string.Equals(paymentProvider, "sepay", StringComparison.OrdinalIgnoreCase))
             services.AddSingleton<IPaymentProvider>(provider => provider.GetRequiredService<SepayPaymentProvider>());
         else
             services.AddSingleton<IPaymentProvider, FakePaymentProvider>();

@@ -110,6 +110,8 @@ dotnet user-secrets set "Billing:Sepay:CancelUrl" "https://YOUR-PUBLIC-FRONTEND/
 
 Localhost/HTTP callback URLs are rejected intentionally. Use a Vercel preview URL or a public frontend tunnel. SePay IPN is configured separately in the merchant dashboard; for the backend IPN only, run `ngrok http 5088` and use `https://<ngrok-domain>/api/v1/webhooks/payments/sepay`. Do not confuse the backend IPN URL with the frontend callback URLs. See [sepay-sandbox.md](sepay-sandbox.md).
 
+payOS is also available as an explicit provider. Its checkout action is a browser `GET` redirect, while fulfillment still requires the signed webhook or server-side refresh query. It accepts loopback HTTP return/cancel URLs only for local browser testing; staging must use public HTTPS URLs and a public HTTPS backend webhook at `/api/v1/webhooks/payments/payos`. See [payos-setup.md](payos-setup.md); do not place its Client ID, API Key or Checksum Key in frontend code.
+
 ## 6. Seed thư viện tình huống
 
 Nexora quản lý nội dung tình huống phỏng vấn hoàn toàn từ backend thông qua thư viện tình huống. Frontend không sở hữu hoặc hardcode nội dung tình huống mà phải tích hợp trực tiếp qua API `GET /api/v1/scenarios`.

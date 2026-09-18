@@ -88,13 +88,15 @@ public sealed record CheckoutAction(string Method, string Url, IReadOnlyList<Che
 public sealed record PaymentCheckout(string Provider, string ProviderTransactionId, CheckoutAction Action);
 public sealed record VerifiedPaymentEvent(
     string ProviderEventId,
-    Guid OrderId,
+    // Null when a provider supplies only its persisted transaction reference; BillingService resolves it through the unique provider/reference index.
+    Guid? OrderId,
     string ProviderTransactionId,
     long AmountMinor,
     string Currency,
     bool IsPaid,
     bool IsFinal,
-    DateTimeOffset OccurredAt);
+    DateTimeOffset OccurredAt,
+    bool IsVerificationProbe = false);
 public sealed record PaymentCallbackRequest(string Method, IReadOnlyDictionary<string, string> QueryParameters, IReadOnlyDictionary<string, string> Headers, ReadOnlyMemory<byte> Body);
 public sealed record PaymentWebhookProcessResult(Guid OrderId, string OrderStatus, bool WasDuplicate, bool WasAlreadyFinal);
 
@@ -102,6 +104,10 @@ public interface IPaymentProvider
 {
     string ProviderName { get; }
     string CreateProviderTransactionId(Guid orderId);
+    // Some providers can safely rebuild a redirect-only checkout action from a persisted URL.
+    // New checkout actions are persisted in full by BillingService; this is only a compatibility
+    // fallback for orders created before action snapshots existed.
+    CheckoutAction? RestoreCheckoutAction(string checkoutUrl) => null;
     Task<PaymentCheckout> CreateCheckoutAsync(PaymentOrderRequest request, CancellationToken cancellationToken);
     Task<VerifiedPaymentEvent> VerifyWebhookAsync(PaymentCallbackRequest request, CancellationToken cancellationToken);
     Task<VerifiedPaymentEvent?> QueryPaymentAsync(PaymentOrderRequest request, CancellationToken cancellationToken);

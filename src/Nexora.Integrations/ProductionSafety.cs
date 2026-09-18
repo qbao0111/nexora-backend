@@ -10,22 +10,32 @@ public static class ProductionSafety
         bool aiEnabled,
         bool paymentEnabled,
         bool uploadEnabled,
-        string? storageProvider = null)
+        string? storageProvider = null,
+        string? paymentProvider = null)
     {
         var normalizedStorageProvider = storageProvider?.Trim().ToLowerInvariant() ?? "local";
+        var normalizedPaymentProvider = paymentProvider?.Trim().ToLowerInvariant() ?? "fake";
         if (normalizedStorageProvider is not ("local" or "r2"))
             throw new InvalidOperationException("Storage:Provider must be local or r2.");
 
         if (!isProduction) return;
         var enabled = new List<string>();
         if (aiEnabled) enabled.Add("AI (DEC-01)");
-        if (paymentEnabled) enabled.Add("non-production payment adapter (DEC-02)");
+        if (paymentEnabled) enabled.Add($"{PaymentAdapterName(normalizedPaymentProvider)} (DEC-02)");
         if (uploadEnabled && normalizedStorageProvider != "r2")
             enabled.Add("development upload adapter (A2/DEC-04)");
         if (enabled.Count == 0) return;
         throw new InvalidOperationException(
             $"Production cannot enable {string.Join(", ", enabled)} before the corresponding production decisions are resolved. Disable the affected Features settings.");
     }
+
+    private static string PaymentAdapterName(string provider) => provider switch
+    {
+        "fake" => "Fake payment adapter",
+        "sepay" => "SePay payment adapter",
+        "payos" => "payOS payment adapter",
+        _ => "payment adapter"
+    };
 
     public static void ValidateEmailConfiguration(bool isProductionOrStaging, IConfiguration configuration)
     {

@@ -44,6 +44,7 @@ public sealed class Order
     public string PaymentProvider { get; set; } = string.Empty;
     public string ProviderTransactionId { get; set; } = string.Empty;
     public string CheckoutUrl { get; set; } = string.Empty;
+    public string? CheckoutActionSnapshot { get; set; }
     public string FeaturesSnapshot { get; set; } = "[]";
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

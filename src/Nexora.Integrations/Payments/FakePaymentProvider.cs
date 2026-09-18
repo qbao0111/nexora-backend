@@ -23,6 +23,11 @@ public sealed class FakePaymentProvider(IOptions<FakePaymentOptions> options, Ti
 
     public string CreateProviderTransactionId(Guid orderId) => $"fake_{orderId:N}";
 
+    public CheckoutAction? RestoreCheckoutAction(string checkoutUrl) =>
+        checkoutUrl.StartsWith("/fake-payments/", StringComparison.Ordinal)
+            ? new CheckoutAction("GET", checkoutUrl, Array.Empty<CheckoutFormField>())
+            : null;
+
     public Task<PaymentCheckout> CreateCheckoutAsync(PaymentOrderRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

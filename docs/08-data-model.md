@@ -23,7 +23,7 @@ ApplicationUser 1--N Subscription 1--N Entitlement 1--N UsageEvent
 | --- | --- | --- |
 | `asp_net_users`, `user_profiles` | Identity và profile | Identity là source of truth credential. |
 | `plans`, `plan_prices` | Catalog/version giá | Không sửa price đã được order tham chiếu. |
-| `orders`, `payment_events` | Payment lifecycle | unique provider event/transaction ID. |
+| `orders`, `payment_events` | Payment lifecycle | unique provider event/transaction ID; order persists its checkout action snapshot so idempotent retry/read never recreates a provider payment link. |
 | `subscriptions`, `entitlements` | Quyền theo thời hạn | Có `starts_at`, `ends_at`, `status`, snapshot. |
 | `usage_events` | Ledger reserve/consume/void/adjustment quota | immutable, unique idempotency key. |
 | `resumes`, `stored_files` | CV file + extracted text | `storage_key` private; checksum, MIME, scan/extract state; `DeletedAt` tombstone and durable storage cleanup state (`StorageDeletedAt`, attempts, next attempt). |
