@@ -2,27 +2,26 @@
 
 #nullable disable
 
-namespace Nexora.Data.Persistence.Migrations
+namespace Nexora.Data.Persistence.Migrations;
+
+/// <inheritdoc />
+public partial class PersistCheckoutActionSnapshot : Migration
 {
     /// <inheritdoc />
-    public partial class PersistCheckoutActionSnapshot : Migration
+    protected override void Up(MigrationBuilder migrationBuilder)
     {
-        /// <inheritdoc />
-        protected override void Up(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.AddColumn<string>(
-                name: "CheckoutActionSnapshot",
-                table: "orders",
-                type: "jsonb",
-                nullable: true);
-        }
+        migrationBuilder.AddColumn<string>(
+            name: "CheckoutActionSnapshot",
+            table: "orders",
+            type: "jsonb",
+            nullable: true);
+    }
 
-        /// <inheritdoc />
-        protected override void Down(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.DropColumn(
-                name: "CheckoutActionSnapshot",
-                table: "orders");
-        }
+    /// <inheritdoc />
+    protected override void Down(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.DropColumn(
+            name: "CheckoutActionSnapshot",
+            table: "orders");
     }
 }
