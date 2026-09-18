@@ -88,13 +88,15 @@ public sealed record CheckoutAction(string Method, string Url, IReadOnlyList<Che
 public sealed record PaymentCheckout(string Provider, string ProviderTransactionId, CheckoutAction Action);
 public sealed record VerifiedPaymentEvent(
     string ProviderEventId,
-    Guid OrderId,
+    // Null when a provider supplies only its persisted transaction reference; BillingService resolves it through the unique provider/reference index.
+    Guid? OrderId,
     string ProviderTransactionId,
     long AmountMinor,
     string Currency,
     bool IsPaid,
     bool IsFinal,
-    DateTimeOffset OccurredAt);
+    DateTimeOffset OccurredAt,
+    bool IsVerificationProbe = false);
 public sealed record PaymentCallbackRequest(string Method, IReadOnlyDictionary<string, string> QueryParameters, IReadOnlyDictionary<string, string> Headers, ReadOnlyMemory<byte> Body);
 public sealed record PaymentWebhookProcessResult(Guid OrderId, string OrderStatus, bool WasDuplicate, bool WasAlreadyFinal);
 

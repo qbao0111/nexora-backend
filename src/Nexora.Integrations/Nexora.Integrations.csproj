@@ -9,6 +9,7 @@
     <PackageReference Include="AWSSDK.S3" />
     <PackageReference Include="DocumentFormat.OpenXml" />
     <PackageReference Include="PdfPig" />
+    <PackageReference Include="payOS" />
   </ItemGroup>
 
 </Project>

@@ -35,11 +35,12 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | GET | `/me/export` | Export allowlisted core profile/billing/practice data của owner; không trả storage key, credential hoặc provider secret. |
 | POST | `/me/deletion-requests` | Yêu cầu xoá bất đồng bộ; bắt buộc `Idempotency-Key`, revoke session ngay và trả `202`. |
 | GET | `/plans` | Gói, giá, quyền lợi từ server. |
-| POST | `/checkout-sessions` | Tạo order và checkout action (form POST của payment provider). |
+| POST | `/checkout-sessions` | Tạo order và checkout action (redirect hoặc form POST của payment provider). |
 | GET | `/checkout-sessions/:id` | Đọc trạng thái checkout của owner. |
-| POST | `/checkout-sessions/:id/refresh` | Reconcile checkout pending từ provider sandbox khi IPN chậm. |
+| POST | `/checkout-sessions/:id/refresh` | Reconcile checkout pending từ payment provider khi webhook/IPN chậm. |
 | POST | `/webhooks/payments/fake` | Nhận webhook fake đã ký cho test deterministic nội bộ. |
 | POST | `/webhooks/payments/sepay` | Nhận SePay Sandbox IPN JSON với `X-Secret-Key`, trả `{ "success": true }` khi callback hợp lệ hoặc trùng. |
+| POST | `/webhooks/payments/payos` | Nhận payOS payment webhook JSON; payload signature được xác minh bằng Checksum Key trước khi xử lý, và callback hợp lệ/trùng trả `{ "success": true }`. |
 | POST | `/uploads/presign` | Cấp signed URL upload CV/avatar. |
 | POST | `/resumes` | Ghi metadata file sau upload. |
 | GET | `/resumes` | Liệt kê CV của owner theo thứ tự mới nhất. |
@@ -620,7 +621,7 @@ Interview: canonical tại 08-data-model.md
 
 Chỉ `active` nhận official answer. Completion xảy ra đúng một lần; report generation idempotent; optimistic concurrency/versioning chống transition/answer trùng. Terminal interview states không đổi trừ administrative/recovery process explicit và audited.
 
-Checkout payment responses expose `checkout: { method, url, fields[] }`. SePay uses a signed ordered POST form; the frontend must submit the fields as returned and must not generate signatures. Checkout statuses are `processing`, `pending`, `fulfilled` and terminal `failed`. SePay `ORDER_PAID` requires `CAPTURED` + `APPROVED`; `TRANSACTION_VOID` becomes final unpaid and moves a pending order to `failed`. Duplicate valid IPNs are acknowledged with HTTP 200 and do not create duplicate subscriptions or entitlements. Order `failed` is terminal and refresh does not call the provider again.
+Checkout payment responses expose `checkout: { method, url, fields[] }`. SePay uses a signed ordered POST form; the frontend must submit the fields as returned and must not generate signatures. payOS uses `method: "GET"`, its signed checkout URL and an empty `fields` array; the frontend redirects the browser only and never receives payment credentials. Checkout statuses are `processing`, `pending`, `fulfilled` and terminal `failed`. SePay `ORDER_PAID` requires `CAPTURED` + `APPROVED`; `TRANSACTION_VOID` becomes final unpaid and moves a pending order to `failed`. payOS fulfillment requires a signature-verified webhook or server-side status query with the exact persisted numeric provider reference, VND currency and server-owned amount. Browser return/cancel URLs never fulfill an order. Duplicate valid callbacks are acknowledged with HTTP 200 and do not create duplicate subscriptions or entitlements. Order `failed` is terminal and refresh does not call the provider again.
 
 ## Phân quyền
 

@@ -13,6 +13,15 @@ public sealed class ProductionSafetyTests
     }
 
     [Fact]
+    public void ProductionStillRejectsPayosUntilDec02IsResolved()
+    {
+        var exception = Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
+            true, aiEnabled: false, paymentEnabled: true, uploadEnabled: false, paymentProvider: "payos"));
+
+        Assert.Contains("payOS payment adapter", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DisabledProductionCapabilitiesAndDevelopmentRemainAvailable()
     {
         ProductionSafety.ValidateDevelopmentAdapters(true, aiEnabled: false, paymentEnabled: false, uploadEnabled: false);

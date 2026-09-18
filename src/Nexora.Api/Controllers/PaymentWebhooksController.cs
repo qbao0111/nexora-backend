@@ -62,6 +62,24 @@ public sealed class PaymentWebhooksController(IBillingService billingService) : 
         return Ok(new { success = true });
     }
 
+    [AllowAnonymous, HttpPost("payos")]
+    public async Task<IActionResult> ReceivePayos([FromBody] JsonElement? body, CancellationToken cancellationToken)
+    {
+        var rawBytes = body.HasValue && body.Value.ValueKind != JsonValueKind.Undefined && body.Value.ValueKind != JsonValueKind.Null
+            ? Encoding.UTF8.GetBytes(body.Value.GetRawText())
+            : await ReadBodyAsync(cancellationToken);
+
+        await billingService.ProcessPaymentWebhookAsync(
+            "payos",
+            new PaymentCallbackRequest(
+                Request.Method,
+                new Dictionary<string, string>(StringComparer.Ordinal),
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                rawBytes),
+            cancellationToken);
+        return Ok(new { success = true });
+    }
+
     private async Task<ReadOnlyMemory<byte>> ReadBodyAsync(CancellationToken cancellationToken)
     {
         if (Request.ContentLength > MaximumPayloadBytes)

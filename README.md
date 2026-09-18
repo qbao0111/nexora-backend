@@ -108,7 +108,7 @@ dotnet run --project src/Nexora.Api --no-launch-profile
 dotnet run --project src/Nexora.Worker --no-launch-profile
 ```
 
-Both processes use the same ignored `.nexora-local/storage` path when launched from the repository root. Development defaults to Gemini text AI, with optional DeepSeek V4 Flash text evaluation selected through `Ai:Provider=deepseek`; document OCR fallback remains Gemini in either mode. `Storage:Provider=local` selects the private local adapter for Development/Testing, while `Storage:Provider=r2` selects the private Cloudflare R2 adapter plus durable upload-intent/finalize flow when all `Storage:R2:*` settings are supplied. R2 direct browser PUTs use short-lived private signed URLs; the existing `POST /resumes` endpoint validates the actual object before creating a usable resume. Payment is config-selected; the default remains `FakePaymentProvider`, and SePay Sandbox can be enabled explicitly for internal payment testing with no production provider decision. Readiness is `/api/v1/health`; liveness is `/health/live`.
+Both processes use the same ignored `.nexora-local/storage` path when launched from the repository root. Development defaults to Gemini text AI, with optional DeepSeek V4 Flash text evaluation selected through `Ai:Provider=deepseek`; document OCR fallback remains Gemini in either mode. `Storage:Provider=local` selects the private local adapter for Development/Testing, while `Storage:Provider=r2` selects the private Cloudflare R2 adapter plus durable upload-intent/finalize flow when all `Storage:R2:*` settings are supplied. R2 direct browser PUTs use short-lived private signed URLs; the existing `POST /resumes` endpoint validates the actual object before creating a usable resume. Payment is config-selected; the default remains `FakePaymentProvider`, while SePay Sandbox and payOS can be enabled explicitly for internal payment testing with no production provider decision. Readiness is `/api/v1/health`; liveness is `/health/live`.
 
 ### Cloudflare R2 storage configuration
 
@@ -155,6 +155,10 @@ dotnet user-secrets set "Billing:Sepay:CancelUrl" "https://YOUR-PUBLIC-FRONTEND/
 ```
 
 Configure the backend IPN separately in the SePay dashboard as `https://<ngrok-domain>/api/v1/webhooks/payments/sepay`. See [SePay Sandbox payment runbook](docs/sepay-sandbox.md). Production payment stays disabled until DEC-02 is approved; this sandbox adapter is not a production payment selection.
+
+### payOS payment configuration
+
+payOS is a separate real-payment adapter selected by `Billing:Payment:Provider=payos`. Configure its Client ID, API Key, Checksum Key, browser return/cancel URLs and timeout only through user-secrets or deployment secrets. The checkout response is a `GET` redirect; payment state changes only after a signature-verified webhook or server-side refresh query. Configure the public backend URL `https://<PUBLIC-API-HOST>/api/v1/webhooks/payments/payos` in payOS, and use frontend return/cancel routes such as `/payment/success` and `/payment/cancel`. See the [payOS local/staging runbook](docs/payos-setup.md). Production payment remains gated by DEC-02.
 
 ## Optional offline/local PostgreSQL
 

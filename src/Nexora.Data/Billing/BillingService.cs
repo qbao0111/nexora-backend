@@ -215,25 +215,32 @@ public sealed partial class BillingService(
 
     private async Task<PaymentWebhookProcessResult> ApplyPaymentEventAsync(VerifiedPaymentEvent verified, CancellationToken cancellationToken)
     {
+        if (verified.IsVerificationProbe)
+        {
+            PaymentVerificationProbe(logger, CorrelationId(), verified.ProviderEventId);
+            return new PaymentWebhookProcessResult(Guid.Empty, BillingValues.Processed, false, true);
+        }
+
+        var resolvedOrderId = await ResolveVerifiedOrderIdAsync(verified, cancellationToken);
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         var duplicate = await dbContext.PaymentEvents.AsNoTracking()
             .SingleOrDefaultAsync(item => item.Provider == paymentProvider.ProviderName && item.ProviderEventId == verified.ProviderEventId, cancellationToken);
         if (duplicate is not null)
         {
-            if (duplicate.OrderId != verified.OrderId) throw IdempotencyConflict();
+            if (duplicate.OrderId != resolvedOrderId) throw IdempotencyConflict();
             PaymentDuplicate(logger, CorrelationId(), verified.ProviderEventId, duplicate.OrderId);
             var duplicateStatus = await dbContext.Orders.AsNoTracking().Where(order => order.Id == duplicate.OrderId)
                 .Select(order => order.Status).SingleAsync(cancellationToken);
             return new PaymentWebhookProcessResult(duplicate.OrderId, duplicateStatus, true, duplicateStatus != BillingValues.Pending);
         }
 
-        var order = await FindOrderForUpdateAsync(verified.OrderId, cancellationToken)
+        var order = await FindOrderForUpdateAsync(resolvedOrderId, cancellationToken)
             ?? throw new BusinessException("ORDER_NOT_FOUND", "Không tìm thấy order thanh toán.", BusinessErrorKind.NotFound);
         duplicate = await dbContext.PaymentEvents.AsNoTracking()
             .SingleOrDefaultAsync(item => item.Provider == paymentProvider.ProviderName && item.ProviderEventId == verified.ProviderEventId, cancellationToken);
         if (duplicate is not null)
         {
-            if (duplicate.OrderId != verified.OrderId) throw IdempotencyConflict();
+            if (duplicate.OrderId != resolvedOrderId) throw IdempotencyConflict();
             PaymentDuplicate(logger, CorrelationId(), verified.ProviderEventId, duplicate.OrderId);
             return new PaymentWebhookProcessResult(duplicate.OrderId, order.Status, true, order.Status != BillingValues.Pending);
         }
@@ -648,6 +655,19 @@ public sealed partial class BillingService(
         return await dbContext.Orders.SingleOrDefaultAsync(order => order.Id == orderId, cancellationToken);
     }
 
+    private async Task<Guid> ResolveVerifiedOrderIdAsync(VerifiedPaymentEvent verified, CancellationToken cancellationToken)
+    {
+        if (verified.OrderId is { } orderId && orderId != Guid.Empty) return orderId;
+        var resolvedOrderId = await dbContext.Orders.AsNoTracking()
+            .Where(order => order.PaymentProvider == paymentProvider.ProviderName &&
+                order.ProviderTransactionId == verified.ProviderTransactionId)
+            .Select(order => order.Id)
+            .SingleOrDefaultAsync(cancellationToken);
+        return resolvedOrderId == Guid.Empty
+            ? throw new BusinessException("ORDER_NOT_FOUND", "Không tìm thấy order thanh toán.", BusinessErrorKind.NotFound)
+            : resolvedOrderId;
+    }
+
     private async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
     {
         if (dbContext.Database.CurrentTransaction is not null) return null;
@@ -690,6 +710,10 @@ public sealed partial class BillingService(
     [LoggerMessage(LogLevel.Information,
         "Duplicate payment event {ProviderEventId} for order {OrderId} ignored; correlation {CorrelationId}")]
     private static partial void PaymentDuplicate(ILogger logger, string correlationId, string providerEventId, Guid orderId);
+
+    [LoggerMessage(LogLevel.Information,
+        "Verified payment-provider probe {ProviderEventId} ignored; correlation {CorrelationId}")]
+    private static partial void PaymentVerificationProbe(ILogger logger, string correlationId, string providerEventId);
 
     private static string RequireKey(string value) =>
         string.IsNullOrWhiteSpace(value) || value.Trim().Length > 128
