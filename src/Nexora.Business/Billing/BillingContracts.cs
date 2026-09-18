@@ -82,7 +82,14 @@ public interface IBillingService
     Task AdjustInterviewQuotaAsync(Guid userId, int quantity, string reason, string idempotencyKey, CancellationToken cancellationToken);
 }
 
-public sealed record PaymentOrderRequest(Guid OrderId, long AmountMinor, string Currency, string ProviderTransactionId, DateTimeOffset CreatedAt, string? IpAddress);
+public sealed record PaymentOrderRequest(
+    Guid OrderId,
+    long AmountMinor,
+    string Currency,
+    string ProviderTransactionId,
+    DateTimeOffset CreatedAt,
+    string? IpAddress,
+    string? PlanCode = null);
 public sealed record CheckoutFormField(string Name, string Value);
 public sealed record CheckoutAction(string Method, string Url, IReadOnlyList<CheckoutFormField> Fields);
 public sealed record PaymentCheckout(string Provider, string ProviderTransactionId, CheckoutAction Action);

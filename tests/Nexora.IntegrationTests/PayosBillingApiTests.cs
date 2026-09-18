@@ -61,6 +61,7 @@ public sealed class PayosBillingApiTests : IDisposable
 
         var first = await CreateCheckoutAsync(client, price.Id, "payos-checkout");
         Assert.Single(_handler.CreatedOrderCodes);
+        Assert.Equal("NEXORA BASIC", _handler.CreatedDescriptions[0]);
         var second = await CreateCheckoutAsync(client, price.Id, "payos-checkout");
 
         Assert.Equal(first.OrderId, second.OrderId);
@@ -281,14 +282,14 @@ public sealed class PayosBillingApiTests : IDisposable
         Assert.Empty(await db.PaymentEvents.ToListAsync());
     }
 
-    private async Task<PlanPrice> SeedPlanPriceAsync(int quota)
+    private async Task<PlanPrice> SeedPlanPriceAsync(int quota, string planCode = "basic")
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         var now = DateTimeOffset.UtcNow;
-        var plan = new Plan { Id = Guid.NewGuid(), Code = $"payos-{Guid.NewGuid():N}", Name = "payOS test plan", IsActive = true, CreatedAt = now };
+        var plan = await db.Plans.SingleAsync(item => item.Code == planCode);
         var price = new PlanPrice { Id = Guid.NewGuid(), PlanId = plan.Id, AmountMinor = 123_000, Currency = "VND", DurationDays = 14, InterviewQuota = quota, IsActive = true, CreatedAt = now };
-        db.AddRange(plan, price);
+        db.PlanPrices.Add(price);
         await db.SaveChangesAsync();
         return price;
     }
@@ -399,6 +400,7 @@ public sealed class PayosBillingApiTests : IDisposable
     private sealed class PayosHttpHandler : HttpMessageHandler
     {
         public List<string> CreatedOrderCodes { get; } = [];
+        public List<string> CreatedDescriptions { get; } = [];
         public PaymentLinkStatus QueryStatus { get; set; } = PaymentLinkStatus.Paid;
         public long? QueryAmount { get; set; }
         public long? QueryAmountPaid { get; set; }
@@ -413,6 +415,7 @@ public sealed class PayosBillingApiTests : IDisposable
                 var orderCode = root.GetProperty("orderCode").GetInt64();
                 var amount = root.GetProperty("amount").GetInt64();
                 CreatedOrderCodes.Add(orderCode.ToString(CultureInfo.InvariantCulture));
+                CreatedDescriptions.Add(root.GetProperty("description").GetString() ?? string.Empty);
                 return SignedResponse(new CreatePaymentLinkResponse
                 {
                     OrderCode = orderCode,

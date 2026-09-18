@@ -132,11 +132,26 @@ public sealed class PayosPaymentProviderTests
             using var json = JsonDocument.Parse(body);
             Assert.Equal(long.Parse(ProviderTransactionId, CultureInfo.InvariantCulture), json.RootElement.GetProperty("orderCode").GetInt64());
             Assert.Equal(49_000, json.RootElement.GetProperty("amount").GetInt64());
-            Assert.Equal("Nexora", json.RootElement.GetProperty("description").GetString());
+            Assert.Equal("NEXORA BASIC", json.RootElement.GetProperty("description").GetString());
             Assert.Equal(TestOptions.ReturnUrl, json.RootElement.GetProperty("returnUrl").GetString());
             Assert.Equal(TestOptions.CancelUrl, json.RootElement.GetProperty("cancelUrl").GetString());
             Assert.DoesNotContain(ChecksumKey, body, StringComparison.Ordinal);
         }
+    }
+
+    [Theory]
+    [InlineData("basic", "NEXORA BASIC")]
+    [InlineData("weekly", "NEXORA PLUS")]
+    [InlineData("pro", "NEXORA PRO")]
+    public async Task CreateCheckoutUsesPlanSpecificPaymentDescription(string planCode, string expectedDescription)
+    {
+        var handler = new PayosHandler(_ => SignedResponse(CreateLink()));
+        using var provider = NewProvider(handler: handler);
+
+        await provider.CreateCheckoutAsync(Request(planCode), CancellationToken.None);
+
+        using var json = JsonDocument.Parse(Assert.Single(handler.RequestBodies));
+        Assert.Equal(expectedDescription, json.RootElement.GetProperty("description").GetString());
     }
 
     [Fact]
@@ -339,8 +354,8 @@ public sealed class PayosPaymentProviderTests
     private static PayosPaymentProvider NewProvider(PayosOptions? options = null, HttpMessageHandler? handler = null) =>
         new(new HttpClient(handler ?? new PayosHandler(_ => SignedResponse(PaymentLink(PaymentLinkStatus.Pending)))), Options.Create(options ?? TestOptions), TimeProvider.System);
 
-    private static PaymentOrderRequest Request() =>
-        new(OrderId, 49_000, "VND", ProviderTransactionId, DateTimeOffset.UtcNow, null);
+    private static PaymentOrderRequest Request(string planCode = "basic") =>
+        new(OrderId, 49_000, "VND", ProviderTransactionId, DateTimeOffset.UtcNow, null, planCode);
 
     private static PaymentCallbackRequest Callback(byte[] body) =>
         new("POST", new Dictionary<string, string>(), new Dictionary<string, string>(), body);

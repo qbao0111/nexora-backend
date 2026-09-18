@@ -18,7 +18,6 @@ namespace Nexora.Integrations.Payments;
 public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
 {
     private const string Provider = "payos";
-    private const string PaymentDescription = "Nexora";
     private const long MinimumGeneratedOrderCode = 1_000_000_000_000_000;
     private const long MaximumGeneratedOrderCodeExclusive = 9_000_000_000_000_000;
     private const long MaximumOrderCode = 9_007_199_254_740_991;
@@ -71,7 +70,7 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
                 {
                     OrderCode = orderCode,
                     Amount = request.AmountMinor,
-                    Description = PaymentDescription,
+                    Description = BuildPaymentDescription(request.PlanCode),
                     ReturnUrl = _options.ReturnUrl,
                     CancelUrl = _options.CancelUrl
                 },
@@ -261,6 +260,14 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
         if (!TryParseOrderCode(request.ProviderTransactionId, out _))
             throw new BusinessException("PAYMENT_REFERENCE_MISMATCH", "Thông tin thanh toán không khớp order.", BusinessErrorKind.Validation);
     }
+
+    private static string BuildPaymentDescription(string? planCode) => planCode?.Trim().ToUpperInvariant() switch
+    {
+        "BASIC" => "NEXORA BASIC",
+        "WEEKLY" => "NEXORA PLUS",
+        "PRO" => "NEXORA PRO",
+        _ => throw new BusinessException("PAYMENT_PLAN_NOT_SUPPORTED", "Gói thanh toán không được hỗ trợ.", BusinessErrorKind.Validation)
+    };
 
     private static void ValidateCheckoutResponse(CreatePaymentLinkResponse? response, PaymentOrderRequest request, long orderCode)
     {
