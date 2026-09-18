@@ -26,7 +26,9 @@ public static class LearningPathRules
 {
     public const int NumericGapThreshold = 75;
     public const int CriticalGapThreshold = 60;
-    public const int MaximumQualitativeActivities = 12;
+    // These limits apply only to the newly generated plan, never persisted history.
+    public const int MaximumCurrentActivities = 10;
+    public const int MaximumQualitativeActivities = 4;
     public const int ActivityKeyMaxLength = 160;
     public const int ActivityTitleMaxLength = 200;
     public const int ActivityDescriptionMaxLength = 500;
@@ -56,7 +58,14 @@ public static class LearningPathRules
         return normalized.Length <= maxLength ? normalized : normalized[..maxLength].TrimEnd();
     }
 
-    public static string QualitativeActivityKey(string label)
+    public static string QualitativeActivityKeyForTopicIdentity(string stableTopicIdentity)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(stableTopicIdentity);
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(stableTopicIdentity))).ToLowerInvariant();
+        return $"{LearningPathValues.ResumeImprovement}:qualitative:{hash[..24]}";
+    }
+
+    public static string LegacyQualitativeActivityKey(string label)
     {
         var normalized = label.Trim().ToLowerInvariant();
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized))).ToLowerInvariant();
@@ -88,6 +97,8 @@ public sealed record LearningPathActivityPlan(
     int SortOrder)
 {
     public DateTimeOffset? LatestEvidenceAt { get; init; }
+    public string? QualitativeTopicIdentity { get; init; }
+    public string? LegacyQualitativeActivityKey { get; init; }
 }
 
 public sealed record LearningPathMilestonePlan(string Code, string Title, int SortOrder);
@@ -226,19 +237,15 @@ public static class LearningPathPlanner
             });
         }
 
-        foreach (var signal in profile.WeaknessSignals
-                     .Where(item => item is not null &&
-                                    string.Equals(item.SourceType, SkillProfileSourceTypes.ResumeAnalysis, StringComparison.Ordinal) &&
-                                    !string.IsNullOrWhiteSpace(item.Label))
-                     .OrderByDescending(item => item.LatestEvidenceAt)
-                     .ThenBy(item => item.Label, StringComparer.Ordinal)
-                     .Take(LearningPathRules.MaximumQualitativeActivities))
+        var qualitativeActivities = new List<LearningPathActivityPlan>();
+        foreach (var deduplicatedSignal in LearningPathQualitativeSignalDeduper.Deduplicate(profile.WeaknessSignals))
         {
+            var signal = deduplicatedSignal.Signal;
             var label = LearningPathRules.Truncate(signal.Label, 150);
             if (label.Length == 0) continue;
 
-            activities.Add(new LearningPathActivityPlan(
-                LearningPathRules.QualitativeActivityKey(signal.Label),
+            qualitativeActivities.Add(new LearningPathActivityPlan(
+                LearningPathRules.QualitativeActivityKeyForTopicIdentity(deduplicatedSignal.StableTopicIdentity),
                 LearningPathValues.ResumeImprovement,
                 LearningPathRules.Truncate($"Resume improvement: {label}", LearningPathRules.ActivityTitleMaxLength),
                 LearningPathRules.Truncate($"Address this CV signal: {label}.", LearningPathRules.ActivityDescriptionMaxLength),
@@ -249,11 +256,13 @@ public static class LearningPathPlanner
                 LearningPathValues.SupportingMilestone,
                 0)
             {
-                LatestEvidenceAt = signal.LatestEvidenceAt
+                LatestEvidenceAt = signal.LatestEvidenceAt,
+                QualitativeTopicIdentity = deduplicatedSignal.StableTopicIdentity,
+                LegacyQualitativeActivityKey = LearningPathRules.LegacyQualitativeActivityKey(signal.Label)
             });
         }
 
-        var orderedActivities = activities
+        var selectedStructuredActivities = activities
             .GroupBy(item => item.Key, StringComparer.Ordinal)
             .Select(group => group.OrderBy(item => item.Type, StringComparer.Ordinal).First())
             .OrderBy(item => item.Priority)
@@ -261,6 +270,17 @@ public static class LearningPathPlanner
             .ThenBy(item => item.Type, StringComparer.Ordinal)
             .ThenBy(item => item.CompetencyCode ?? string.Empty, StringComparer.Ordinal)
             .ThenBy(item => item.Key, StringComparer.Ordinal)
+            .Take(LearningPathRules.MaximumCurrentActivities)
+            .ToArray();
+
+        var remainingSlots = LearningPathRules.MaximumCurrentActivities - selectedStructuredActivities.Length;
+        var selectedQualitativeActivities = qualitativeActivities
+            .OrderByDescending(item => item.LatestEvidenceAt)
+            .ThenBy(item => item.Key, StringComparer.Ordinal)
+            .Take(Math.Min(LearningPathRules.MaximumQualitativeActivities, remainingSlots));
+
+        var orderedActivities = selectedStructuredActivities
+            .Concat(selectedQualitativeActivities)
             .GroupBy(item => item.MilestoneCode, StringComparer.Ordinal)
             .SelectMany(group => group.Select((item, index) => item with { SortOrder = index }))
             .ToArray();
