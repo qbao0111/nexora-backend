@@ -89,6 +89,7 @@ public sealed class LearningPathApiTests
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         Assert.Equal(careerGoalId, data.GetProperty("careerGoalId").GetGuid());
         Assert.Equal(LearningPathValues.Active, data.GetProperty("status").GetString());
+        Assert.Equal("Khắc phục các điểm yếu quan trọng", data.GetProperty("milestones").EnumerateArray().First().GetProperty("title").GetString());
         Assert.Equal(
             [LearningPathValues.Scenario, LearningPathValues.Interview, LearningPathValues.StarDrill, LearningPathValues.ResumeImprovement],
             activities.Select(item => item.GetProperty("type").GetString()));
@@ -99,6 +100,214 @@ public sealed class LearningPathApiTests
         Assert.DoesNotContain(activities, item => item.GetProperty("competencyCode").GetString() == "resume.clarity");
         Assert.All(activities, item => Assert.Null(item.GetProperty("externalUrl").GetString()));
         Assert.Equal(4, data.GetProperty("progress").GetProperty("totalActivityCount").GetInt32());
+        Assert.Equal("Luyện tập giải quyết vấn đề", activities.Single(item => item.GetProperty("type").GetString() == LearningPathValues.Scenario).GetProperty("title").GetString());
+        Assert.All(activities, item => Assert.DoesNotContain("Practice ", item.GetProperty("title").GetString(), StringComparison.Ordinal));
+
+        using var getResponse = await client.GetAsync("/api/v1/learning-path");
+        var persisted = await DataAsync(getResponse);
+        Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+        Assert.Equal("Khắc phục các điểm yếu quan trọng", persisted.GetProperty("milestones").EnumerateArray().First().GetProperty("title").GetString());
+        Assert.Equal(
+            Activities(data).Select(item => item.GetProperty("title").GetString()),
+            Activities(persisted).Select(item => item.GetProperty("title").GetString()));
+        Assert.Equal(
+            Activities(data).Select(item => item.GetProperty("description").GetString()),
+            Activities(persisted).Select(item => item.GetProperty("description").GetString()));
+    }
+
+    [Fact]
+    public async Task RefreshLocalizesExistingEnglishMetadataWithoutChangingIdentityOrProgress()
+    {
+        var scenarioId = Guid.Parse("61000000-0000-0000-0000-000000000002");
+        var activeCompetencies = new[]
+        {
+            Competency("scenario.customer_service", "Customer Service", "scenario", 40),
+            Competency("scenario.prioritization", "Prioritization", "scenario", 60),
+            Competency("behavioral.action", "Action", "behavioral", 61),
+            Competency("interview.risk_management", "Risk Management", "interview", 74),
+            Competency("resume.impact_achievements", "Impact Achievements", "resume", 50)
+        };
+        var formerlyRequired = Competency("interview.communication", "Communication", "interview", 70);
+        var weakness = new SkillProfileWeaknessSignal("cv_analysis", "Impact Evidence", DateTimeOffset.UtcNow);
+        var service = new MutableSkillProfileService(new SkillProfileView(activeCompetencies.Append(formerlyRequired).ToArray(), [weakness]));
+        using var factory = NewFactory(service);
+        factory.InitializeDatabase();
+        await SeedScenarioAsync(factory, scenarioId, "Customer Service");
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        await CreateCareerGoalAsync(client, "Backend Developer");
+
+        using var generatedResponse = await client.PostAsJsonAsync("/api/v1/learning-path", new { });
+        var generated = await DataAsync(generatedResponse);
+        Assert.Equal(HttpStatusCode.Created, generatedResponse.StatusCode);
+        var activities = Activities(generated).ToArray();
+        var completedId = activities.Single(item => item.GetProperty("competencyCode").GetString() == "scenario.customer_service")
+            .GetProperty("id").GetGuid();
+        var obsoleteId = activities.Single(item => item.GetProperty("competencyCode").GetString() == "interview.communication")
+            .GetProperty("id").GetGuid();
+        using var completionResponse = await client.PatchAsJsonAsync(
+            $"/api/v1/learning-path/activities/{completedId}",
+            new { status = LearningPathValues.Completed });
+        Assert.Equal(HttpStatusCode.OK, completionResponse.StatusCode);
+        var completion = await DataAsync(completionResponse);
+        var completedAt = Activities(completion).Single(item => item.GetProperty("id").GetGuid() == completedId)
+            .GetProperty("completedAt").GetDateTimeOffset();
+
+        service.Current = new SkillProfileView(activeCompetencies, [weakness]);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var path = await db.LearningPaths.Include(item => item.Milestones).ThenInclude(item => item.Activities)
+                .SingleAsync(item => item.Id == generated.GetProperty("id").GetGuid());
+            var obsolete = path.Milestones.SelectMany(item => item.Activities).Single(item => item.Id == obsoleteId);
+            obsolete.Status = LearningPathValues.Obsolete;
+            obsolete.CompletedAt = null;
+            foreach (var milestone in path.Milestones)
+                milestone.Title = milestone.Code switch
+                {
+                    LearningPathValues.CriticalMilestone => "Fix critical gaps",
+                    LearningPathValues.DevelopingMilestone => "Develop emerging skills",
+                    _ => "Strengthen supporting evidence"
+                };
+            foreach (var activity in path.Milestones.SelectMany(item => item.Activities))
+            {
+                var oldCopy = LegacyEnglishCopy(activity.CompetencyCode);
+                activity.Title = oldCopy.Title;
+                activity.Description = oldCopy.Description;
+                if (activity.CompetencyCode is null)
+                    activity.ActivityKey = LearningPathRules.LegacyQualitativeActivityKey("Impact Evidence");
+            }
+            await db.SaveChangesAsync();
+        }
+
+        using var beforeScope = factory.Services.CreateScope();
+        var beforeDb = beforeScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var beforeActivities = await beforeDb.LearningPathActivities.AsNoTracking()
+            .Where(item => item.LearningPathId == generated.GetProperty("id").GetGuid())
+            .OrderBy(item => item.Id)
+            .Select(item => new { item.Id, item.ActivityKey, item.Status, item.CompletedAt, item.Title, item.Description, item.UpdatedAt })
+            .ToArrayAsync();
+        var beforeMilestones = await beforeDb.LearningPathMilestones.AsNoTracking()
+            .Where(item => item.LearningPathId == generated.GetProperty("id").GetGuid())
+            .OrderBy(item => item.Code)
+            .Select(item => new { item.Id, item.Code, item.Title, item.UpdatedAt })
+            .ToArrayAsync();
+
+        using var getResponse = await client.GetAsync("/api/v1/learning-path");
+        var beforeRefresh = await DataAsync(getResponse);
+        Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+        Assert.Equal("Fix critical gaps", beforeRefresh.GetProperty("milestones").EnumerateArray().First().GetProperty("title").GetString());
+        Assert.Contains(Activities(beforeRefresh), item => item.GetProperty("title").GetString() == "Practice Customer Service");
+        using (var afterGetScope = factory.Services.CreateScope())
+        {
+            var afterGetDb = afterGetScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var afterGetActivities = await afterGetDb.LearningPathActivities.AsNoTracking()
+                .Where(item => item.LearningPathId == generated.GetProperty("id").GetGuid())
+                .OrderBy(item => item.Id)
+                .Select(item => new { item.Id, item.ActivityKey, item.Status, item.CompletedAt, item.Title, item.Description, item.UpdatedAt })
+                .ToArrayAsync();
+            var afterGetMilestones = await afterGetDb.LearningPathMilestones.AsNoTracking()
+                .Where(item => item.LearningPathId == generated.GetProperty("id").GetGuid())
+                .OrderBy(item => item.Code)
+                .Select(item => new { item.Id, item.Code, item.Title, item.UpdatedAt })
+                .ToArrayAsync();
+            Assert.Equal(beforeActivities, afterGetActivities);
+            Assert.Equal(beforeMilestones, afterGetMilestones);
+        }
+
+        using var refreshResponse = await client.PostAsJsonAsync("/api/v1/learning-path/refresh", new { });
+        var refreshed = await DataAsync(refreshResponse);
+        var refreshedActivities = Activities(refreshed).ToArray();
+        Assert.Equal(HttpStatusCode.OK, refreshResponse.StatusCode);
+        Assert.Equal(generated.GetProperty("id").GetGuid(), refreshed.GetProperty("id").GetGuid());
+        Assert.Equal(1, refreshed.GetProperty("progress").GetProperty("completedActivityCount").GetInt32());
+        Assert.Equal(6, refreshed.GetProperty("progress").GetProperty("totalActivityCount").GetInt32());
+        Assert.Equal(beforeRefresh.GetProperty("progress").GetProperty("percentage").GetInt32(), refreshed.GetProperty("progress").GetProperty("percentage").GetInt32());
+        Assert.Equal("Khắc phục các điểm yếu quan trọng", refreshed.GetProperty("milestones").EnumerateArray()
+            .Single(item => item.GetProperty("code").GetString() == LearningPathValues.CriticalMilestone).GetProperty("title").GetString());
+        Assert.Equal("Phát triển các kỹ năng cần cải thiện", refreshed.GetProperty("milestones").EnumerateArray()
+            .Single(item => item.GetProperty("code").GetString() == LearningPathValues.DevelopingMilestone).GetProperty("title").GetString());
+        Assert.Equal("Củng cố năng lực và minh chứng", refreshed.GetProperty("milestones").EnumerateArray()
+            .Single(item => item.GetProperty("code").GetString() == LearningPathValues.SupportingMilestone).GetProperty("title").GetString());
+        Assert.Equal("Luyện tập dịch vụ khách hàng", refreshedActivities.Single(item => item.GetProperty("competencyCode").GetString() == "scenario.customer_service").GetProperty("title").GetString());
+        Assert.Equal("Thực hiện một phiên luyện tập tập trung để cải thiện dịch vụ khách hàng.", refreshedActivities.Single(item => item.GetProperty("competencyCode").GetString() == "scenario.customer_service").GetProperty("description").GetString());
+        Assert.Equal("Học và luyện tập khả năng sắp xếp thứ tự ưu tiên", refreshedActivities.Single(item => item.GetProperty("competencyCode").GetString() == "scenario.prioritization").GetProperty("title").GetString());
+        Assert.Equal("Học hoặc luyện tập khả năng sắp xếp thứ tự ưu tiên bằng một tài nguyên phù hợp.", refreshedActivities.Single(item => item.GetProperty("competencyCode").GetString() == "scenario.prioritization").GetProperty("description").GetString());
+        Assert.Equal("Luyện hành động theo phương pháp STAR", refreshedActivities.Single(item => item.GetProperty("competencyCode").GetString() == "behavioral.action").GetProperty("title").GetString());
+        Assert.Equal("Thực hành trình bày hành động trong câu trả lời theo phương pháp STAR.", refreshedActivities.Single(item => item.GetProperty("competencyCode").GetString() == "behavioral.action").GetProperty("description").GetString());
+        Assert.Equal("Luyện quản lý rủi ro trong phỏng vấn", refreshedActivities.Single(item => item.GetProperty("competencyCode").GetString() == "interview.risk_management").GetProperty("title").GetString());
+        Assert.Equal("Thực hiện một phiên phỏng vấn tập trung để cải thiện quản lý rủi ro.", refreshedActivities.Single(item => item.GetProperty("competencyCode").GetString() == "interview.risk_management").GetProperty("description").GetString());
+        Assert.Equal("Cải thiện thành tích tạo ra tác động trong CV", refreshedActivities.Single(item => item.GetProperty("competencyCode").GetString() == "resume.impact_achievements").GetProperty("title").GetString());
+        Assert.Equal("Thực hiện một phiên luyện tập tập trung để cải thiện thành tích tạo ra tác động.", refreshedActivities.Single(item => item.GetProperty("competencyCode").GetString() == "resume.impact_achievements").GetProperty("description").GetString());
+        Assert.Equal("Cải thiện CV: minh chứng về tác động", refreshedActivities.Single(item => item.GetProperty("competencyCode").ValueKind == JsonValueKind.Null).GetProperty("title").GetString());
+        Assert.Equal("Cải thiện điểm cần chú ý trong CV: minh chứng về tác động.", refreshedActivities.Single(item => item.GetProperty("competencyCode").ValueKind == JsonValueKind.Null).GetProperty("description").GetString());
+        Assert.All(refreshedActivities.Where(item => item.GetProperty("id").GetGuid() != obsoleteId), item =>
+        {
+            Assert.NotEqual(JsonValueKind.Null, item.GetProperty("title").ValueKind);
+            Assert.DoesNotContain("Practice ", item.GetProperty("title").GetString(), StringComparison.Ordinal);
+            Assert.DoesNotContain("Resume improvement:", item.GetProperty("title").GetString(), StringComparison.Ordinal);
+        });
+        var completedAfterRefresh = refreshedActivities.Single(item => item.GetProperty("id").GetGuid() == completedId);
+        Assert.Equal(LearningPathValues.Completed, completedAfterRefresh.GetProperty("status").GetString());
+        Assert.Equal(completedAt, completedAfterRefresh.GetProperty("completedAt").GetDateTimeOffset());
+        var obsoleteAfterRefresh = refreshedActivities.Single(item => item.GetProperty("id").GetGuid() == obsoleteId);
+        Assert.Equal(LearningPathValues.Obsolete, obsoleteAfterRefresh.GetProperty("status").GetString());
+        Assert.Equal("Practice Communication in an interview", obsoleteAfterRefresh.GetProperty("title").GetString());
+
+        using var afterRefreshScope = factory.Services.CreateScope();
+        var afterRefreshDb = afterRefreshScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var afterRefreshActivities = await afterRefreshDb.LearningPathActivities.AsNoTracking()
+            .Where(item => item.LearningPathId == generated.GetProperty("id").GetGuid())
+            .OrderBy(item => item.Id)
+            .Select(item => new { item.Id, item.ActivityKey, item.Status, item.CompletedAt, item.Title, item.Description, item.UpdatedAt })
+            .ToArrayAsync();
+        var afterRefreshMilestones = await afterRefreshDb.LearningPathMilestones.AsNoTracking()
+            .Where(item => item.LearningPathId == generated.GetProperty("id").GetGuid())
+            .OrderBy(item => item.Code)
+            .Select(item => new { item.Id, item.Code, item.Title, item.UpdatedAt })
+            .ToArrayAsync();
+        Assert.Equal(beforeActivities.Select(item => new { item.Id, item.ActivityKey, item.Status, item.CompletedAt }),
+            afterRefreshActivities.Select(item => new { item.Id, item.ActivityKey, item.Status, item.CompletedAt }));
+        Assert.Equal(beforeMilestones.Select(item => new { item.Id, item.Code }),
+            afterRefreshMilestones.Select(item => new { item.Id, item.Code }));
+        Assert.Equal(beforeActivities.Length, afterRefreshActivities.Length);
+
+        using var repeatedResponse = await client.PostAsJsonAsync("/api/v1/learning-path/refresh", new { });
+        var repeated = await DataAsync(repeatedResponse);
+        Assert.Equal(HttpStatusCode.OK, repeatedResponse.StatusCode);
+        Assert.Equal(refreshed.GetProperty("id").GetGuid(), repeated.GetProperty("id").GetGuid());
+        Assert.Equal(refreshed.GetProperty("progress").GetProperty("percentage").GetInt32(), repeated.GetProperty("progress").GetProperty("percentage").GetInt32());
+        Assert.Equal(refreshedActivities.Select(item => item.GetProperty("id").GetGuid()).OrderBy(item => item),
+            Activities(repeated).Select(item => item.GetProperty("id").GetGuid()).OrderBy(item => item));
+        using var repeatedScope = factory.Services.CreateScope();
+        var repeatedDb = repeatedScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var repeatedActivityRows = await repeatedDb.LearningPathActivities.AsNoTracking()
+            .Where(item => item.LearningPathId == generated.GetProperty("id").GetGuid())
+            .OrderBy(item => item.Id)
+            .Select(item => new { item.Id, item.ActivityKey, item.Status, item.CompletedAt, item.Title, item.Description, item.UpdatedAt })
+            .ToArrayAsync();
+        Assert.Equal(afterRefreshActivities, repeatedActivityRows);
+
+        var qualitativeId = refreshedActivities.Single(item => item.GetProperty("competencyCode").ValueKind == JsonValueKind.Null)
+            .GetProperty("id").GetGuid();
+        var originalQualitativeKey = beforeActivities.Single(item => item.Id == qualitativeId).ActivityKey;
+        service.Current = new SkillProfileView(activeCompetencies, [
+            new SkillProfileWeaknessSignal("cv_analysis", "Missing impact evidence experience", weakness.LatestEvidenceAt.AddDays(1))
+        ]);
+        using var equivalentResponse = await client.PostAsJsonAsync("/api/v1/learning-path/refresh", new { });
+        var equivalent = await DataAsync(equivalentResponse);
+        var equivalentQualitative = Assert.Single(Activities(equivalent), item => item.GetProperty("competencyCode").ValueKind == JsonValueKind.Null);
+        Assert.Equal(HttpStatusCode.OK, equivalentResponse.StatusCode);
+        Assert.Equal(qualitativeId, equivalentQualitative.GetProperty("id").GetGuid());
+        using var equivalentScope = factory.Services.CreateScope();
+        var equivalentDb = equivalentScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var equivalentRows = await equivalentDb.LearningPathActivities.AsNoTracking()
+            .Where(item => item.LearningPathId == generated.GetProperty("id").GetGuid())
+            .ToArrayAsync();
+        Assert.Equal(beforeActivities.Length, equivalentRows.Length);
+        Assert.Equal(originalQualitativeKey, equivalentRows.Single(item => item.Id == qualitativeId).ActivityKey);
+        Assert.DoesNotContain(":cycle:", equivalentRows.Single(item => item.Id == qualitativeId).ActivityKey, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -600,7 +809,7 @@ public sealed class LearningPathApiTests
         Assert.Null(activity.GetProperty("resourceId").GetString());
         Assert.Null(activity.GetProperty("externalUrl").GetString());
         Assert.Equal(1, activity.GetProperty("priority").GetInt32());
-        Assert.Contains("Problem Solving", activity.GetProperty("title").GetString());
+        Assert.Equal("Học và luyện tập giải quyết vấn đề", activity.GetProperty("title").GetString());
 
         service.Current = Profile();
         using var refreshedResponse = await client.PostAsJsonAsync("/api/v1/learning-path/refresh", new { });
@@ -924,6 +1133,17 @@ public sealed class LearningPathApiTests
         });
         await db.SaveChangesAsync();
     }
+
+    private static (string Title, string Description) LegacyEnglishCopy(string? competencyCode) => competencyCode switch
+    {
+        "scenario.customer_service" => ("Practice Customer Service", "Use a focused practice session to improve Customer Service."),
+        "scenario.prioritization" => ("Study Prioritization with guided practice", "Practice or study the Prioritization competency using a suitable learning resource."),
+        "behavioral.action" => ("Drill Action with STAR", "Use a focused practice session to improve Action."),
+        "interview.risk_management" => ("Practice Risk Management in an interview", "Use a focused practice session to improve Risk Management."),
+        "resume.impact_achievements" => ("Improve Impact Achievements in your CV", "Use a focused practice session to improve Impact Achievements."),
+        "interview.communication" => ("Practice Communication in an interview", "Use a focused practice session to improve Communication."),
+        _ => ("Resume improvement: Impact Evidence", "Address this CV signal: Impact Evidence.")
+    };
 
     private static async Task<Account> RegisterAsync(HttpClient client)
     {

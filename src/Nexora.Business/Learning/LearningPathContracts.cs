@@ -46,10 +46,10 @@ public static class LearningPathRules
 
     public static string MilestoneTitle(string code) => code switch
     {
-        LearningPathValues.CriticalMilestone => "Fix critical gaps",
-        LearningPathValues.DevelopingMilestone => "Develop emerging skills",
-        LearningPathValues.SupportingMilestone => "Strengthen supporting evidence",
-        _ => "Supporting improvements"
+        LearningPathValues.CriticalMilestone => "Khắc phục các điểm yếu quan trọng",
+        LearningPathValues.DevelopingMilestone => "Phát triển các kỹ năng cần cải thiện",
+        LearningPathValues.SupportingMilestone => "Củng cố năng lực và minh chứng",
+        _ => "Củng cố năng lực và minh chứng"
     };
 
     public static string Truncate(string value, int maxLength)
@@ -205,21 +205,23 @@ public static class LearningPathPlanner
 
             resourcesByCompetency.TryGetValue(code, out var resource);
             var name = LearningPathRules.Truncate(
-                string.IsNullOrWhiteSpace(competency.Name)
-                    ? SkillProfileTaxonomy.DisplayName(code[(separator + 1)..])
-                    : competency.Name,
+                LearningPathDisplayNames.ForCompetency(code, competency.Name),
                 120);
             var title = type switch
             {
-                LearningPathValues.Scenario => $"Practice {name}",
-                LearningPathValues.StarDrill => $"Drill {name} with STAR",
-                LearningPathValues.Interview => $"Practice {name} in an interview",
-                LearningPathValues.ExternalLearning => $"Study {name} with guided practice",
-                _ => $"Improve {name} in your CV"
+                LearningPathValues.Scenario => $"Luyện tập {name}",
+                LearningPathValues.StarDrill => $"Luyện {name} theo phương pháp STAR",
+                LearningPathValues.Interview => $"Luyện {name} trong phỏng vấn",
+                LearningPathValues.ExternalLearning => $"Học và luyện tập {name}",
+                _ => $"Cải thiện {name} trong CV"
             };
-            var description = type == LearningPathValues.ExternalLearning
-                ? $"Practice or study the {name} competency using a suitable learning resource."
-                : $"Use a focused practice session to improve {name}.";
+            var description = type switch
+            {
+                LearningPathValues.ExternalLearning => $"Học hoặc luyện tập {name} bằng một tài nguyên phù hợp.",
+                LearningPathValues.StarDrill => $"Thực hành trình bày {name} trong câu trả lời theo phương pháp STAR.",
+                LearningPathValues.Interview => $"Thực hiện một phiên phỏng vấn tập trung để cải thiện {name}.",
+                _ => $"Thực hiện một phiên luyện tập tập trung để cải thiện {name}."
+            };
             var key = $"{type}:{code}{(resource is null ? string.Empty : $":{resource.Id:N}")}";
             activities.Add(new LearningPathActivityPlan(
                 key,
@@ -241,14 +243,14 @@ public static class LearningPathPlanner
         foreach (var deduplicatedSignal in LearningPathQualitativeSignalDeduper.Deduplicate(profile.WeaknessSignals))
         {
             var signal = deduplicatedSignal.Signal;
-            var label = LearningPathRules.Truncate(signal.Label, 150);
+            var label = LearningPathRules.Truncate(LearningPathDisplayNames.ForQualitativeLabel(signal.Label), 150);
             if (label.Length == 0) continue;
 
             qualitativeActivities.Add(new LearningPathActivityPlan(
                 LearningPathRules.QualitativeActivityKeyForTopicIdentity(deduplicatedSignal.StableTopicIdentity),
                 LearningPathValues.ResumeImprovement,
-                LearningPathRules.Truncate($"Resume improvement: {label}", LearningPathRules.ActivityTitleMaxLength),
-                LearningPathRules.Truncate($"Address this CV signal: {label}.", LearningPathRules.ActivityDescriptionMaxLength),
+                LearningPathRules.Truncate($"Cải thiện CV: {label}", LearningPathRules.ActivityTitleMaxLength),
+                LearningPathRules.Truncate($"Cải thiện điểm cần chú ý trong CV: {label}.", LearningPathRules.ActivityDescriptionMaxLength),
                 null,
                 null,
                 null,
