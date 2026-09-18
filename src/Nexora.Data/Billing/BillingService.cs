@@ -177,6 +177,13 @@ public sealed partial class BillingService(
         if (order.AmountMinor != verified.AmountMinor)
             throw new BusinessException("PAYMENT_AMOUNT_MISMATCH", "Số tiền thanh toán không khớp order.", BusinessErrorKind.Validation);
 
+        if (!verified.IsPaid && !verified.IsFinal)
+        {
+            await CommitAsync(transaction, cancellationToken);
+            PaymentProcessed(logger, CorrelationId(), verified.ProviderEventId, order.Id, order.Status);
+            return new PaymentWebhookProcessResult(order.Id, order.Status, false, order.Status != BillingValues.Pending);
+        }
+
         var now = timeProvider.GetUtcNow();
         var wasAlreadyFinal = order.Status != BillingValues.Pending;
         dbContext.PaymentEvents.Add(new PaymentEvent

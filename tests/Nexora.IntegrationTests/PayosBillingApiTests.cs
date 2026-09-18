@@ -128,9 +128,55 @@ public sealed class PayosBillingApiTests : IDisposable
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Equal(BillingValues.Pending, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
-        Assert.Single(await db.PaymentEvents.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
+        Assert.Empty(await db.PaymentEvents.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
         Assert.Empty(await db.Subscriptions.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
         Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free").ToListAsync());
+    }
+
+    [Fact]
+    public async Task SameWebhookCanBeReconciledAfterTransientProcessingStatus()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var price = await SeedPlanPriceAsync(1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var checkout = await CreateCheckoutAsync(client, price.Id, "payos-eventual-consistency");
+        var payload = await BuildWebhookForOrderAsync(checkout.OrderId, reference: "TX-1");
+
+        _handler.QueryStatus = PaymentLinkStatus.Processing;
+        _handler.QueryAmountPaid = 0;
+        using (var processing = await SendWebhookPayloadAsync(client, payload))
+        {
+            Assert.Equal(HttpStatusCode.OK, processing.StatusCode);
+        }
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(BillingValues.Pending, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
+            Assert.Empty(await db.PaymentEvents.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
+            Assert.Empty(await db.Subscriptions.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
+            Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free").ToListAsync());
+        }
+
+        _handler.QueryStatus = PaymentLinkStatus.Paid;
+        _handler.QueryAmountPaid = 123_000;
+        using (var paid = await SendWebhookPayloadAsync(client, payload))
+        {
+            Assert.Equal(HttpStatusCode.OK, paid.StatusCode);
+        }
+
+        using (var replay = await SendWebhookPayloadAsync(client, payload))
+        {
+            Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        }
+
+        using var finalScope = _factory.Services.CreateScope();
+        var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(BillingValues.Fulfilled, (await finalDb.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
+        Assert.Equal(1, await finalDb.PaymentEvents.CountAsync(item => item.OrderId == checkout.OrderId));
+        Assert.Equal(1, await finalDb.Subscriptions.CountAsync(item => item.OrderId == checkout.OrderId));
+        Assert.Equal(1, await finalDb.Entitlements.CountAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free"));
     }
 
     [Fact]
@@ -153,8 +199,14 @@ public sealed class PayosBillingApiTests : IDisposable
         {
             var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
             Assert.Equal(BillingValues.Pending, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
+            Assert.Empty(await db.PaymentEvents.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
             Assert.Empty(await db.Subscriptions.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
             Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free").ToListAsync());
+        }
+
+        using (var replayPartial = await SendWebhookAsync(client, checkout.OrderId, amount: 50_000, reference: "PART-1"))
+        {
+            Assert.Equal(HttpStatusCode.OK, replayPartial.StatusCode);
         }
 
         _handler.QueryStatus = PaymentLinkStatus.Paid;
@@ -162,11 +214,6 @@ public sealed class PayosBillingApiTests : IDisposable
         using (var paid = await SendWebhookAsync(client, checkout.OrderId, amount: 73_000, reference: "PART-2"))
         {
             Assert.Equal(HttpStatusCode.OK, paid.StatusCode);
-        }
-
-        using (var replayPartial = await SendWebhookAsync(client, checkout.OrderId, amount: 50_000, reference: "PART-1"))
-        {
-            Assert.Equal(HttpStatusCode.OK, replayPartial.StatusCode);
         }
 
         using (var replayPaid = await SendWebhookAsync(client, checkout.OrderId, amount: 73_000, reference: "PART-2"))
@@ -177,7 +224,7 @@ public sealed class PayosBillingApiTests : IDisposable
         using var finalScope = _factory.Services.CreateScope();
         var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Equal(BillingValues.Fulfilled, (await finalDb.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
-        Assert.Equal(2, await finalDb.PaymentEvents.CountAsync(item => item.OrderId == checkout.OrderId));
+        Assert.Equal(1, await finalDb.PaymentEvents.CountAsync(item => item.OrderId == checkout.OrderId));
         Assert.Equal(1, await finalDb.Subscriptions.CountAsync(item => item.OrderId == checkout.OrderId));
         Assert.Equal(1, await finalDb.Entitlements.CountAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free"));
     }
@@ -289,6 +336,16 @@ public sealed class PayosBillingApiTests : IDisposable
             amount ?? order.AmountMinor,
             signature,
             reference));
+    }
+
+    private async Task<byte[]> BuildWebhookForOrderAsync(Guid orderId, long? amount = null, string reference = "PAYOS-INTEGRATION-REFERENCE")
+    {
+        using var scope = _factory.Services.CreateScope();
+        var order = await scope.ServiceProvider.GetRequiredService<NexoraDbContext>().Orders.AsNoTracking().SingleAsync(item => item.Id == orderId);
+        return BuildWebhook(
+            long.Parse(order.ProviderTransactionId, CultureInfo.InvariantCulture),
+            amount ?? order.AmountMinor,
+            reference: reference);
     }
 
     private static async Task<HttpResponseMessage> SendWebhookPayloadAsync(HttpClient client, byte[] payload)
