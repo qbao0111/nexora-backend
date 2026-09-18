@@ -292,11 +292,23 @@ public sealed class PayosPaymentProviderTests
     {
         var handler = new PayosHandler(_ => throw new InvalidOperationException("The dashboard verification probe must not query payment-link status."));
         using var provider = NewProvider(handler: handler);
-        var result = await provider.VerifyWebhookAsync(Callback(BuildWebhook(orderCode: 123)), CancellationToken.None);
+        var result = await provider.VerifyWebhookAsync(Callback(BuildDashboardProbe()), CancellationToken.None);
 
         Assert.True(result.IsVerificationProbe);
         Assert.Null(result.OrderId);
+        Assert.Equal("123", result.ProviderTransactionId);
         Assert.Empty(handler.RequestPaths);
+    }
+
+    [Fact]
+    public async Task InvalidSignatureIsRejectedBeforeDashboardProbeRecognition()
+    {
+        using var provider = NewProvider();
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() =>
+            provider.VerifyWebhookAsync(Callback(BuildDashboardProbe(signature: "invalid")), CancellationToken.None));
+
+        Assert.Equal("INVALID_WEBHOOK_SIGNATURE", exception.Code);
     }
 
     private static IConfiguration CreatePayosConfiguration() =>
@@ -363,6 +375,23 @@ public sealed class PayosPaymentProviderTests
             Code = "00",
             Description = "success",
             Success = true,
+            Data = data,
+            Signature = signature ?? new CryptoProvider().CreateSignatureFromObject(data, ChecksumKey)!
+        };
+        return JsonSerializer.SerializeToUtf8Bytes(webhook);
+    }
+
+    private static byte[] BuildDashboardProbe(string? signature = null)
+    {
+        var data = new WebhookData
+        {
+            OrderCode = 123,
+            Code = "probe"
+        };
+        var webhook = new Webhook
+        {
+            Code = "probe",
+            Success = false,
             Data = data,
             Signature = signature ?? new CryptoProvider().CreateSignatureFromObject(data, ChecksumKey)!
         };

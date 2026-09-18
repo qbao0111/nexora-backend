@@ -158,14 +158,13 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
                 true);
         }
 
+        var paymentLinkId = RequiredIdentifier(data.PaymentLinkId);
+        var reference = RequiredIdentifier(data.Reference);
+        if (!TryParseWebhookTimestamp(data.TransactionDateTime, out var occurredAt)) throw InvalidPayload();
         if (!webhook.Success || !IsSuccessCode(webhook.Code) || !IsSuccessCode(data.Code))
             throw InvalidPayload();
         if (data.Amount <= 0 || !string.Equals(data.Currency, "VND", StringComparison.OrdinalIgnoreCase))
             throw InvalidPayload();
-
-        var paymentLinkId = RequiredIdentifier(data.PaymentLinkId);
-        var reference = RequiredIdentifier(data.Reference);
-        if (!TryParseWebhookTimestamp(data.TransactionDateTime, out var occurredAt)) throw InvalidPayload();
 
         var paymentLink = await GetPaymentLinkForWebhookAsync(data.OrderCode, cancellationToken);
         ValidateWebhookPaymentLink(paymentLink, data, paymentLinkId);
