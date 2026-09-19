@@ -21,9 +21,24 @@ jobs:
     name: Build, test, and validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: nexora_tests
+          POSTGRES_USER: nexora_tests
+          POSTGRES_PASSWORD: nexora-tests-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nexora_tests -d nexora_tests"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "true"
+      NEXORA_POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Database=nexora_tests;Username=nexora_tests;Password=nexora-tests-password
     steps:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

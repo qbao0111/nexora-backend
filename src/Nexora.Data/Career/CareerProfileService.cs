@@ -65,10 +65,12 @@ public sealed class CareerProfileService(
         profile.PrimaryResumeId = resume.Id;
         profile.UpdatedAt = now;
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        var primaryResume = await LoadPrimaryResumeAsync(resume.Id, userId, cancellationToken)
+            ?? throw NotFound();
         await transaction.CommitAsync(cancellationToken);
 
-        return await LoadPrimaryResumeAsync(resume.Id, userId, cancellationToken)
-            ?? throw NotFound();
+        return primaryResume;
     }
 
     public async Task<CareerProfileView> GetAsync(Guid userId, CancellationToken cancellationToken)
@@ -150,14 +152,16 @@ public sealed class CareerProfileService(
         if (resume is null) return null;
 
         var analysisQuery = dbContext.ResumeAnalyses.AsNoTracking()
-            .Where(item => item.UserId == userId && item.ResumeId == resume.Id)
-            .Select(item => new ResumeAnalysisSummary(item.Id, item.Mode, item.Status, item.CreatedAt));
+            .Where(item => item.UserId == userId && item.ResumeId == resume.Id);
         var latestAnalysis = dbContext.Database.IsNpgsql()
             ? await analysisQuery
                 .OrderByDescending(item => item.CreatedAt)
                 .ThenByDescending(item => item.Id)
+                .Select(item => new ResumeAnalysisSummary(item.Id, item.Mode, item.Status, item.CreatedAt))
                 .FirstOrDefaultAsync(cancellationToken)
-            : (await analysisQuery.ToArrayAsync(cancellationToken))
+            : (await analysisQuery
+                    .Select(item => new ResumeAnalysisSummary(item.Id, item.Mode, item.Status, item.CreatedAt))
+                    .ToArrayAsync(cancellationToken))
                 .OrderByDescending(item => item.CreatedAt)
                 .ThenByDescending(item => item.Id)
                 .FirstOrDefault();
