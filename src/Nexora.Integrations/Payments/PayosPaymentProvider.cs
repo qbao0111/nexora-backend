@@ -70,7 +70,7 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
                 {
                     OrderCode = orderCode,
                     Amount = request.AmountMinor,
-                    Description = BuildPaymentDescription(request.PlanCode),
+                    Description = BuildPaymentDescription(request.PlanName),
                     ReturnUrl = _options.ReturnUrl,
                     CancelUrl = _options.CancelUrl
                 },
@@ -261,13 +261,13 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
             throw new BusinessException("PAYMENT_REFERENCE_MISMATCH", "Thông tin thanh toán không khớp order.", BusinessErrorKind.Validation);
     }
 
-    private static string BuildPaymentDescription(string? planCode) => planCode?.Trim().ToUpperInvariant() switch
+    private static string BuildPaymentDescription(string? planName)
     {
-        "BASIC" => "NEXORA BASIC",
-        "WEEKLY" => "NEXORA PLUS",
-        "PRO" => "NEXORA PRO",
-        _ => throw new BusinessException("PAYMENT_PLAN_NOT_SUPPORTED", "Gói thanh toán không được hỗ trợ.", BusinessErrorKind.Validation)
-    };
+        var description = planName?.Trim();
+        return string.IsNullOrWhiteSpace(description)
+            ? throw new BusinessException("PAYMENT_PLAN_NOT_SUPPORTED", "Tên gói thanh toán không hợp lệ.", BusinessErrorKind.Validation)
+            : description;
+    }
 
     private static void ValidateCheckoutResponse(CreatePaymentLinkResponse? response, PaymentOrderRequest request, long orderCode)
     {

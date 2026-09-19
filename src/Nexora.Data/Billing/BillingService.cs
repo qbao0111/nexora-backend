@@ -121,7 +121,7 @@ public sealed partial class BillingService(
         if (order.Status != BillingValues.Pending) return MapCheckoutStatus(order, null);
 
         var verified = await paymentProvider.QueryPaymentAsync(
-            new PaymentOrderRequest(order.Id, order.AmountMinor, order.Currency, order.ProviderTransactionId, order.CreatedAt, null, order.PlanCodeSnapshot), cancellationToken);
+            new PaymentOrderRequest(order.Id, order.AmountMinor, order.Currency, order.ProviderTransactionId, order.CreatedAt, null), cancellationToken);
         if (verified is not null) await ApplyPaymentEventAsync(verified, cancellationToken);
 
         var refreshed = await dbContext.Orders.AsNoTracking().SingleAsync(item => item.Id == orderId, cancellationToken);
@@ -592,8 +592,13 @@ public sealed partial class BillingService(
                 return MapCheckout(current, persistedAction);
             }
 
+            var planName = await dbContext.PlanPrices.AsNoTracking()
+                .Where(item => item.Id == current.PlanPriceId && item.IsActive && item.Plan.IsActive)
+                .Select(item => item.Plan.Name)
+                .SingleOrDefaultAsync(cancellationToken)
+                ?? throw new BusinessException("PLAN_PRICE_NOT_FOUND", "Gói hoặc mức giá không còn khả dụng.", BusinessErrorKind.NotFound);
             var providerCheckout = await paymentProvider.CreateCheckoutAsync(
-                new PaymentOrderRequest(current.Id, current.AmountMinor, current.Currency, current.ProviderTransactionId, current.CreatedAt, ipAddress, current.PlanCodeSnapshot), cancellationToken);
+                new PaymentOrderRequest(current.Id, current.AmountMinor, current.Currency, current.ProviderTransactionId, current.CreatedAt, ipAddress, planName), cancellationToken);
             if (!string.Equals(providerCheckout.Provider, paymentProvider.ProviderName, StringComparison.Ordinal) ||
                 !string.Equals(providerCheckout.ProviderTransactionId, current.ProviderTransactionId, StringComparison.Ordinal) ||
                 !IsValidCheckoutAction(providerCheckout.Action))
