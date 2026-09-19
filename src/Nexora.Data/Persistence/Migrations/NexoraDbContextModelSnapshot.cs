@@ -2248,6 +2248,116 @@ namespace Nexora.Data.Persistence.Migrations
                             Slug = "logistics",
                             SortOrder = 2,
                             UpdatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("40000000-0000-0000-0000-000000000004"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Tình huống phát triển API, dịch vụ backend, tích hợp hệ thống và xử lý lỗi phía máy chủ.",
+                            IsActive = true,
+                            Name = "Backend",
+                            Slug = "backend",
+                            SortOrder = 3,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("40000000-0000-0000-0000-000000000005"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Tình huống phát triển giao diện web, state management, UX, hiệu năng và tích hợp API.",
+                            IsActive = true,
+                            Name = "Frontend",
+                            Slug = "frontend",
+                            SortOrder = 4,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("40000000-0000-0000-0000-000000000006"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Tình huống thực tế với C#, ASP.NET Core, Entity Framework Core và hệ sinh thái .NET.",
+                            IsActive = true,
+                            Name = ".NET / C#",
+                            Slug = "dotnet",
+                            SortOrder = 5,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("40000000-0000-0000-0000-000000000007"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Tình huống phát triển hệ thống backend bằng Java, Spring Boot, JPA và hệ sinh thái JVM.",
+                            IsActive = true,
+                            Name = "Java / Spring Boot",
+                            Slug = "java",
+                            SortOrder = 6,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("40000000-0000-0000-0000-000000000008"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Tình huống thiết kế dữ liệu, SQL, transaction, hiệu năng truy vấn và tính toàn vẹn dữ liệu.",
+                            IsActive = true,
+                            Name = "Database & Data",
+                            Slug = "database",
+                            SortOrder = 7,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("40000000-0000-0000-0000-000000000009"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Tình huống CI/CD, Docker, cloud, deployment, monitoring và vận hành hệ thống.",
+                            IsActive = true,
+                            Name = "DevOps / Cloud",
+                            Slug = "devops",
+                            SortOrder = 8,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("40000000-0000-0000-0000-00000000000a"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Tình huống kiểm thử phần mềm, automation test, regression, chất lượng release và xử lý bug.",
+                            IsActive = true,
+                            Name = "QA / Testing",
+                            Slug = "qa-testing",
+                            SortOrder = 9,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("40000000-0000-0000-0000-00000000000b"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Tình huống phát triển ứng dụng mobile, API integration, lifecycle, offline state và release app.",
+                            IsActive = true,
+                            Name = "Mobile Development",
+                            Slug = "mobile",
+                            SortOrder = 10,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("40000000-0000-0000-0000-00000000000c"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Tình huống thiết kế hệ thống, scalability, service boundaries và lựa chọn kiến trúc.",
+                            IsActive = true,
+                            Name = "Software Architecture",
+                            Slug = "software-architecture",
+                            SortOrder = 11,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("40000000-0000-0000-0000-00000000000d"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Tình huống bảo mật ứng dụng dành cho lập trình viên: authentication, authorization, data exposure và secure coding.",
+                            IsActive = true,
+                            Name = "Application Security",
+                            Slug = "app-security",
+                            SortOrder = 12,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         });
                 });
 

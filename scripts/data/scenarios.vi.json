@@ -121,6 +121,506 @@
       "competency": "problem_solving",
       "estimatedMinutes": 12,
       "content": "## Bối cảnh\n\nBạn là Chuyên viên Cải tiến Chất lượng Vận hành (Operations Quality Specialist) tại tập đoàn chuyển phát nhanh công nghệ. Suốt hai tuần qua, Bưu cục Nam Từ Liêm liên tục xếp cuối mạng lưới về tỷ lệ giao hàng đúng hẹn (SLA), chỉ đạt 84,2% so với chuẩn tối thiểu 96,5%. Lượng khiếu nại giao trễ trên 24 giờ tại bưu cục này tăng gấp 3 lần.\n\nTình trạng trễ hạn kéo dài làm bùng phát mâu thuẫn giữa hai đội ngũ: tài xế bưu tá phản ánh phần mềm phân tuyến quá máy móc, không tính đến 4 khu chung cư mới với hầm gửi xe phức tạp, thang máy thẻ từ kiểm soát chặt và nút giao ùn tắc; trong khi đội Quy hoạch Tuyến (Planning & Routing) khẳng định dữ liệu GPS cho thấy lộ trình hợp lý (dưới 35 km/tài xế/ngày) và cho rằng bưu tá bắt đầu ca giao trễ và phân loại hàng chậm.\n\nTrưởng phòng Vận hành cử bạn trực tiếp xuống bưu cục điều tra làm rõ gốc rễ vấn đề và đưa ra giải pháp cải thiện dứt điểm trong vòng 7 ngày.\n\n## Dữ kiện\n\n- Hiệu suất: Tỷ lệ giao đúng hẹn 84,2% (chuẩn 96,5%); tỷ lệ khiếu nại trễ hạn đạt 4,8% tổng đơn phát.\n- Định lượng công việc: Mỗi bưu tá phát 85 đơn/ngày (mức trung bình thành phố là 75 đơn/ngày); 65% đơn nằm tại chung cư cao tầng.\n- Thực tế ghi nhận: Hàng về bưu cục lúc 06h30 nhưng 08h45 bưu tá mới xuất phát (chậm hơn bưu cục khác 45 phút); bưu tá mất trung bình 18 phút cho mỗi điểm dừng chung cư.\n- Phản ánh từ người nhận: Bưu tá thường xuyên gọi giao hàng sau 19h00 tối hoặc tự ý cập nhật trạng thái \"Khách hẹn giao lại\" trên ứng dụng khi chưa liên hệ thực tế.\n\n## Nhiệm vụ của bạn\n\nHãy xây dựng kế hoạch điều tra và cải tiến chất lượng dịch vụ:\n- Bạn thiết kế quy trình khảo sát thực tế (Gemba walk) trong 2 ngày đầu thế nào để có dữ liệu khách quan?\n- Những nguyên nhân cốt lõi (Root Causes) nào đang cùng lúc dẫn đến tình trạng trễ hạn tại bưu cục?\n- Các giải pháp can thiệp ngắn hạn (48 giờ) và trung hạn (7 ngày) về quy trình phân loại, tuyến giao và công cụ hỗ trợ là gì?\n- Bạn tổ chức đối thoại giữa bưu tá và đội quy hoạch tuyến ra sao để xây dựng đồng thuận và duy trì hiệu quả lâu dài?"
+    },
+    {
+      "slug": "backend-api-validation-production",
+      "title": "API nhận dữ liệu không hợp lệ sau khi Frontend cập nhật",
+      "summary": "Frontend vừa phát hành form mới và backend bắt đầu nhận giá trị optional dưới dạng chuỗi rỗng, null hoặc bị thiếu, làm các user đi qua validation khác nhau.",
+      "category": "backend",
+      "difficulty": "easy",
+      "competency": "problem_solving",
+      "estimatedMinutes": 9,
+      "content": "## Bối cảnh\n\nBạn là backend engineer phụ trách API hồ sơ cho một sản phẩm tuyển dụng. Frontend vừa phát hành phiên bản form mới; trong production, cùng một trường tùy chọn đôi lúc được gửi là chuỗi rỗng, null hoặc bị bỏ hẳn. Một số user nhận 400, số khác lại tạo bản ghi thiếu dữ liệu.\n\n## Dữ kiện\n\n- DTO hiện ánh xạ ba dạng giá trị thành các trạng thái khác nhau trước khi vào business service.\n- Client cũ vẫn có thể gửi payload theo contract trước đây trong thời gian chuyển tiếp.\n- Log request hiện chỉ có requestId và mã lỗi, chưa cho biết dạng input sau khi đã redaction.\n- Product cần giảm lỗi trong ngày nhưng không muốn silently chấp nhận dữ liệu sai làm hỏng lịch sử.\n- Frontend và backend phát hành độc lập nên thay đổi contract phải được thống nhất.\n\n## Nhiệm vụ của bạn\n\nHãy phân tích và xử lý sự cố:\n- Bạn chuẩn hóa chuỗi rỗng, null và missing trong DTO như thế nào?\n- Quy tắc validation nào nên nằm ở API, business service và database?\n- Bạn cần thêm telemetry an toàn nào để phân biệt client cũ với lỗi mới?\n- Bạn chọn safe hotfix hay đổi contract, và phối hợp với Frontend/QA ra sao?"
+    },
+    {
+      "slug": "backend-duplicate-order-retry",
+      "title": "Đơn hàng bị tạo trùng khi client tự động retry",
+      "summary": "Client retry sau network timeout làm POST tạo đơn sinh hai order có cùng customer và product nhưng khác database ID, trong khi thanh toán chỉ được thực hiện một lần.",
+      "category": "backend",
+      "difficulty": "medium",
+      "competency": "problem_solving",
+      "estimatedMinutes": 13,
+      "content": "## Bối cảnh\n\nBạn là backend engineer của nền tảng thương mại điện tử. Trong giờ cao điểm, POST tạo đơn chờ payment provider quá lâu vì network timeout; client không biết request đã được xử lý nên tự động retry. Hai order cùng customer và product xuất hiện với hai database ID khác nhau.\n\n## Dữ kiện\n\n- Hai request đến gần như đồng thời và cùng một request identity từ client.\n- Tồn kho bị trừ hai lần, nhưng payment provider chỉ có một giao dịch thành công.\n- API hiện chưa có idempotency record hoặc unique constraint phù hợp.\n- Đội vận hành cần xử lý các duplicate hiện có mà không xóa order đã gắn payment hoặc shipment.\n- Các instance backend có thể chạy song song trong nhiều container.\n\n## Nhiệm vụ của bạn\n\nHãy đề xuất phương án sửa và khôi phục:\n- Bạn định nghĩa request identity và lưu idempotency response như thế nào?\n- Transaction và constraint nào ngăn hai request đồng thời tạo order?\n- Bạn đối soát, khóa hoặc hợp nhất duplicate an toàn ra sao?\n- Bạn cần log, metric và test retry nào trước khi phát hành?"
+    },
+    {
+      "slug": "backend-third-party-api-timeout",
+      "title": "Dịch vụ bên thứ ba chậm làm API production quá tải",
+      "summary": "Provider bên thứ ba tăng thời gian phản hồi từ khoảng 300 ms lên 8–15 giây, làm request dồn, frontend timeout và API production có nguy cơ quá tải.",
+      "category": "backend",
+      "difficulty": "medium",
+      "competency": "operational_judgment",
+      "estimatedMinutes": 14,
+      "content": "## Bối cảnh\n\nBạn là backend engineer trực production cho API gọi dịch vụ xác minh hồ sơ bên thứ ba. Provider vốn phản hồi khoảng 300 ms nhưng hôm nay tăng lên 8–15 giây. Thread và request pool bắt đầu đầy, frontend timeout và người dùng bấm gửi lại.\n\n## Dữ kiện\n\n- API không thể thay provider ngay vì hợp đồng và dữ liệu tích hợp đang phụ thuộc vào nó.\n- Retry không giới hạn sẽ nhân số request tới provider và làm nghẽn hệ thống nhanh hơn.\n- Một số thao tác có thể đưa vào queue; một số endpoint cần trả lỗi nhanh và an toàn.\n- Đã có requestId và metric latency nhưng chưa có circuit state hay provider error rate.\n- Support cần thông điệp rõ ràng, không hứa kết quả khi provider chưa xác nhận.\n\n## Nhiệm vụ của bạn\n\nHãy xây dựng phương án giảm tải:\n- Bạn đặt timeout, circuit breaker, backoff và retry budget như thế nào?\n- Luồng nào nên fallback hoặc chuyển sang queue, luồng nào phải fail fast?\n- Bạn giám sát provider, thread pool và backlog bằng metric nào?\n- Bạn phối hợp với Product, Support và provider để truyền thông và khôi phục ra sao?"
+    },
+    {
+      "slug": "backend-cache-stale-permission",
+      "title": "Cache khiến quyền người dùng cập nhật chậm",
+      "summary": "Role của user đã đổi trong database nhưng cache authorization còn giữ giá trị cũ vài phút, khiến quyền truy cập tính năng cập nhật chậm và tạo rủi ro bảo mật.",
+      "category": "backend",
+      "difficulty": "medium",
+      "competency": "risk_management",
+      "estimatedMinutes": 15,
+      "content": "## Bối cảnh\n\nBạn phụ trách authorization cache cho một ứng dụng SaaS. Quản trị viên hạ role của một user trong database sau khi phát hiện hành vi bất thường, nhưng user vẫn truy cập được tính năng nâng cao trong vài phút do cache chưa hết hạn.\n\n## Dữ kiện\n\n- Database là source of truth; cache hiện có TTL dài và chưa có invalidation theo thay đổi role.\n- Một số endpoint kiểm tra role mỗi request, số khác dùng cached authorization state.\n- Quyền cũ có thể cho phép đọc hoặc sửa dữ liệu nhạy cảm, nên đây là security impact chứ không chỉ là UX delay.\n- Xóa toàn bộ cache khẩn cấp có thể gây tải lớn và làm nhiều request chậm.\n- Log không được ghi token hoặc nội dung tài nguyên, nhưng cần correlation để xác định phạm vi.\n\n## Nhiệm vụ của bạn\n\nHãy xử lý vừa khẩn cấp vừa lâu dài:\n- Bạn containment quyền cũ ngay bằng cách nào?\n- Invalidation, TTL, version cache và source-of-truth được thiết kế lại ra sao?\n- Bạn rà soát endpoint nào có cùng rủi ro và kiểm chứng owner scope thế nào?\n- Bạn truyền thông, audit và theo dõi thời gian thu hồi quyền bằng metric nào?"
+    },
+    {
+      "slug": "backend-event-processing-double-consume",
+      "title": "Worker xử lý cùng một sự kiện hai lần",
+      "summary": "Distributed worker dùng cơ chế at-least-once nhận lại cùng một event sau crash, làm side effect chạy hai lần và cần khôi phục mà không mất message.",
+      "category": "backend",
+      "difficulty": "hard",
+      "competency": "decision_making",
+      "estimatedMinutes": 18,
+      "content": "## Bối cảnh\n\nBạn là engineer trực một distributed worker xử lý event hoàn tất interview. Queue bảo đảm at-least-once; một worker đã ghi progress và gửi notification rồi bị crash trước khi commit offset. Worker mới nhận lại cùng event và side effect bị chạy lần hai.\n\n## Dữ kiện\n\n- Event có id ổn định nhưng consumer chưa lưu dấu đã xử lý theo transaction.\n- Một side effect có thể retry an toàn, side effect khác tạo usage hoặc notification không được cộng/gửi trùng.\n- Outbox giúp ghi event cùng nghiệp vụ nhưng không tự làm consumer idempotent.\n- Bỏ message để giảm backlog sẽ làm mất dữ liệu và che sự cố.\n- Cần recovery cho event đang dở dang và audit để giải thích từng lần xử lý.\n\n## Nhiệm vụ của bạn\n\nHãy thiết kế consumer và phương án phục hồi:\n- Bạn lưu processed-event và cập nhật aggregate trong transaction nào?\n- Bạn phân biệt duplicate, retryable error và poison message ra sao?\n- Bạn ngăn duplicate side effect bằng idempotency key hoặc outbox thế nào?\n- Bạn kiểm thử crash ở từng điểm và theo dõi queue lag, retry, dead-letter bằng metric nào?"
+    },
+    {
+      "slug": "frontend-form-state-reset",
+      "title": "Biểu mẫu mất dữ liệu sau lỗi validation",
+      "summary": "Form mất dữ liệu người dùng sau khi API trả validation error, khiến họ phải nhập lại câu trả lời dài và bỏ dở luồng đăng ký.",
+      "category": "frontend",
+      "difficulty": "easy",
+      "competency": "problem_solving",
+      "estimatedMinutes": 9,
+      "content": "## Bối cảnh\n\nBạn là frontend engineer phụ trách form tạo mục tiêu nghề nghiệp. User điền nhiều trường và dán phần mô tả công việc dài; khi API trả 400 vì một trường bắt buộc, component reset toàn bộ state và làm mất dữ liệu hợp lệ. Support nhận nhiều ticket yêu cầu nhập lại.\n\n## Dữ kiện\n\n- Backend trả lỗi theo field nhưng UI đang thay thế form state bằng object lỗi.\n- Request bất đồng bộ có thể hoàn tất sau khi user đã chỉnh sửa lại một trường.\n- Một số field có dữ liệu riêng tư, không được ghi nguyên văn vào analytics hoặc log.\n- Form phải giữ hành vi accessibility, loading và retry hiện tại.\n- Không được bỏ validation server hoặc tự báo thành công khi request thất bại.\n\n## Nhiệm vụ của bạn\n\nHãy phân tích và sửa luồng state:\n- Bạn tách form values, field errors và submit state như thế nào?\n- Khi response cũ về sau một lần chỉnh sửa mới, bạn tránh ghi đè ra sao?\n- Bạn hiển thị lỗi để user sửa mà không mất dữ liệu hợp lệ như thế nào?\n- Bạn viết test validation, retry, unmount và dữ liệu dài ra sao?"
+    },
+    {
+      "slug": "frontend-stale-react-query-data",
+      "title": "React Query hiển thị entitlement cũ sau thanh toán",
+      "summary": "Sau khi thanh toán thành công, React Query vẫn hiển thị entitlement cũ vì cache chưa được invalidated và background refetch chưa cập nhật kịp.",
+      "category": "frontend",
+      "difficulty": "medium",
+      "competency": "problem_solving",
+      "estimatedMinutes": 12,
+      "content": "## Bối cảnh\n\nBạn xây dựng màn hình account sau checkout. Payment webhook đã xác nhận thành công nhưng React Query vẫn trả entitlement trước khi thanh toán, nên nút tính năng nâng cao chưa mở dù server đã cấp quyền. User refresh nhiều lần và thấy trạng thái lúc đúng lúc cũ.\n\n## Dữ kiện\n\n- Cache key của account và entitlement đang không nhất quán giữa checkout và dashboard.\n- Webhook là bất đồng bộ; response tạo checkout không phải nguồn sự thật cuối cùng về quyền.\n- Có thể dùng `invalidateQueries` và background refetch nhưng không được hiển thị quyền khi server chưa xác nhận.\n- UI cần phân biệt pending payment, active entitlement và lỗi provider.\n- Retry query không được tạo payment mới hoặc làm thay đổi quota.\n\n## Nhiệm vụ của bạn\n\nHãy thiết kế state flow đúng nguồn sự thật:\n- Bạn chọn cache key, invalidation và refetch trigger nào?\n- Trong khoảng chờ webhook, UI hiển thị trạng thái gì để không hứa sai?\n- Bạn xử lý tab focus, reload và lỗi refetch ra sao?\n- Test nào chứng minh cache cũ không mở nhầm quyền và dữ liệu server cuối cùng được dùng?"
+    },
+    {
+      "slug": "frontend-race-search-results",
+      "title": "Kết quả tìm kiếm cũ ghi đè kết quả mới",
+      "summary": "Request A tìm kiếm từ khóa rea trả chậm sau request B với từ khóa react, rồi kết quả cũ ghi đè input mới trên giao diện.",
+      "category": "frontend",
+      "difficulty": "medium",
+      "competency": "problem_solving",
+      "estimatedMinutes": 13,
+      "content": "## Bối cảnh\n\nBạn phụ trách ô tìm kiếm scenario bằng React. User gõ `rea`, rồi nhanh chóng gõ `react`; request B trả về trước nhưng request A hoàn tất muộn hơn và ghi danh sách cũ lên màn hình. User tưởng hệ thống tìm sai hoặc thấy kết quả không liên quan.\n\n## Dữ kiện\n\n- API trả response hợp lệ cho từng query và không thể bảo đảm thứ tự mạng.\n- Debounce giảm request nhưng không xử lý race condition giữa các request đã gửi.\n- Component có thể unmount khi user chuyển route trong lúc request đang chờ.\n- Có thể dùng `AbortController`, request identity hoặc chỉ nhận response mới nhất.\n- Search input và kết quả không chứa secret nhưng vẫn không nên ghi raw query nhạy cảm vào log.\n\n## Nhiệm vụ của bạn\n\nHãy đề xuất cách chống stale response:\n- Bạn gắn request id hoặc abort signal thế nào?\n- Loading, empty và lỗi khi request cũ bị hủy được hiển thị ra sao?\n- Bạn kiểm thử A/B trả về theo mọi thứ tự như thế nào?\n- Bạn bảo đảm không cập nhật state sau unmount và không tạo retry vô hạn ra sao?"
+    },
+    {
+      "slug": "frontend-hydration-production-only",
+      "title": "Trang Next.js chỉ lỗi hydration ở production",
+      "summary": "Trang Next.js chỉ báo hydration mismatch ở production vì dữ liệu Date, window hoặc localStorage được đọc khác nhau giữa SSR và client.",
+      "category": "frontend",
+      "difficulty": "medium",
+      "competency": "problem_solving",
+      "estimatedMinutes": 15,
+      "content": "## Bối cảnh\n\nBạn là frontend engineer duy trì trang Next.js. Một màn hình report chạy đúng trong development nhưng chỉ production build mới cảnh báo hydration mismatch và đôi lúc nhấp nháy nội dung. Team cần xác định nguyên nhân trước khi tắt cảnh báo.\n\n## Dữ kiện\n\n- Component render Date theo timezone khác nhau giữa server và browser.\n- Một nhánh đọc `window` hoặc `localStorage` ngay trong render thay vì sau khi component mount.\n- Một số dữ liệu account đến từ API sau hydrate và không nên bị hard-code vào HTML.\n- Production có minification và caching khác development, nên cần tái hiện bằng build thật.\n- Không được bọc toàn trang bằng client-only để che lỗi nếu làm mất SSR và hiệu năng.\n\n## Nhiệm vụ của bạn\n\nHãy điều tra hydration mismatch:\n- Bạn tạo reproduction với Date, window và localStorage như thế nào?\n- Phần nào cần chuyển sang effect, client boundary hoặc giá trị deterministic?\n- Bạn kiểm thử SSR, hydration, loading và timezone ra sao?\n- Bạn đo tác động SEO, performance và rollout fix production thế nào?"
+    },
+    {
+      "slug": "frontend-large-dashboard-performance",
+      "title": "Dashboard lớn bị giật khi có nhiều card và biểu đồ",
+      "summary": "Dashboard React lớn có nhiều card và chart bắt đầu lag, đòi hỏi profiling để chọn đúng điểm tối ưu thay vì thêm memoization tùy ý.",
+      "category": "frontend",
+      "difficulty": "hard",
+      "competency": "prioritization",
+      "estimatedMinutes": 18,
+      "content": "## Bối cảnh\n\nBạn phụ trách một React dashboard hiển thị nhiều card tiến độ, biểu đồ điểm và recommendation. Sau khi thêm chart cho từng kỹ năng, người dùng laptop cũ và mobile thấy cuộn giật, thao tác filter trễ và tab dùng nhiều CPU.\n\n## Dữ kiện\n\n- Profiler cho thấy một parent render lại toàn bộ card khi một filter nhỏ thay đổi.\n- Một số chart nặng được tạo ngay cả khi còn ngoài viewport.\n- API đã có pagination và summary; không được tải thêm toàn bộ report chỉ để vẽ chart.\n- Memoization có chi phí memory và không sửa được component ownership hoặc dữ liệu thay đổi quá thường xuyên.\n- Product muốn giữ thông tin quan trọng, nhưng chấp nhận lazy loading hoặc virtualized list.\n\n## Nhiệm vụ của bạn\n\nHãy lập kế hoạch tối ưu có thứ tự:\n- Bạn profiling render, bundle, network và memory như thế nào trước khi sửa?\n- Phần nào nên memoize, virtualize, lazy load hoặc chia component?\n- Bạn cân bằng payload, độ chính xác biểu đồ và trải nghiệm loading ra sao?\n- Metric nào chứng minh frame time, interaction latency và crash rate đã cải thiện?"
+    },
+    {
+      "slug": "dotnet-async-blocking-request",
+      "title": "Endpoint ASP.NET Core chậm do chặn async",
+      "summary": "Endpoint ASP.NET Core trở nên chậm vì một helper dùng .Result và .Wait trong đường đi async, làm thread pool và request queue bị giữ lâu.",
+      "category": "dotnet",
+      "difficulty": "easy",
+      "competency": "problem_solving",
+      "estimatedMinutes": 9,
+      "content": "## Bối cảnh\n\nBạn là .NET engineer trực một ASP.NET Core API. Sau một release, p95 tăng từ 400 ms lên vài giây khi traffic tăng. Trace cho thấy một service gọi async nhưng helper cũ dùng `.Result` và `.Wait`, làm thread pool bị kẹt và request xếp hàng.\n\n## Dữ kiện\n\n- Endpoint còn gọi EF Core và một adapter ngoài có timeout riêng.\n- Một số request client đã ngắt kết nối nhưng thao tác vẫn tiếp tục vì không truyền CancellationToken.\n- Tăng timeout hoặc thêm thread có thể làm connection pool cạn nhanh hơn.\n- Test hiện chủ yếu chạy ít request nên chưa tái hiện saturation.\n- Contract lỗi và telemetry requestId phải được giữ nguyên khi sửa.\n\n## Nhiệm vụ của bạn\n\nHãy điều tra và sửa blocking async:\n- Bạn tìm `.Result`, `.Wait` và đo thread/connection pool bằng dữ liệu nào?\n- Bạn lan truyền async và CancellationToken qua controller, service, EF và adapter ra sao?\n- Bạn phân biệt timeout, client disconnect và lỗi provider thế nào?\n- Bạn viết load/regression test nào để chứng minh endpoint không treo?"
+    },
+    {
+      "slug": "dotnet-efcore-nplusone",
+      "title": "API EF Core tạo hàng trăm truy vấn SQL",
+      "summary": "Một API EF Core tải danh sách kèm quan hệ bằng cách truy cập navigation trong vòng lặp, tạo hàng trăm SQL query và làm response chậm.",
+      "category": "dotnet",
+      "difficulty": "medium",
+      "competency": "problem_solving",
+      "estimatedMinutes": 13,
+      "content": "## Bối cảnh\n\nBạn phụ trách API .NET trả danh sách interview kèm report summary và category. Khi số lượng item tăng, response mất vài giây; SQL log cho thấy mỗi item lại phát sinh query lấy navigation, tổng cộng hàng trăm query trong một request.\n\n## Dữ kiện\n\n- Client chỉ cần vài primitive summary, không cần entity đầy đủ hay raw transcript.\n- Query hiện materialize danh sách sớm rồi đọc navigation trong vòng lặp.\n- Một số quan hệ có thể null và dữ liệu phải owner-scoped.\n- `Include` mọi quan hệ có thể tạo payload lớn; projection primitive có thể phù hợp hơn.\n- Có thể dùng query logging, interceptor và execution plan để xác nhận N+1.\n\n## Nhiệm vụ của bạn\n\nHãy đề xuất cách sửa N+1:\n- Bạn chứng minh query count và payload hiện tại bằng công cụ nào?\n- Khi nào dùng projection, Include hoặc split query?\n- Bạn giữ filter owner, pagination và null handling như thế nào?\n- Regression test nào bảo đảm số query và response contract không tăng lại?"
+    },
+    {
+      "slug": "dotnet-dbcontext-concurrency",
+      "title": "Background task dùng chung DbContext gây lỗi concurrency",
+      "summary": "Background task dùng chung một DbContext với request khác, thỉnh thoảng ném lỗi concurrency và làm mất kết quả xử lý.",
+      "category": "dotnet",
+      "difficulty": "medium",
+      "competency": "problem_solving",
+      "estimatedMinutes": 14,
+      "content": "## Bối cảnh\n\nBạn bảo trì .NET worker chạy các background task sau khi user hoàn tất một thao tác. Một task dùng DbContext scoped của request đã kết thúc, trong khi task khác dùng cùng instance song song. Production thỉnh thoảng ghi lỗi DbContext concurrency hoặc thiếu dữ liệu.\n\n## Dữ kiện\n\n- EF Core DbContext không thread-safe và không được dùng đồng thời bởi nhiều operation.\n- Worker có thể chạy lâu hơn request và cần tạo scope riêng cho mỗi job.\n- Retry job phải giữ idempotency, không ghi duplicate usage hoặc report.\n- Một số test đang dùng fake DbContext nên không phát hiện lifetime sai.\n- Log cần có jobId/correlationId, không ghi CV hay answer.\n\n## Nhiệm vụ của bạn\n\nHãy sửa lifetime và concurrency:\n- Bạn phân tích DI scope và tạo service scope/DbContext cho worker như thế nào?\n- Bạn tách operation song song hay serialize theo aggregate ra sao?\n- Bạn kiểm thử nhiều job, cancellation, retry và shutdown thế nào?\n- Bạn theo dõi lỗi concurrency và chứng minh không mất hoặc ghi trùng dữ liệu bằng cách nào?"
+    },
+    {
+      "slug": "dotnet-migration-production-risk",
+      "title": "Migration EF Core có thể khóa bảng production lớn",
+      "summary": "Một EF migration thêm index và cột vào bảng production lớn có thể khóa traffic, nên cần expand-contract, backfill và deployment order an toàn.",
+      "category": "dotnet",
+      "difficulty": "medium",
+      "competency": "risk_management",
+      "estimatedMinutes": 15,
+      "content": "## Bối cảnh\n\nBạn là .NET engineer chuẩn bị thêm cột và index cho bảng activity đã có hàng chục triệu dòng. Migration chạy đồng thời với traffic production và lần thử đầu giữ lock lâu hơn dự kiến, làm request timeout.\n\n## Dữ kiện\n\n- Bảng lớn có nhiều request đọc/ghi và index mới cần thời gian build.\n- Cột mới có thể nullable ở bước đầu; backfill toàn bộ trong transaction lớn là rủi ro.\n- Code cũ và code mới có thể cùng chạy trong rolling deploy.\n- Rollback ứng dụng không đồng nghĩa rollback schema vì dữ liệu mới có thể đã được ghi.\n- Database metrics cho lock, duration và replica lag có sẵn nhưng chưa có gate release.\n\n## Nhiệm vụ của bạn\n\nHãy lập migration plan an toàn:\n- Bạn review SQL và chọn expand-contract, backfill theo batch thế nào?\n- Deployment order giữa schema, writer và reader cần ra sao?\n- Bạn xác định lock budget, canary và rollback strategy bằng metric nào?\n- Bạn kiểm tra migration không tạo model drift hoặc làm gián đoạn request thế nào?"
+    },
+    {
+      "slug": "dotnet-auth-policy-data-leak",
+      "title": "Controller thiếu ownership gây lộ dữ liệu",
+      "summary": "Controller chỉ kiểm tra user đã đăng nhập nhưng thiếu resource ownership, cho phép đổi ID và truy vấn entity của tài khoản khác.",
+      "category": "dotnet",
+      "difficulty": "hard",
+      "competency": "risk_management",
+      "estimatedMinutes": 19,
+      "content": "## Bối cảnh\n\nTrong review một ASP.NET Core controller, bạn thấy action chỉ có `[Authorize]` rồi truy vấn report theo route ID. User đã đăng nhập có thể thay ID bằng tài nguyên của tài khoản khác và nhận dữ liệu riêng tư. Chưa có bằng chứng abuse nhưng lỗ hổng cần được xử lý ngay.\n\n## Dữ kiện\n\n- Authentication chỉ chứng minh danh tính; ownership phải được kiểm tra ở query/service.\n- GUID khó đoán không thay thế authorization vì ID có thể lộ qua link, log client hoặc response khác.\n- Report và CV có dữ liệu nhạy cảm, không được đưa vào log điều tra.\n- List route đã lọc userId nhưng detail, download và retry route cần rà soát riêng.\n- API cần quyết định 404 opaque hay 403 theo contract hiện tại và không xác nhận tài nguyên của user khác.\n\n## Nhiệm vụ của bạn\n\nHãy đóng lỗ hổng và chứng minh fix:\n- Bạn đặt owner scope ở controller, service và EF query như thế nào?\n- Bạn rà soát các route cùng resource và cache/background job ra sao?\n- Integration test nào kiểm tra user A không đọc được dữ liệu user B?\n- Bạn containment, audit và truyền thông sự cố thế nào mà không lộ nội dung riêng tư?"
+    },
+    {
+      "slug": "java-spring-validation-mismatch",
+      "title": "Validation DTO khác nhau giữa create và update",
+      "summary": "DTO validation khác nhau giữa create và update API khiến cùng một dữ liệu khi được tạo thì hợp lệ nhưng khi chỉnh sửa lại bị từ chối.",
+      "category": "java",
+      "difficulty": "easy",
+      "competency": "problem_solving",
+      "estimatedMinutes": 9,
+      "content": "## Bối cảnh\n\nBạn là Java engineer phụ trách API hồ sơ bằng Spring Boot. DTO tạo mới yêu cầu seniority và target role, còn DTO update dùng validation group khác nên cùng một payload có kết quả khác nhau. Frontend nhận 400 không nhất quán và support không biết hướng dẫn theo rule nào.\n\n## Dữ kiện\n\n- Bean Validation có constraint ở DTO, method parameter và một số business rule trong service.\n- Create và update có thể có yêu cầu khác nhưng phải được tài liệu hóa rõ.\n- Response lỗi cần field, code và message an toàn; không trả stack trace hoặc raw request.\n- Client cũ phụ thuộc mã lỗi chung và chưa thể nâng cấp ngay.\n- Test hiện mới kiểm tra status code, chưa kiểm tra validation group và nested object.\n\n## Nhiệm vụ của bạn\n\nHãy chuẩn hóa validation contract:\n- Bạn xác định rule nào thuộc DTO và rule nào thuộc service thế nào?\n- Bạn ánh xạ lỗi create/update thành mã máy đọc ổn định ra sao?\n- Bạn giữ backward compatibility nhưng tránh chấp nhận dữ liệu không hợp lệ như thế nào?\n- Bạn bổ sung controller test, OpenAPI và phối hợp với Frontend/QA ra sao?"
+    },
+    {
+      "slug": "java-jpa-lazy-loading",
+      "title": "Endpoint production lỗi LazyInitializationException sau refactor",
+      "summary": "Sau refactor, endpoint Spring Boot truy cập lazy relationship ngoài transaction và production báo LazyInitializationException thay vì trả summary hợp lệ.",
+      "category": "java",
+      "difficulty": "medium",
+      "competency": "problem_solving",
+      "estimatedMinutes": 13,
+      "content": "## Bối cảnh\n\nBạn là Java engineer xử lý endpoint report bằng Spring Data JPA. Sau một refactor tách mapping ra khỏi service, production bắt đầu báo `LazyInitializationException` khi controller đọc relationship sau khi transaction đã đóng. Trước đây test fixture luôn giữ session mở nên không thấy lỗi.\n\n## Dữ kiện\n\n- Entity có quan hệ lazy và response chỉ cần vài field summary.\n- Bật Open Session in View có thể che lỗi nhưng giữ database session lâu hơn và làm boundary khó rõ.\n- Có thể dùng fetch join, projection hoặc map DTO bên trong transaction.\n- Report và owner scope phải được lọc trong query, không load toàn bộ entity để kiểm tra sau.\n- Lỗi production cần mapping an toàn, không lộ exception type cho user.\n\n## Nhiệm vụ của bạn\n\nHãy điều tra và sửa lazy loading đúng cách:\n- Bạn dùng SQL log, trace và test đóng session để tái hiện thế nào?\n- Bạn chọn projection, fetch join hay explicit load dựa trên payload nào?\n- Bạn giữ transaction boundary và tránh N+1 ra sao?\n- Regression test nào chứng minh endpoint chạy được ngoài Open Session in View?"
+    },
+    {
+      "slug": "java-transaction-partial-write",
+      "title": "Hai thao tác database chỉ ghi thành công một phần",
+      "summary": "Một service cần ghi order và usage trong cùng nghiệp vụ nhưng exception sau thao tác đầu làm hai bảng rơi vào trạng thái chỉ ghi một phần.",
+      "category": "java",
+      "difficulty": "medium",
+      "competency": "problem_solving",
+      "estimatedMinutes": 15,
+      "content": "## Bối cảnh\n\nBạn là Java engineer bảo trì service Spring Boot nhận request tạo order. Service ghi order rồi cập nhật usage/quota ở thao tác thứ hai; khi thao tác thứ hai ném exception, order vẫn commit còn usage không đổi. Người dùng thấy trạng thái không nhất quán và retry có thể làm mọi thứ tệ hơn.\n\n## Dữ kiện\n\n- Hai thao tác cùng thuộc một business transaction nhưng hiện đang ở hai method khác nhau.\n- Method có `@Transactional`, song self-invocation và bắt exception bên trong có thể làm rollback semantics khác dự kiến.\n- Usage event bất biến và phải idempotent khi retry.\n- Không được xóa order đã ghi hoặc báo thành công giả chỉ để khớp số liệu.\n- Cần phân biệt lỗi validation, deadlock và lỗi provider trong mapping.\n\n## Nhiệm vụ của bạn\n\nHãy phân tích transaction boundary:\n- Bạn kiểm tra proxy, self-invocation và propagation của `@Transactional` ra sao?\n- Exception nào phải được ném ra để rollback, exception nào cần xử lý riêng?\n- Bạn thiết kế retry/idempotency và reconciliation dữ liệu dở dang thế nào?\n- Test nào chứng minh cả hai ghi cùng commit hoặc cùng rollback?"
+    },
+    {
+      "slug": "java-threadpool-exhaustion",
+      "title": "Job bất đồng bộ làm cạn Spring executor pool",
+      "summary": "Các async job chiếm hết Spring executor pool, làm notification trễ và request phải chờ dù database vẫn khỏe.",
+      "category": "java",
+      "difficulty": "medium",
+      "competency": "operational_judgment",
+      "estimatedMinutes": 14,
+      "content": "## Bối cảnh\n\nBạn vận hành ứng dụng Spring Boot có executor cho notification, report và các async job khác. Một đợt traffic cao khiến job dài chiếm hết pool, request phụ thuộc vào executor bị chậm và email thông báo trễ hàng chục phút.\n\n## Dữ kiện\n\n- Các loại job hiện dùng chung pool nhưng có thời gian chạy và mức ưu tiên khác nhau.\n- Queue không có bound rõ ràng; retry một job lỗi có thể chiếm thêm worker.\n- Thread dump cho thấy nhiều task chờ external provider và không có timeout.\n- API cần trả response ổn định, không được chạy side effect đồng bộ để che backlog.\n- Có thể dùng pool riêng, bounded queue, timeout và metric active/queued/rejected task.\n\n## Nhiệm vụ của bạn\n\nHãy điều tra và điều chỉnh executor:\n- Bạn xác định task nào làm cạn pool bằng thread dump và metric nào?\n- Bạn phân tách pool, đặt queue/rejection policy và timeout ra sao?\n- Retry/backoff và dead-letter cho job lỗi được giới hạn thế nào?\n- Bạn rollout, alert và kiểm tra notification không bị mất hoặc chạy trùng ra sao?"
+    },
+    {
+      "slug": "java-distributed-transaction-boundary",
+      "title": "Order đã lưu nhưng payment service thất bại",
+      "summary": "Order service đã lưu order nhưng payment service thất bại, buộc đội Java cân nhắc distributed transaction, Saga, outbox và compensation.",
+      "category": "java",
+      "difficulty": "hard",
+      "competency": "decision_making",
+      "estimatedMinutes": 18,
+      "content": "## Bối cảnh\n\nBạn là Java engineer trong order service. Transaction local đã commit order nhưng lời gọi payment service timeout, nên user không biết thanh toán có thành công hay không và hệ thống có nguy cơ tạo order/payment lệch nhau.\n\n## Dữ kiện\n\n- Hai service sở hữu database riêng và payment provider không hỗ trợ transaction chung.\n- Retry lời gọi payment có thể tạo charge trùng nếu thiếu idempotency key.\n- Outbox có thể phát event order-created; Saga có thể giữ trạng thái pending và phát compensation.\n- Hoàn tiền hoặc hủy order là side effect có độ trễ và cần audit.\n- Business không chấp nhận đánh dấu paid khi provider chưa xác nhận.\n\n## Nhiệm vụ của bạn\n\nHãy cân nhắc các transaction boundary:\n- Khi nào distributed transaction là không phù hợp với hệ thống này?\n- Bạn dùng outbox, Saga state và compensation cho từng failure mode ra sao?\n- Idempotency, timeout và reconciliation được kiểm soát thế nào?\n- Bạn truyền thông trạng thái pending cho user và đo consistency sau rollout ra sao?"
+    },
+    {
+      "slug": "database-missing-index-search",
+      "title": "Truy vấn filter phổ biến chậm khi bảng tăng",
+      "summary": "Filter phổ biến từng chạy nhanh nhưng trở nên chậm khi bảng lớn, vì index hiện tại không khớp điều kiện lọc và thứ tự sắp xếp.",
+      "category": "database",
+      "difficulty": "easy",
+      "competency": "problem_solving",
+      "estimatedMinutes": 9,
+      "content": "## Bối cảnh\n\nBạn được giao điều tra endpoint hiển thị các lần luyện tập gần đây. Khi dữ liệu còn ít, response dưới 100 ms; sau vài tháng, một số người dùng chờ vài giây. Truy vấn lọc theo user, trạng thái và thời gian nhưng database chỉ có index riêng lẻ chưa phù hợp.\n\n## Dữ kiện\n\n- Điều kiện owner và status phải tiếp tục thực thi ở database.\n- Endpoint chỉ cần vài chục bản ghi mới nhất, không được tải cả bảng về memory.\n- Cơ sở dữ liệu PostgreSQL có thể dùng `EXPLAIN (ANALYZE, BUFFERS)` trong môi trường kiểm thử an toàn.\n- Thêm index có chi phí ghi và dung lượng, nên không được tạo theo cảm tính.\n\n## Nhiệm vụ của bạn\n\nHãy lập cách điều tra và tối ưu:\n- Bạn đọc execution plan và xác định index cần thiết thế nào?\n- Bạn chọn thứ tự cột composite index dựa trên filter và order ra sao?\n- Bạn đo cải thiện và chi phí migration như thế nào?\n- Test nào bảo đảm query vẫn owner-scoped và có bound?"
+    },
+    {
+      "slug": "database-deadlock-orders",
+      "title": "Hai luồng cập nhật order gây deadlock",
+      "summary": "Hai transaction cập nhật order và payment theo thứ tự khác nhau, khiến database thỉnh thoảng deadlock trong giờ cao điểm.",
+      "category": "database",
+      "difficulty": "medium",
+      "competency": "problem_solving",
+      "estimatedMinutes": 13,
+      "content": "## Bối cảnh\n\nBạn trực database cho order service. Trong giờ cao điểm, một transaction khóa order rồi payment, trong khi transaction refund khóa payment rồi order. PostgreSQL thỉnh thoảng hủy một transaction vì deadlock và request trả lỗi dù dữ liệu chưa hỏng.\n\n## Dữ kiện\n\n- Hai đường nghiệp vụ cập nhật cùng các row nhưng thứ tự truy cập khác nhau.\n- Retry ở HTTP có thể chạy lại side effect nếu không có idempotency.\n- Deadlock khác với validation hoặc authorization failure và cần mapping riêng.\n- Log database có transaction/correlation id nhưng không được ghi token hay dữ liệu order nhạy cảm.\n- Thay đổi thứ tự khóa phải giữ transaction boundary và audit event.\n\n## Nhiệm vụ của bạn\n\nHãy điều tra và giảm deadlock:\n- Bạn dùng database log, lock graph và trace để xác định cặp transaction thế nào?\n- Bạn chuẩn hóa thứ tự truy cập row ở các service ra sao?\n- Retry bounded với idempotency cho deadlock được thiết kế thế nào?\n- Test concurrency và metric nào chứng minh lỗi không quay lại?"
+    },
+    {
+      "slug": "database-soft-delete-unique-key",
+      "title": "Soft delete ngăn dùng lại giá trị duy nhất",
+      "summary": "Soft-deleted user vẫn giữ unique business value, khiến user mới không thể đăng ký lại email hoặc username theo policy sản phẩm.",
+      "category": "database",
+      "difficulty": "medium",
+      "competency": "decision_making",
+      "estimatedMinutes": 14,
+      "content": "## Bối cảnh\n\nBạn phụ trách user database có soft delete để giữ lịch sử và audit. Một user đã bị xóa mềm nhưng email/username vẫn chiếm unique key, nên user đăng ký mới hoặc khôi phục tài khoản gặp conflict. Product muốn cho phép tái sử dụng nhưng Legal yêu cầu giữ liên kết lịch sử.\n\n## Dữ kiện\n\n- Row soft-deleted vẫn nằm trong bảng và các foreign key lịch sử không được xóa.\n- Có thể dùng partial unique index chỉ áp dụng cho row active, hoặc canonicalize giá trị đã xóa.\n- Restore user phải xử lý conflict nếu một tài khoản khác đã dùng giá trị đó.\n- Không được trả user cũ hoặc dữ liệu riêng tư khi báo lỗi đăng ký.\n- Migration và backfill phải an toàn trên bảng lớn, không tự động xóa lịch sử.\n\n## Nhiệm vụ của bạn\n\nHãy cân nhắc quy tắc unique:\n- Bạn chọn partial index, suffix nội bộ hay policy không cho reuse dựa trên trade-off nào?\n- Restore, register đồng thời và idempotency được xử lý ra sao?\n- Bạn kiểm thử owner/privacy và các foreign key lịch sử như thế nào?\n- Bạn giải thích lựa chọn với Product, Legal và Support ra sao?"
+    },
+    {
+      "slug": "database-zero-downtime-schema-change",
+      "title": "Đổi schema không downtime khi client lệch version",
+      "summary": "Backend và frontend có hai version chạy đồng thời trong lúc đổi tên cột, nên migration phải backward-compatible và có thể dual-read/write.",
+      "category": "database",
+      "difficulty": "medium",
+      "competency": "risk_management",
+      "estimatedMinutes": 13,
+      "content": "## Bối cảnh\n\nBạn cần đổi tên một cột trạng thái trong bảng order khi backend và frontend sẽ deploy rolling trong nhiều giờ. Client cũ vẫn đọc tên cột cũ, client mới ghi tên mới; một migration trực tiếp có thể làm request cũ lỗi giữa release.\n\n## Dữ kiện\n\n- Bảng lớn có traffic ghi/đọc liên tục và không chấp nhận downtime.\n- Có thể thêm cột mới nullable, dual-write rồi backfill theo batch trước khi chuyển reader.\n- Code cũ không được giả định cột mới đã có giá trị; code mới phải đọc được dữ liệu cũ trong giai đoạn chuyển tiếp.\n- Rollback application không thể xóa schema hoặc mất dữ liệu mới đã ghi.\n- Cần kiểm tra lock, lag, mismatch giữa hai cột và kế hoạch contract cuối cùng.\n\n## Nhiệm vụ của bạn\n\nHãy thiết kế expand-contract:\n- Bạn sắp xếp migration, dual-read/write, backfill và chuyển traffic theo bước nào?\n- Bạn xử lý giá trị null, conflict giữa hai cột và retry ra sao?\n- Bạn đặt gate rollback và metric consistency nào?\n- Khi nào có thể bỏ cột cũ mà không phá client hoặc lịch sử?"
+    },
+    {
+      "slug": "database-inventory-concurrency",
+      "title": "Mặt hàng cuối bị bán cho hai request",
+      "summary": "Hai request cùng mua mặt hàng cuối vì kiểm tra tồn kho và cập nhật diễn ra riêng, làm inventory âm hoặc giao hàng vượt khả năng cung ứng.",
+      "category": "database",
+      "difficulty": "hard",
+      "competency": "decision_making",
+      "estimatedMinutes": 18,
+      "content": "## Bối cảnh\n\nBạn là backend engineer của hệ thống bán vé, nơi chỉ còn một inventory item. Hai request từ hai user đến gần như đồng thời; cả hai đều đọc còn hàng trước khi ghi purchase. Production có lúc ghi nhận hai đơn thành công cho cùng một item.\n\n## Dữ kiện\n\n- Check-then-update hiện nằm ở hai query riêng trong transaction.\n- Có thể dùng optimistic concurrency, pessimistic lock hoặc atomic update có điều kiện.\n- Isolation level thay đổi giữa môi trường test và PostgreSQL production nếu không kiểm tra rõ.\n- Payment và order side effect không được charge trùng khi inventory update thất bại.\n- User cần lỗi hết hàng ổn định, còn audit phải ghi rõ request nào thắng.\n\n## Nhiệm vụ của bạn\n\nHãy chọn chiến lược chống oversell:\n- Bạn so sánh atomic update, optimistic concurrency và row lock theo tải và failure mode nào?\n- Transaction boundary với payment/idempotency được đặt ra sao?\n- Bạn kiểm thử race bằng nhiều request đồng thời và database thật như thế nào?\n- Metric, reconciliation và phương án xử lý order đã tạo trùng của bạn là gì?"
+    },
+    {
+      "slug": "devops-env-production-missing",
+      "title": "Deploy thành công nhưng thiếu biến môi trường production",
+      "summary": "Deployment báo thành công nhưng production không khởi động đúng vì một biến môi trường bắt buộc bị thiếu, trong khi local vẫn có giá trị mặc định.",
+      "category": "devops",
+      "difficulty": "easy",
+      "competency": "problem_solving",
+      "estimatedMinutes": 9,
+      "content": "## Bối cảnh\n\nBạn là DevOps engineer trực một backend vừa deploy lên production. Render báo build và deploy thành công nhưng app fail startup vì thiếu một environment variable bắt buộc. Local chạy được vì `.env` có giá trị, còn staging dùng tên biến cũ nên health check không qua.\n\n## Dữ kiện\n\n- Secret và config runtime không được commit hoặc in ra log.\n- App nên fail fast với option nguy hiểm nhưng phải trả readiness rõ ràng.\n- Các môi trường có danh sách config khác nhau và chưa có schema check trong CI.\n- Copy `.env` local lên server sẽ tạo rủi ro lộ secret và sai nguồn sự thật.\n- Release cần rollback hoặc sửa config nhanh mà không thay đổi code ngoài scope.\n\n## Nhiệm vụ của bạn\n\nHãy điều tra và harden configuration:\n- Bạn xác định biến thiếu và kiểm tra tên giữa local, CI, staging, production thế nào?\n- Required/default/validation được đặt ở đâu để tránh silent misconfiguration?\n- Bạn phân biệt startup, liveness và readiness trong runbook ra sao?\n- Bạn thêm config check, audit và alert mà không lộ secret như thế nào?"
+    },
+    {
+      "slug": "devops-docker-works-local-not-container",
+      "title": "Ứng dụng chạy local nhưng lỗi trong Docker",
+      "summary": "Ứng dụng chạy bình thường trên máy developer nhưng fail trong Docker vì giả định filesystem, port và environment không tồn tại trong container.",
+      "category": "devops",
+      "difficulty": "medium",
+      "competency": "problem_solving",
+      "estimatedMinutes": 12,
+      "content": "## Bối cảnh\n\nBạn là DevOps engineer nhận ticket rằng service chạy tốt trên laptop nhưng container Docker restart liên tục. Ứng dụng dựa vào đường dẫn file local, port mặc định và timezone của máy developer; image production có filesystem khác và chạy user không có quyền ghi.\n\n## Dữ kiện\n\n- Container cần chạy non-root và chỉ được ghi vào volume/path đã cấp.\n- Environment, working directory, port binding và health check khác giữa local và image.\n- Build context có thể vô tình chứa file riêng tư nếu `.dockerignore` thiếu.\n- Không được sửa bằng cách nhúng secret hoặc chmod toàn filesystem.\n- Có thể tái hiện bằng image chính xác, inspect layer và log startup an toàn.\n\n## Nhiệm vụ của bạn\n\nHãy phân tích khác biệt local/container:\n- Bạn kiểm tra filesystem, user, port, env và dependency bằng công cụ nào?\n- Dockerfile và entrypoint nên thay đổi ra sao để deterministic?\n- Bạn bảo vệ secret, giảm image surface và kiểm tra provenance thế nào?\n- Test smoke/health check nào chứng minh image chạy được trên staging?"
+    },
+    {
+      "slug": "devops-ci-flaky-tests",
+      "title": "CI thất bại ngẫu nhiên dù local luôn xanh",
+      "summary": "CI thỉnh thoảng fail dù test chạy xanh ở local, nghi ngờ do parallelism, shared state, timing hoặc dependency bên ngoài.",
+      "category": "devops",
+      "difficulty": "medium",
+      "competency": "problem_solving",
+      "estimatedMinutes": 13,
+      "content": "## Bối cảnh\n\nBạn phụ trách pipeline CI cho backend. Một integration test thỉnh thoảng fail trên runner nhưng luôn pass local; khi rerun thì xanh. Team nghi ngờ test chạy song song dùng chung database, timing của job nền hoặc một dependency mạng bị gọi ngoài ý muốn.\n\n## Dữ kiện\n\n- Test fixture có dữ liệu và port dùng chung giữa một số class.\n- Runner có CPU/memory khác local và thứ tự test không cố định.\n- Normal test run không được phụ thuộc live provider hay external network.\n- Rerun tự động có thể che failure thật và kéo dài pipeline.\n- Cần artifact, correlation và seed deterministic để tái hiện mà không ghi dữ liệu nhạy cảm.\n\n## Nhiệm vụ của bạn\n\nHãy điều tra flaky CI:\n- Bạn phân biệt shared state, race, timing và external dependency bằng cách nào?\n- Bạn cô lập fixture, kiểm soát parallelism và fake provider ra sao?\n- Khi nào retry test là hợp lý, khi nào phải fail pipeline?\n- Bạn thêm stress/repeat test và metric để chứng minh độ ổn định thế nào?"
+    },
+    {
+      "slug": "devops-deployment-healthcheck-loop",
+      "title": "Release mới liên tục restart vì health check",
+      "summary": "Release mới liên tục restart vì health check unhealthy trong lúc ứng dụng cần thêm thời gian startup để chạy configuration và mở database connection.",
+      "category": "devops",
+      "difficulty": "medium",
+      "competency": "operational_judgment",
+      "estimatedMinutes": 15,
+      "content": "## Bối cảnh\n\nBạn deploy release mới của API và container liên tục bị platform restart vì readiness/health check fail. App cần chạy migration/config validation và mở connection pool lâu hơn timeout hiện tại, nhưng health check đang coi mọi response chậm là process unhealthy.\n\n## Dữ kiện\n\n- Liveness và readiness đang dùng chung endpoint và ngưỡng.\n- Startup dependency có timeout riêng; tăng timeout vô hạn có thể che lỗi thật.\n- Một số instance đã ready, một số đang restart nên traffic chập chờn.\n- Release không được đánh dấu healthy khi database/config chưa sẵn sàng.\n- Có thể dùng startup probe, warm-up và metric thời gian boot để phân biệt slow start với failure.\n\n## Nhiệm vụ của bạn\n\nHãy điều chỉnh health check an toàn:\n- Bạn phân tách liveness, readiness và startup semantics như thế nào?\n- Bạn chọn timeout, grace period và rollback gate dựa trên dữ liệu nào?\n- Bạn kiểm tra dependency mà không làm health check gây thêm tải ra sao?\n- Bạn rollout canary và theo dõi restart loop, request error, boot latency thế nào?"
+    },
+    {
+      "slug": "devops-production-incident-release",
+      "title": "Deploy production làm tỷ lệ 5xx tăng mạnh",
+      "summary": "Một production deployment làm 5xx tăng từ 0,2% lên 12%, buộc on-call quyết định rollback hay roll-forward dựa trên metric và blast radius.",
+      "category": "devops",
+      "difficulty": "hard",
+      "competency": "prioritization",
+      "estimatedMinutes": 20,
+      "content": "## Bối cảnh\n\nBạn là on-call trong một production deployment. Mười phút sau khi release, tỷ lệ 5xx tăng từ 0,2% lên 12% ở endpoint tạo report; request latency và queue backlog cũng tăng. Product đang chạy campaign nên có áp lực giữ release nếu chỉ là lỗi nhỏ.\n\n## Dữ kiện\n\n- Metric theo version cho thấy lỗi tập trung ở artifact mới, nhưng chưa xác định là code hay config.\n- Một số user đang giữa interview; không được rollback bằng cách xóa hoặc sửa report/answer.\n- Có thể rollback image, tắt feature flag hoặc roll-forward hotfix; migration schema phải tương thích cả hai version.\n- On-call cần một incident owner, timeline, communication channel và quyết định có audit.\n- Error rate, latency, saturation, queue lag và Sentry/requestId là các tín hiệu sẵn có.\n\n## Nhiệm vụ của bạn\n\nHãy điều hành incident:\n- Bạn xác minh blast radius và chọn rollback, feature off hay roll-forward bằng tiêu chí nào?\n- Bạn phân công incident owner, cập nhật Product/Support và thông báo user ra sao?\n- Bạn bảo vệ dữ liệu dang dở, kiểm tra recovery và tránh retry storm thế nào?\n- Postmortem cần action nào về test, deployment gate, metric và runbook?"
+    },
+    {
+      "slug": "qa-repro-intermittent-bug",
+      "title": "Khách hàng báo lỗi nhưng QA không tái hiện được",
+      "summary": "Khách hàng báo một bug intermittent nhưng QA không tái hiện được, buộc đội phải thu thập thêm context mà không sao chép dữ liệu production riêng tư.",
+      "category": "qa-testing",
+      "difficulty": "easy",
+      "competency": "problem_solving",
+      "estimatedMinutes": 8,
+      "content": "## Bối cảnh\n\nBạn là QA engineer nhận ticket từ khách hàng: thỉnh thoảng bấm gửi answer thì UI quay mãi, nhưng team không tái hiện được trên staging. Bug có thể phụ thuộc thiết bị, mạng, dữ liệu cũ hoặc timing của worker; support cần câu trả lời trong ngày.\n\n## Dữ kiện\n\n- Ticket có timestamp và user đã đồng ý chia sẻ requestId, nhưng không được lấy raw answer về máy local.\n- Log hiện có request status nhưng thiếu client version, browser, network state và job correlation.\n- Một số lỗi chỉ xảy ra khi retry hoặc khi report đang processing.\n- Có thể tạo fixture đã khử định danh và replay metadata trong môi trường test.\n- Không được kết luận không có bug chỉ vì vài lần rerun đều pass.\n\n## Nhiệm vụ của bạn\n\nHãy lập kế hoạch tái hiện:\n- Bạn cần hỏi thêm context và telemetry nào từ Support?\n- Bạn phân loại thiết bị, timing, dữ liệu và dependency để thu hẹp thế nào?\n- Bạn tạo fixture/replay an toàn và regression test sau khi tái hiện ra sao?\n- Mitigation tạm thời, communication và tiêu chí đóng ticket của bạn là gì?"
+    },
+    {
+      "slug": "qa-regression-release-deadline",
+      "title": "Regression phát hiện lỗi ngay trước giờ release",
+      "summary": "Regression suite phát hiện một lỗi mức medium chỉ vài giờ trước release, trong khi lịch marketing và phạm vi thay đổi khiến Product muốn tiếp tục.",
+      "category": "qa-testing",
+      "difficulty": "medium",
+      "competency": "decision_making",
+      "estimatedMinutes": 12,
+      "content": "## Bối cảnh\n\nBạn là QA lead trước giờ release. Regression phát hiện một lỗi medium: sau khi chỉnh filter, một nhóm user không thấy đúng lịch sử report. Lỗi chưa phải data leak nhưng ảnh hưởng luồng chính; Product muốn phát hành vì campaign đã lên lịch.\n\n## Dữ kiện\n\n- Có thể sửa trong vài giờ nhưng cần chạy lại focused và owner-scope test.\n- Rollback bản build hiện tại an toàn hơn rollback migration đã áp dụng.\n- Một feature flag có thể giảm phạm vi ảnh hưởng nhưng không thay thế fix.\n- Release gate cần severity, affected users, workaround, monitoring và owner quyết định.\n- Không được giảm assertion hoặc rerun đến khi xanh để che failure.\n\n## Nhiệm vụ của bạn\n\nHãy ra quyết định release:\n- Bạn đánh giá severity, blast radius và chọn ship, delay hay flag-off thế nào?\n- Smoke/focused/full regression nào phải chạy trước quyết định?\n- Bạn báo rủi ro còn lại cho Product, Engineering và Support ra sao?\n- Sau release, metric và rollback trigger nào bảo vệ người dùng?"
+    },
+    {
+      "slug": "qa-e2e-flaky-selector",
+      "title": "E2E chập chờn do selector và loading không ổn định",
+      "summary": "E2E test thất bại ngẫu nhiên vì selector dựa vào text thay đổi và bước loading bất đồng bộ chưa được chờ theo trạng thái.",
+      "category": "qa-testing",
+      "difficulty": "medium",
+      "competency": "problem_solving",
+      "estimatedMinutes": 13,
+      "content": "## Bối cảnh\n\nBạn phụ trách E2E suite cho luồng interview. Test mở câu hỏi rồi bấm submit, nhưng lúc pass lúc fail vì selector bám vào text copy và UI loading chưa hoàn tất. Developer rerun nhiều lần nên không biết đây là regression hay test flaky.\n\n## Dữ kiện\n\n- Component có thể thêm localization/copy mà không đổi hành vi nghiệp vụ.\n- API response và job nền bất đồng bộ, sleep cố định không bảo đảm state đã sẵn sàng.\n- Có thể thêm data-testid ổn định và chờ theo role/state thay vì thời gian.\n- Test phải isolate user/database và không gọi provider thật.\n- Artifact cần có screenshot, console/network metadata nhưng không lưu raw answer không cần thiết.\n\n## Nhiệm vụ của bạn\n\nHãy làm E2E đáng tin cậy:\n- Bạn xác định selector và wait condition nào đang flaky bằng log/artifact?\n- Bạn chọn semantic selector, test id và polling theo trạng thái ra sao?\n- Bạn cô lập dữ liệu, retry test và quarantine thế nào để không che regression?\n- Tiêu chí pass rate và kế hoạch theo dõi sau khi sửa là gì?"
+    },
+    {
+      "slug": "qa-api-contract-mismatch",
+      "title": "Backend đổi nullability mà chưa phối hợp Frontend",
+      "summary": "Backend đổi một field từ required sang nullable mà chưa phối hợp Frontend, khiến màn hình cũ crash khi response hợp lệ trả null.",
+      "category": "qa-testing",
+      "difficulty": "medium",
+      "competency": "communication",
+      "estimatedMinutes": 15,
+      "content": "## Bối cảnh\n\nBạn là QA liaison giữa Backend và Frontend. Backend đổi một response field từ required sang nullable để hỗ trợ dữ liệu lịch sử, nhưng không thông báo consumer. Staging dùng fixture đầy đủ nên xanh; production có user cũ khiến frontend dereference null và màn hình report không render.\n\n## Dữ kiện\n\n- Nullable là thay đổi contract cần được ghi trong OpenAPI và release note.\n- Frontend phát hành độc lập và có thể cần fallback loading/empty state.\n- API không được đổi lại thành fake value chỉ để client không crash.\n- Fixture phải bao phủ null, dữ liệu cũ và trạng thái đang xử lý.\n- Hai đội cần thống nhất owner của contract test và tiêu chí backward compatibility.\n\n## Nhiệm vụ của bạn\n\nHãy điều phối corrective action:\n- Bạn xác định field nào là breaking change và thông báo Frontend/Support ra sao?\n- Bạn thêm schema/consumer test cho required, nullable và enum thế nào?\n- Mitigation server/client nào an toàn trong khi rollout?\n- Bạn cập nhật tài liệu và quy trình review contract để lỗi không lặp lại ra sao?"
+    },
+    {
+      "slug": "qa-critical-payment-test-gap",
+      "title": "Thanh toán trùng làm lộ khoảng trống kiểm thử",
+      "summary": "Production payment duplication cho thấy test chỉ bao phủ success path mà chưa kiểm tra retry, timeout và idempotency, tạo rủi ro tài chính rõ ràng.",
+      "category": "qa-testing",
+      "difficulty": "hard",
+      "competency": "risk_management",
+      "estimatedMinutes": 18,
+      "content": "## Bối cảnh\n\nBạn là QA engineer điều tra incident: một khách bị tạo hai payment sau khi client retry trong network timeout. Test trước đây chỉ kiểm tra payment success một lần, nên production mới lộ duplicate charge và reconciliation thủ công.\n\n## Dữ kiện\n\n- POST payment/order có thể nhận cùng request identity nhiều lần.\n- Provider có thể trả timeout sau khi đã charge và webhook có thể đến trễ hoặc lặp.\n- Không được hoàn tiền tùy tiện hoặc xóa audit để làm số liệu khớp.\n- Cần containment, đối soát giao dịch và thông báo an toàn cho affected users.\n- Test pyramid phải bao gồm unit idempotency, integration transaction và E2E retry/timeout.\n\n## Nhiệm vụ của bạn\n\nHãy đóng vòng kiểm thử và incident:\n- Bạn giới hạn duplicate charge và xác định phạm vi ảnh hưởng thế nào?\n- Những lớp test nào đang thiếu, và fixture provider deterministic cần mô phỏng gì?\n- Bạn thiết kế regression cho retry, webhook duplicate và race ra sao?\n- Bạn phân công ownership mà không đổ lỗi cá nhân và theo dõi remediation đến khi nào?"
+    },
+    {
+      "slug": "mobile-api-offline-error",
+      "title": "Ứng dụng hiển thị lỗi chung khi mạng tạm mất",
+      "summary": "Ứng dụng mobile hiển thị một lỗi chung khi mạng tạm ngắt, dù có thể phân biệt offline, timeout và lỗi server để hướng dẫn user đúng cách.",
+      "category": "mobile",
+      "difficulty": "easy",
+      "competency": "problem_solving",
+      "estimatedMinutes": 9,
+      "content": "## Bối cảnh\n\nBạn là mobile engineer phụ trách luồng trả lời interview. Người dùng đi qua vùng mất mạng vài giây, request trả về lỗi chung và app đề nghị thử lại ngay. Một số user bấm nhiều lần, số khác tưởng answer đã mất dù bản nháp vẫn còn trên máy.\n\n## Dữ kiện\n\n- Network layer có thể phân biệt offline, timeout, HTTP 5xx và HTTP 4xx nhưng UI đang gom tất cả thành một message.\n- Answer là dữ liệu riêng tư, cần giữ cục bộ có vòng đời rõ và không ghi raw content vào analytics.\n- Retry submit cần idempotency để không tạo answer hoặc usage event trùng.\n- User có thể đổi mạng khi app đang background hoặc request đang chờ.\n- Backend là nguồn quyết định state chính thức; mobile không được tự đánh dấu đã nộp.\n\n## Nhiệm vụ của bạn\n\nHãy thiết kế lỗi offline dễ hành động:\n- Bạn map lỗi network thành state/UI message nào?\n- Bạn giữ draft và retry khi online lại ra sao?\n- Bạn kiểm thử airplane mode, timeout, 401, 5xx và app background thế nào?\n- Metric nào cho biết lỗi do network hay do backend mà không lộ câu trả lời?"
+    },
+    {
+      "slug": "mobile-token-refresh-race",
+      "title": "Nhiều request cùng refresh token sau 401",
+      "summary": "Nhiều request đồng thời nhận 401 rồi cùng refresh token, làm token rotation conflict và các request hợp lệ bị logout hàng loạt.",
+      "category": "mobile",
+      "difficulty": "medium",
+      "competency": "problem_solving",
+      "estimatedMinutes": 13,
+      "content": "## Bối cảnh\n\nBạn phụ trách mobile API client có nhiều request song song khi mở dashboard. Access token vừa hết hạn, tất cả request nhận 401 và interceptor cùng gọi refresh endpoint. Một refresh thành công rotate token, các refresh còn lại dùng token cũ và làm session bị invalid.\n\n## Dữ kiện\n\n- Token refresh có rotation và chỉ một request nên làm chủ thao tác refresh tại một thời điểm.\n- Request đang chờ cần được queue rồi replay đúng một lần sau khi token mới có.\n- Nếu refresh thất bại thật, app phải logout an toàn chứ không retry vô hạn.\n- Không ghi token vào log, analytics, crash report hoặc query string.\n- 401 do resource authorization khác với 401 do access token hết hạn.\n\n## Nhiệm vụ của bạn\n\nHãy thiết kế refresh coordinator:\n- Bạn dùng mutex/single-flight và queue request như thế nào?\n- Bạn tránh replay POST không idempotent hoặc duplicate side effect ra sao?\n- Bạn xử lý app background, network timeout và token rotation conflict thế nào?\n- Test concurrency, logout và privacy telemetry cần bao phủ gì?"
+    },
+    {
+      "slug": "mobile-background-state-loss",
+      "title": "Ứng dụng mất bản nháp khi OS kill process",
+      "summary": "User điền form dài rồi chuyển app; OS kill process trong background khiến draft mất và user phải bắt đầu lại.",
+      "category": "mobile",
+      "difficulty": "medium",
+      "competency": "decision_making",
+      "estimatedMinutes": 12,
+      "content": "## Bối cảnh\n\nBạn là mobile engineer xây dựng form answer dài. User chuyển sang app khác để xem thông tin, OS thu hồi memory và kill process; khi quay lại, app mở lại màn hình nhưng draft bị mất. Product muốn khôi phục trải nghiệm mà không biến draft thành answer chính thức.\n\n## Dữ kiện\n\n- Lifecycle callback không bảo đảm process sẽ được giữ sau background.\n- Draft answer có dữ liệu riêng tư và cần lưu cục bộ an toàn, có giới hạn dung lượng/vòng đời.\n- Chỉ server mới chuyển interview state, tính quota và ghi official answer.\n- App có thể bị kill khi đang offline hoặc giữa lúc sync.\n- Khi server đã có bản mới, local draft cũ có thể tạo conflict và không được ghi đè âm thầm.\n\n## Nhiệm vụ của bạn\n\nHãy thiết kế state recovery:\n- Bạn lưu draft ở lifecycle nào và xóa nó sau sự kiện nào?\n- Bạn dùng version/idempotency để sync lại mà không submit trùng ra sao?\n- Khi conflict, user được chọn giữ bản nào với thông báo dễ hiểu như thế nào?\n- Test background/kill/restore, encryption và crash telemetry cần bao phủ gì?"
+    },
+    {
+      "slug": "mobile-api-version-old-client",
+      "title": "Backend đổi contract khi nhiều client cũ còn hoạt động",
+      "summary": "Backend đổi contract nhưng nhiều user vẫn dùng app cũ, nên cần tương thích response, rollout và deprecation thay vì breaking ngay.",
+      "category": "mobile",
+      "difficulty": "medium",
+      "competency": "risk_management",
+      "estimatedMinutes": 14,
+      "content": "## Bối cảnh\n\nBạn là mobile/backend engineer khi cần thêm field vào interview API. Một lượng lớn user chưa nâng cấp app và sẽ còn gọi contract cũ nhiều tuần. Đổi tên hoặc bỏ field ngay làm app cũ crash, nhưng giữ compatibility quá lâu làm backend phức tạp.\n\n## Dữ kiện\n\n- Có thể thêm field nullable và giữ field cũ trong giai đoạn deprecation.\n- App version và endpoint usage có thể đo bằng telemetry không chứa answer/CV.\n- Một số lỗi contract chỉ xuất hiện trên app cũ và không có trong staging fixture mới.\n- Backend không được trả fake score hoặc suy đoán dữ liệu để làm client cũ im lặng.\n- Feature flag/remote config và forced upgrade phải có tiêu chí rõ ràng.\n\n## Nhiệm vụ của bạn\n\nHãy lập kế hoạch tương thích client:\n- Bạn chọn additive change, version route hay content negotiation dựa trên rủi ro nào?\n- Bạn test response cho app cũ/mới, null và rollback như thế nào?\n- Bạn theo dõi adoption và thông báo deprecation ra sao?\n- Khi nào được bỏ field cũ mà không làm gián đoạn user?"
+    },
+    {
+      "slug": "mobile-release-crash-specific-device",
+      "title": "Bản release crash trên một nhóm thiết bị Android",
+      "summary": "Bản release mới crash chỉ trên một nhóm Android version/device, đòi hỏi crash analytics, staged rollout, rollback và chiến lược tái hiện.",
+      "category": "mobile",
+      "difficulty": "hard",
+      "competency": "prioritization",
+      "estimatedMinutes": 18,
+      "content": "## Bối cảnh\n\nSau khi phát hành mobile build mới, crash rate tăng mạnh nhưng chỉ tập trung ở một số Android version và model thiết bị. Team chưa biết do native dependency, layout hay dữ liệu response; Product muốn rollout 100% vì campaign đang chạy.\n\n## Dữ kiện\n\n- Crash analytics có stack trace, app version, OS/device và tỷ lệ theo cohort nhưng không được chứa token hay answer.\n- Rollout hiện mới ở 10%, có thể pause, rollback binary hoặc tắt feature flag.\n- Thiết bị lỗi không có trong test lab và cần reproduction bằng fixture/physical device an toàn.\n- Một hotfix cần giữ API contract, session và draft không bị mất.\n- Release decision phải dựa trên crash-free users, affected cohort và severity, không chỉ tổng số crash.\n\n## Nhiệm vụ của bạn\n\nHãy điều tra và giảm blast radius:\n- Bạn phân nhóm crash analytics và tái hiện trên device/OS nào trước?\n- Khi nào pause rollout, rollback hay ship hotfix?\n- Feature flag và staged rollout được dùng như thế nào để bảo vệ user?\n- Bạn bổ sung test, monitor và communication sau incident ra sao?"
+    },
+    {
+      "slug": "software-architecture-service-boundary",
+      "title": "Team muốn tách microservice cho tính năng nhỏ",
+      "summary": "Team muốn tạo một microservice cho một tính năng nhỏ dù modular monolith hiện vẫn đáp ứng nhu cầu.",
+      "category": "software-architecture",
+      "difficulty": "easy",
+      "competency": "decision_making",
+      "estimatedMinutes": 9,
+      "content": "## Bối cảnh\n\nBạn là developer trong team sản phẩm. Một tính năng nhỏ dùng để gợi ý bước luyện tập tiếp theo sắp được triển khai; một thành viên đề xuất tạo hẳn một microservice mới để thể hiện kiến trúc hiện đại. Modular monolith hiện đã có ranh giới module và đang chịu áp lực ra mắt trong hai tuần.\n\n## Dữ kiện\n\n- Lưu lượng dự kiến của tính năng mới chỉ chiếm một phần nhỏ tổng request.\n- Tách service sẽ thêm deployment, network failure, authentication giữa service, logging và monitoring.\n- Dữ liệu vẫn cần owner scope và một số thao tác đang dùng transaction trong monolith.\n- Chưa có bằng chứng về bottleneck hay yêu cầu scale độc lập.\n- Product cần giải pháp dễ rollback và không muốn kéo dài deadline.\n\n## Nhiệm vụ của bạn\n\nHãy đánh giá đề xuất kiến trúc:\n- Bạn dùng bằng chứng nào để quyết định độ phức tạp có đáng hay chưa?\n- Ranh giới module và contract nội bộ nên được giữ thế nào nếu chưa tách service?\n- Bạn chọn phương án đơn giản nhất nào cho lần phát hành này?\n- Nếu sau này cần tách, bạn sẽ chuẩn bị ownership, telemetry và migration ra sao?"
+    },
+    {
+      "slug": "software-architecture-monolith-scaling",
+      "title": "Một module trong modular monolith trở thành bottleneck",
+      "summary": "Một module trong modular monolith trở thành bottleneck hiệu năng và team phải cân nhắc cách scale.",
+      "category": "software-architecture",
+      "difficulty": "medium",
+      "competency": "decision_making",
+      "estimatedMinutes": 14,
+      "content": "## Bối cảnh\n\nBạn phụ trách một modular monolith đang phục vụ nhiều team. Module báo cáo tiến độ trở thành bottleneck: sau một đợt tăng người dùng, p95 của dashboard tăng từ 400 ms lên 3 giây và database CPU thường xuyên vượt 80%. Một đề xuất là tách module thành microservice ngay trước mùa tuyển dụng.\n\n## Dữ kiện\n\n- Truy vấn chậm tập trung ở một read flow; chưa có bằng chứng mọi chức năng của module đều cần scale riêng.\n- Module dùng dữ liệu report, interview và entitlement với các ranh giới ownership đã có.\n- Tách service sẽ tạo network hop, consistency delay, migration dữ liệu và thêm chi phí vận hành.\n- Có thể bổ sung query plan, index, bounded read model, cache hoặc background work để giảm tải trước.\n- Product yêu cầu giảm p95 trong một tháng và không làm thay đổi API công khai.\n\n## Nhiệm vụ của bạn\n\nHãy lập kế hoạch xử lý bottleneck:\n- Bạn đo lường query, coupling và failure mode nào trước khi quyết định?\n- Tiêu chí nào chứng minh cần tách module thay vì tối ưu trong monolith?\n- Nếu chưa tách, bạn ưu tiên các bước giảm tải nào và kiểm chứng bằng gì?\n- Nếu phải tách, bạn giữ data ownership, contract, idempotency và rollback ra sao?"
+    },
+    {
+      "slug": "software-architecture-sync-vs-async",
+      "title": "Checkout gọi email analytics notification tuần tự",
+      "summary": "Checkout đang gọi email, analytics và notification service tuần tự trong cùng request.",
+      "category": "software-architecture",
+      "difficulty": "medium",
+      "competency": "decision_making",
+      "estimatedMinutes": 15,
+      "content": "## Bối cảnh\n\nBạn nhận ownership của checkout. Hiện request checkout phải gọi email, analytics và notification service tuần tự trước khi trả kết quả cho người dùng. Khi analytics chậm, thời gian phản hồi tăng mạnh dù việc ghi nhận đơn hàng đã thành công.\n\n## Dữ kiện\n\n- Email và notification có thể retry, còn thao tác ghi đơn hàng cần idempotency.\n- Một số khách hàng cần biết đơn đã được tạo ngay; không phải side effect nào cũng cần hoàn tất trước response.\n- Event hoặc queue có thể tạo eventual consistency và cần xử lý duplicate, ordering và dead-letter.\n- Product muốn giữ trải nghiệm checkout nhanh nhưng finance yêu cầu không mất dữ liệu đơn hàng.\n- Hệ thống hiện chưa có dashboard đầy đủ cho queue lag và failure của từng consumer.\n\n## Nhiệm vụ của bạn\n\nHãy chọn ranh giới synchronous/asynchronous:\n- Bạn giữ bước nào trong request và đẩy bước nào sang event/queue?\n- Bạn thiết kế idempotency, retry, timeout và dead-letter cho side effect ra sao?\n- Người dùng và vận hành sẽ nhìn thấy trạng thái eventual consistency như thế nào?\n- Bạn cần metric, alert và test crash/duplicate nào trước khi rollout?"
+    },
+    {
+      "slug": "software-architecture-api-versioning",
+      "title": "Mobile client chưa nâng cấp khi API cần breaking change",
+      "summary": "Mobile clients không thể nâng cấp ngay trong khi API cần một breaking change cho contract hiện tại.",
+      "category": "software-architecture",
+      "difficulty": "medium",
+      "competency": "stakeholder_management",
+      "estimatedMinutes": 15,
+      "content": "## Bối cảnh\n\nBạn phụ trách API được dùng bởi web và nhiều phiên bản mobile. Backend cần đổi một response field và bỏ một hành vi cũ vì contract hiện tại không còn đủ cho tính năng mới, nhưng nhiều người dùng mobile không thể nâng cấp ngay. Product muốn phát hành trong sprint này mà không làm hỏng các bản app đang hoạt động.\n\n## Dữ kiện\n\n- Bản mobile cũ vẫn có thể gọi endpoint mỗi ngày và không có cơ chế force upgrade tức thì.\n- Thay đổi nullability hoặc tên field có thể làm app cũ crash hoặc hiển thị sai.\n- Có thể dùng additive field, versioned route, content negotiation hoặc adapter trong một thời gian.\n- Cần biết tỷ lệ client theo version và thời hạn hỗ trợ trước khi ngừng contract cũ.\n- QA, mobile, backend và product chưa thống nhất lịch deprecation.\n\n## Nhiệm vụ của bạn\n\nHãy lập kế hoạch versioning và phối hợp:\n- Bạn chọn backward-compatible change, versioned API hay adapter dựa trên dữ liệu nào?\n- Bạn công bố deprecation, đo adoption và hỗ trợ client cũ ra sao?\n- Test contract cho nhiều mobile version cần bảo vệ trường hợp nào?\n- Bạn thống nhất rollback, deadline và thông điệp với stakeholder thế nào?"
+    },
+    {
+      "slug": "software-architecture-microservice-data-consistency",
+      "title": "Nhiều service cần nhất quán nghiệp vụ không dùng chung DB",
+      "summary": "Nhiều service cần giữ nhất quán trạng thái nghiệp vụ nhưng không được chia sẻ một database.",
+      "category": "software-architecture",
+      "difficulty": "hard",
+      "competency": "decision_making",
+      "estimatedMinutes": 20,
+      "content": "## Bối cảnh\n\nBạn tham gia tách một hệ thống lớn thành nhiều service. Order, payment, inventory và notification cần cùng phản ánh một trạng thái nghiệp vụ, nhưng mỗi service phải sở hữu database riêng và không được đọc bảng của service khác. Một thay đổi trước đây đã tạo order thành công nhưng payment timeout khiến các service hiển thị trạng thái khác nhau.\n\n## Dữ kiện\n\n- Mỗi service có owner và schema riêng; không có distributed transaction sẵn có.\n- Event có thể đến trễ, duplicate hoặc mất kết nối tạm thời.\n- Outbox có thể giúp đảm bảo thay đổi local và event được phát cùng nhau.\n- Một số bước cần compensation thay vì rollback dữ liệu xuyên service.\n- Người dùng và vận hành cần thấy trạng thái đang xử lý, lỗi và correlation để đối soát.\n- Không được giả định eventual consistency là phù hợp cho mọi invariant tài chính.\n\n## Nhiệm vụ của bạn\n\nHãy thiết kế phương án consistency:\n- Bạn phân định service ownership và invariant nào ở từng boundary?\n- Bạn dùng event, outbox, idempotency và compensation theo thứ tự nào?\n- Trường hợp event trễ, duplicate hoặc consumer down được quan sát và khôi phục ra sao?\n- Bạn chọn synchronous coordination ở đâu, kiểm thử failure mode nào và giải thích trade-off với stakeholder thế nào?"
+    },
+    {
+      "slug": "app-security-secret-committed",
+      "title": "API key bị commit vào Git repository riêng tư",
+      "summary": "Developer vô tình commit API key vào một Git repository riêng tư và team cần xử lý như đã lộ.",
+      "category": "app-security",
+      "difficulty": "easy",
+      "competency": "risk_management",
+      "estimatedMinutes": 9,
+      "content": "## Bối cảnh\n\nTrong lúc review một private Git repository, bạn phát hiện developer đã commit API key dùng cho dịch vụ bên thứ ba. Repository chỉ có một số thành viên truy cập nhưng lịch sử commit, fork nội bộ và máy đã clone đều có thể chứa secret. Team đang chuẩn bị release và muốn tránh gián đoạn dịch vụ.\n\n## Dữ kiện\n\n- Private repository không phải là bằng chứng secret chưa bị lộ; key có thể đã xuất hiện trong history, CI log hoặc bản sao local.\n- Provider hỗ trợ tạo key mới và revoke key cũ, nhưng hai key chỉ được overlap trong thời gian ngắn.\n- Source control history phải được làm sạch nếu policy yêu cầu, nhưng việc đó không thay thế rotation.\n- Cần audit nơi key được dùng, cập nhật secret manager/runtime config và kiểm tra log không còn giá trị nhạy cảm.\n- Team muốn có prevention bằng secret scanning, pre-commit hook và review checklist.\n\n## Nhiệm vụ của bạn\n\nHãy lập phản ứng an toàn:\n- Bạn rotate/revoke key và giới hạn blast radius theo thứ tự nào?\n- Bạn giả định history đã bị lộ, audit access và kiểm tra mọi deployment ra sao?\n- Bạn phát hành thay đổi mà không làm gián đoạn provider integration thế nào?\n- Bạn thêm prevention, alert và post-incident review nào để tránh lặp lại?"
+    },
+    {
+      "slug": "app-security-idor-resource-access",
+      "title": "Đổi URL ID để xem tài liệu của user khác",
+      "summary": "Authenticated user có thể đổi URL ID và xem document thuộc về user khác.",
+      "category": "app-security",
+      "difficulty": "medium",
+      "competency": "risk_management",
+      "estimatedMinutes": 13,
+      "content": "## Bối cảnh\n\nBạn phát hiện một authenticated user có thể thay ID trong URL của endpoint document và nhận được tài liệu của user khác. Lỗi được báo sau khi một người dùng thấy metadata không thuộc tài khoản của mình; team cần đánh giá phạm vi ảnh hưởng mà không làm lộ thêm dữ liệu.\n\n## Dữ kiện\n\n- Endpoint hiện kiểm tra authentication nhưng query detail chưa ràng buộc owner hoặc policy phù hợp.\n- GUID khó đoán không thay thế authorization; ID có thể lộ qua link, log hoặc response khác.\n- Document có thể chứa CV, thông tin liên hệ và dữ liệu riêng tư.\n- List route có owner filter riêng nên cần rà soát toàn bộ read, download, update và export path.\n- Cần xử lý response cho resource không tồn tại và không có quyền mà không xác nhận dữ liệu của user khác.\n\n## Nhiệm vụ của bạn\n\nHãy xử lý IDOR theo hướng phòng thủ:\n- Bạn đặt ownership check ở policy, service và query thế nào để không bỏ sót route?\n- Bạn containment, audit và đánh giá các request đã truy cập ra sao?\n- Test cross-owner, missing resource và download/export cần chứng minh điều gì?\n- Bạn phát hành bản sửa và thông báo người dùng mà không lộ thêm tài liệu thế nào?"
+    },
+    {
+      "slug": "app-security-xss-user-content",
+      "title": "Rich text do user nhập được render thiếu sanitize",
+      "summary": "Rich text do user kiểm soát được render mà chưa có sanitization đầy đủ.",
+      "category": "app-security",
+      "difficulty": "medium",
+      "competency": "risk_management",
+      "estimatedMinutes": 12,
+      "content": "## Bối cảnh\n\nỨng dụng cho phép người dùng nhập rich text vào phần mô tả hồ sơ và hiển thị lại ở trang xem trước. QA phát hiện một số markup do user kiểm soát được render khác với dự kiến; team phải bảo vệ người dùng nhưng vẫn giữ định dạng cơ bản cần thiết cho sản phẩm.\n\n## Dữ kiện\n\n- Nội dung được lưu rồi hiển thị ở nhiều surface: web, email preview và admin review.\n- Chỉ validate độ dài hoặc dùng blacklist ký tự là chưa đủ để bảo vệ mọi context render.\n- Cần xác định allowlist tag/attribute, sanitize ở boundary phù hợp và output encode theo ngữ cảnh.\n- Không được log raw private content hoặc đưa nguyên rich text vào AI/provider ngoài policy.\n- Test phải bao phủ nội dung cũ, Unicode, nested markup, link và các client khác nhau.\n\n## Nhiệm vụ của bạn\n\nHãy đề xuất hardening phòng thủ:\n- Bạn chọn allowlist, sanitizer và output encoding thế nào cho từng surface?\n- Bạn xử lý dữ liệu đã lưu trước đây và rollout mà không làm mất nội dung hợp lệ ra sao?\n- Test security regression, boundary và authorization cần kiểm tra gì?\n- Bạn redaction log, monitoring và incident response thế nào nếu phát hiện nội dung nguy hiểm?"
+    },
+    {
+      "slug": "app-security-jwt-long-lived",
+      "title": "Access token sống quá lâu và khó revoke",
+      "summary": "Access token có thời hạn rất dài và không thể revoke dễ dàng khi có rủi ro lộ token.",
+      "category": "app-security",
+      "difficulty": "medium",
+      "competency": "decision_making",
+      "estimatedMinutes": 15,
+      "content": "## Bối cảnh\n\nSecurity review phát hiện access token của ứng dụng có thời hạn nhiều ngày và không có cơ chế revoke tức thời theo từng session. Một token bị nghi lộ sẽ tiếp tục được chấp nhận cho đến khi hết hạn, trong khi product lo ngại giảm thời hạn sẽ làm người dùng đăng nhập lại quá thường xuyên.\n\n## Dữ kiện\n\n- Token được dùng cho web và mobile; một số client có refresh flow nhưng chưa thống nhất.\n- Session, refresh token và access token có thể có lifecycle khác nhau.\n- Có thể dùng short-lived access token, refresh-token rotation, denylist hoặc session version, mỗi lựa chọn có chi phí lưu trữ và vận hành.\n- Logout, đổi mật khẩu, revoke toàn bộ phiên và phát hiện hoạt động bất thường phải có semantics rõ.\n- Không được đánh đổi khả năng thu hồi bằng cách log token hoặc thêm secret vào client.\n\n## Nhiệm vụ của bạn\n\nHãy cân bằng rủi ro và trải nghiệm:\n- Bạn chọn thời hạn, refresh rotation và revoke strategy dựa trên threat model nào?\n- Bạn xử lý token đã phát hành khi có nghi ngờ lộ credential ra sao?\n- Các endpoint logout, password change và session management cần bảo vệ invariant nào?\n- Bạn đo false logout, replay signal và rollout thay đổi authentication thế nào?"
+    },
+    {
+      "slug": "app-security-account-takeover-response",
+      "title": "Nhiều tài khoản có dấu hiệu takeover",
+      "summary": "Nhiều tài khoản xuất hiện hoạt động đăng nhập hoặc session đáng ngờ cần phản ứng phòng thủ.",
+      "category": "app-security",
+      "difficulty": "hard",
+      "competency": "prioritization",
+      "estimatedMinutes": 19,
+      "content": "## Bối cảnh\n\nSecurity on-call nhận thấy nhiều tài khoản có login và session activity bất thường trong cùng một khoảng thời gian. Một số request đã bị rate limit, một số session vẫn hoạt động; team phải bảo vệ người dùng ngay mà chưa được phép kết luận nguyên nhân là credential stuffing hay lỗi telemetry.\n\n## Dữ kiện\n\n- Có thể invalidate session, yêu cầu credential reset và giới hạn tốc độ theo account/device/IP.\n- Audit cần giữ timestamp, requestId, actor và resource identifier đã được redaction; không cần lưu raw content.\n- Mọi hành động khẩn cấp phải có owner, approval phù hợp và không xóa bằng chứng.\n- Người dùng cần được thông báo rõ ràng, nhưng phạm vi disclosure phải phối hợp security, legal và product.\n- Cần kiểm tra các route owner-scoped, token lifecycle, login alert và dấu hiệu truy cập dữ liệu.\n\n## Nhiệm vụ của bạn\n\nHãy điều hành incident response phòng thủ:\n- Bạn invalidate session, credential reset và rate limit theo thứ tự nào để giảm blast radius?\n- Bạn bảo toàn audit/forensics và phân biệt tín hiệu thật với false positive ra sao?\n- Bạn kiểm tra phạm vi tài khoản và dữ liệu ảnh hưởng mà không log thêm thông tin nhạy cảm thế nào?\n- Kế hoạch khôi phục, user communication, post-incident action và regression test của bạn là gì?"
     }
   ]
 }

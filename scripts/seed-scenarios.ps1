@@ -38,15 +38,53 @@ catch {
     throw "Failed to parse JSON dataset: $($_.Exception.Message)"
 }
 
-# 3. Require exactly 12 scenarios
+# 3. Keep the expected library shape in one place
 $scenarios = $dataset.scenarios
-if ($null -eq $scenarios -or $scenarios.Count -ne 12) {
-    throw "Dataset must contain exactly 12 scenarios, found $(if ($scenarios) { $scenarios.Count } else { 0 })."
+$expectedLegacyCategoryCounts = [ordered]@{
+    "banking" = 4
+    "ecommerce" = 4
+    "logistics" = 4
+}
+$expectedSoftwareCategoryCounts = [ordered]@{
+    "backend" = 5
+    "frontend" = 5
+    "dotnet" = 5
+    "java" = 5
+    "database" = 5
+    "devops" = 5
+    "qa-testing" = 5
+    "mobile" = 5
+    "software-architecture" = 5
+    "app-security" = 5
+}
+$expectedCategoryCounts = [ordered]@{}
+foreach ($expectedCategory in @($expectedLegacyCategoryCounts.GetEnumerator()) + @($expectedSoftwareCategoryCounts.GetEnumerator())) {
+    $expectedCategoryCounts[$expectedCategory.Key] = $expectedCategory.Value
+}
+$expectedLegacyDifficultyCounts = [ordered]@{
+    "easy" = 3
+    "medium" = 6
+    "hard" = 3
+}
+$expectedNewDifficultyPerCategory = [ordered]@{
+    "easy" = 1
+    "medium" = 3
+    "hard" = 1
+}
+$expectedDifficultyCounts = [ordered]@{}
+foreach ($difficulty in $expectedLegacyDifficultyCounts.Keys) {
+    $expectedDifficultyCounts[$difficulty] = $expectedLegacyDifficultyCounts[$difficulty] +
+        ($expectedSoftwareCategoryCounts.Count * $expectedNewDifficultyPerCategory[$difficulty])
+}
+$expectedTotal = ($expectedCategoryCounts.Values | Measure-Object -Sum).Sum
+$allowedCategories = @($expectedCategoryCounts.Keys)
+$allowedDifficulties = @($expectedDifficultyCounts.Keys)
+
+if ($null -eq $scenarios -or $scenarios.Count -ne $expectedTotal) {
+    throw "Dataset must contain exactly $expectedTotal scenarios, found $(if ($scenarios) { $scenarios.Count } else { 0 })."
 }
 
 # 4. Validate schema and constraints
-$allowedCategories = @("banking", "ecommerce", "logistics")
-$allowedDifficulties = @("easy", "medium", "hard")
 $allowedCompetencies = @(
     "customer_service",
     "problem_solving",
@@ -59,8 +97,14 @@ $allowedCompetencies = @(
 )
 
 $slugSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-$categoryCounts = @{ "banking" = 0; "ecommerce" = 0; "logistics" = 0 }
-$difficultyCounts = @{ "easy" = 0; "medium" = 0; "hard" = 0 }
+$categoryCounts = @{}
+foreach ($category in $allowedCategories) {
+    $categoryCounts[$category] = 0
+}
+$difficultyCounts = @{}
+foreach ($difficulty in $allowedDifficulties) {
+    $difficultyCounts[$difficulty] = 0
+}
 
 foreach ($s in $scenarios) {
     if ([string]::IsNullOrWhiteSpace($s.slug)) { throw "Scenario slug cannot be empty." }
@@ -123,14 +167,29 @@ foreach ($s in $scenarios) {
     }
 }
 
-if ($categoryCounts["banking"] -ne 4 -or $categoryCounts["ecommerce"] -ne 4 -or $categoryCounts["logistics"] -ne 4) {
-    throw "Dataset must have exactly 4 banking, 4 ecommerce, and 4 logistics scenarios."
+foreach ($expectedCategory in $expectedCategoryCounts.GetEnumerator()) {
+    if ($categoryCounts[$expectedCategory.Key] -ne $expectedCategory.Value) {
+        throw "Dataset must have exactly $($expectedCategory.Value) '$($expectedCategory.Key)' scenarios, found $($categoryCounts[$expectedCategory.Key])."
+    }
 }
-if ($difficultyCounts["easy"] -ne 3 -or $difficultyCounts["medium"] -ne 6 -or $difficultyCounts["hard"] -ne 3) {
-    throw "Dataset must have difficulty distribution of 3 easy, 6 medium, and 3 hard."
+foreach ($expectedSoftwareCategory in $expectedSoftwareCategoryCounts.GetEnumerator()) {
+    $categoryScenarios = @($scenarios | Where-Object { $_.category -eq $expectedSoftwareCategory.Key })
+    foreach ($expectedDifficulty in $expectedNewDifficultyPerCategory.GetEnumerator()) {
+        $actualDifficultyCount = @($categoryScenarios | Where-Object { $_.difficulty -eq $expectedDifficulty.Key }).Count
+        if ($actualDifficultyCount -ne $expectedDifficulty.Value) {
+            throw "Software category '$($expectedSoftwareCategory.Key)' must have exactly $($expectedDifficulty.Value) '$($expectedDifficulty.Key)' scenarios, found $actualDifficultyCount."
+        }
+    }
+}
+foreach ($expectedDifficulty in $expectedDifficultyCounts.GetEnumerator()) {
+    if ($difficultyCounts[$expectedDifficulty.Key] -ne $expectedDifficulty.Value) {
+        throw "Dataset must have exactly $($expectedDifficulty.Value) '$($expectedDifficulty.Key)' scenarios, found $($difficultyCounts[$expectedDifficulty.Key])."
+    }
 }
 
-Write-Host "Dataset validation passed (12 scenarios: 4 banking, 4 ecommerce, 4 logistics; 3 easy, 6 medium, 3 hard)."
+$categorySummary = ($expectedCategoryCounts.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ", "
+$difficultySummary = ($expectedDifficultyCounts.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ", "
+Write-Host "Dataset validation passed ($expectedTotal scenarios; categories: $categorySummary; difficulties: $difficultySummary)."
 
 if ($ValidateOnly) {
     Write-Host "`nAll validation checks PASSED. Exiting due to -ValidateOnly switch." -ForegroundColor Green
@@ -331,20 +390,26 @@ Write-Host "Skipped:   $skippedCount"
 Write-Host "Failed:    $failedCount"
 
 # 11 & 12. Verification via public endpoint
-Write-Host "`nVerifying public scenario library (GET /api/v1/scenarios?pageSize=50)..."
-$pubListRes = Invoke-NexoraApi -Method "Get" -Path "/api/v1/scenarios?pageSize=50"
-if (-not $pubListRes.Success) {
-    Write-Host "Verification call failed. HTTP $($pubListRes.StatusCode): $($pubListRes.Error)" -ForegroundColor Red
-    Write-Host "`nRESULT: FAIL" -ForegroundColor Red
-    exit 1
-}
-
+Write-Host "`nVerifying public scenario library (GET /api/v1/scenarios, paged)..."
 $publicSlugs = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-if ($pubListRes.Data -and $pubListRes.Data.items) {
-    foreach ($item in $pubListRes.Data.items) {
-        [void]$publicSlugs.Add($item.slug)
+$publicTotal = 0
+$publicPage = 1
+do {
+    $pubListRes = Invoke-NexoraApi -Method "Get" -Path "/api/v1/scenarios?page=$publicPage&pageSize=50"
+    if (-not $pubListRes.Success) {
+        Write-Host "Verification call failed on page $publicPage. HTTP $($pubListRes.StatusCode): $($pubListRes.Error)" -ForegroundColor Red
+        Write-Host "`nRESULT: FAIL" -ForegroundColor Red
+        exit 1
     }
-}
+
+    $publicTotal = [int]$pubListRes.Data.total
+    if ($pubListRes.Data -and $pubListRes.Data.items) {
+        foreach ($item in $pubListRes.Data.items) {
+            [void]$publicSlugs.Add($item.slug)
+        }
+    }
+    $publicPage++
+} while ($publicSlugs.Count -lt $publicTotal -and $publicPage -le [math]::Ceiling($publicTotal / 50.0))
 
 $missing = @()
 foreach ($s in $scenarios) {
@@ -354,8 +419,8 @@ foreach ($s in $scenarios) {
 }
 
 if ($missing.Count -eq 0) {
-    Write-Host "All 12 expected scenario slugs are present and published in public library." -ForegroundColor Green
-    Write-Host "Total published in library: $($pubListRes.Data.total)"
+    Write-Host "All $expectedTotal expected scenario slugs are present and published in public library." -ForegroundColor Green
+    Write-Host "Total published in library: $publicTotal"
     Write-Host "`nRESULT: PASS" -ForegroundColor Green
 } else {
     Write-Host "Missing $($missing.Count) expected slugs from public library:" -ForegroundColor Red

@@ -16,6 +16,17 @@ namespace Nexora.IntegrationTests;
 
 public sealed class ScenarioV2ApiTests
 {
+    private static readonly string[] SoftwareEngineeringCategorySlugs =
+    [
+        "backend", "frontend", "dotnet", "java", "database", "devops", "qa-testing", "mobile", "software-architecture", "app-security"
+    ];
+
+    private static readonly string[] ScenarioCardPropertyNames =
+    ["id", "slug", "title", "summary", "categorySlug", "categoryName", "difficulty", "competency", "estimatedMinutes"];
+
+    private static readonly string[] ScenarioDetailPropertyNames =
+    ["id", "slug", "title", "summary", "categorySlug", "categoryName", "difficulty", "competency", "estimatedMinutes", "content"];
+
     [Fact]
     public async Task ScenarioCatalogueExposesTracksAndGroupsByCategoryAndDifficulty()
     {
@@ -49,6 +60,82 @@ public sealed class ScenarioV2ApiTests
         Assert.Equal(1, searchPage.GetProperty("total").GetInt32());
         var searchItem = Assert.Single(searchPage.GetProperty("items").EnumerateArray());
         Assert.Equal("banking", searchItem.GetProperty("categorySlug").GetString());
+    }
+
+    [Fact]
+    public async Task ScenarioCategoriesPreserveLegacyIdsAndExposeSoftwareEngineeringTracks()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        using var response = await client.GetAsync("/api/v1/scenarios/categories");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var categories = await DataAsync(response);
+        var categoryItems = categories.EnumerateArray().ToArray();
+        Assert.Equal(13, categoryItems.Length);
+
+        var legacyIds = new Dictionary<string, Guid>(StringComparer.Ordinal)
+        {
+            ["banking"] = Guid.Parse("40000000-0000-0000-0000-000000000001"),
+            ["ecommerce"] = Guid.Parse("40000000-0000-0000-0000-000000000002"),
+            ["logistics"] = Guid.Parse("40000000-0000-0000-0000-000000000003")
+        };
+        foreach (var legacy in legacyIds)
+        {
+            var category = Assert.Single(categoryItems, item => item.GetProperty("slug").GetString() == legacy.Key);
+            Assert.Equal(legacy.Value, category.GetProperty("id").GetGuid());
+        }
+
+        Assert.Equal(SoftwareEngineeringCategorySlugs, categoryItems.Skip(3).Select(item => item.GetProperty("slug").GetString()));
+        Assert.All(SoftwareEngineeringCategorySlugs, slug => Assert.Contains(categoryItems, item => item.GetProperty("slug").GetString() == slug));
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var storedCategories = await db.ScenarioCategories.AsNoTracking().OrderBy(item => item.SortOrder).ToArrayAsync();
+        Assert.Equal(Enumerable.Range(0, 13), storedCategories.Select(item => item.SortOrder));
+        Assert.Equal(SoftwareEngineeringCategorySlugs, storedCategories.Skip(3).Select(item => item.Slug));
+        Assert.All(storedCategories.Skip(3), item => Assert.True(item.IsActive));
+    }
+
+    [Fact]
+    public async Task SoftwareEngineeringCategoriesSupportPublicFilterAndDetailContract()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var scenarios = new Dictionary<string, Scenario>(StringComparer.Ordinal);
+        foreach (var categorySlug in SoftwareEngineeringCategorySlugs)
+            scenarios[categorySlug] = await SeedScenarioAsync(factory, categorySlug, "medium", "problem_solving");
+
+        foreach (var categorySlug in SoftwareEngineeringCategorySlugs)
+        {
+            using var listResponse = await client.GetAsync($"/api/v1/scenarios?category={categorySlug}&page=1&pageSize=50");
+            Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+            var page = await DataAsync(listResponse);
+            var item = Assert.Single(page.GetProperty("items").EnumerateArray());
+            Assert.Equal(1, page.GetProperty("total").GetInt32());
+            Assert.Equal(categorySlug, item.GetProperty("categorySlug").GetString());
+            Assert.Equal(scenarios[categorySlug].Slug, item.GetProperty("slug").GetString());
+            Assert.Equal(
+                ScenarioCardPropertyNames,
+                item.EnumerateObject().Select(property => property.Name));
+
+            using var detailResponse = await client.GetAsync($"/api/v1/scenarios/{scenarios[categorySlug].Slug}");
+            Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
+            var detail = await DataAsync(detailResponse);
+            Assert.Equal(categorySlug, detail.GetProperty("categorySlug").GetString());
+            Assert.Equal(scenarios[categorySlug].Slug, detail.GetProperty("slug").GetString());
+            Assert.Equal(
+                ScenarioDetailPropertyNames,
+                detail.EnumerateObject().Select(property => property.Name));
+            Assert.Contains("## Bối cảnh", detail.GetProperty("content").GetString(), StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -402,7 +489,7 @@ public sealed class ScenarioV2ApiTests
             Difficulty = difficulty,
             Competency = competency,
             EstimatedMinutes = 15,
-            Content = "A deterministic scenario body for Scenario v2 integration tests.",
+            Content = "## Bối cảnh\n\nMột tình huống kỹ thuật dùng cho kiểm thử API.\n\n## Dữ kiện\n\nDữ kiện được tạo deterministic cho test.\n\n## Nhiệm vụ của bạn\n\nHãy nêu cách xử lý và kiểm tra rủi ro.",
             SortOrder = 1,
             Status = PracticeFeatureValues.Published,
             CreatedAt = now,
