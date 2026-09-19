@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +24,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
     private readonly IAiProvider _aiProvider;
     private readonly IReadOnlyDictionary<string, string?>? _configurationOverrides;
     private readonly Action<IServiceCollection>? _configureServices;
+    private readonly IReadOnlyCollection<IInterceptor> _dbInterceptors;
     private readonly string _environment = "Testing";
 
     public NexoraApiFactory() : this((IAiProvider?)null, null) { }
@@ -31,6 +33,8 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
 
     internal NexoraApiFactory(IReadOnlyDictionary<string, string?> configurationOverrides) : this((IAiProvider?)null, configurationOverrides) { }
     internal NexoraApiFactory(IReadOnlyDictionary<string, string?> configurationOverrides, Action<IServiceCollection> configureServices) : this((IAiProvider?)null, configurationOverrides, configureServices) { }
+
+    internal NexoraApiFactory(IInterceptor dbInterceptor) : this((IAiProvider?)null, null, null, [dbInterceptor]) { }
 
     internal NexoraApiFactory(string environment) : this(environment, new Dictionary<string, string?>())
     { }
@@ -72,11 +76,16 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
         return dict;
     }
 
-    private NexoraApiFactory(IAiProvider? aiProvider, IReadOnlyDictionary<string, string?>? configurationOverrides, Action<IServiceCollection>? configureServices = null)
+    private NexoraApiFactory(
+        IAiProvider? aiProvider,
+        IReadOnlyDictionary<string, string?>? configurationOverrides,
+        Action<IServiceCollection>? configureServices = null,
+        IReadOnlyCollection<IInterceptor>? dbInterceptors = null)
     {
         _aiProvider = aiProvider ?? new TestAiProvider();
         _configurationOverrides = configurationOverrides;
         _configureServices = configureServices;
+        _dbInterceptors = dbInterceptors ?? [];
         _connection = new SqliteConnection(_connectionString);
         _connection.Open();
     }
@@ -120,7 +129,11 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
             services.AddDataProtection().UseEphemeralDataProtectionProvider();
             services.RemoveAll<DbContextOptions<NexoraDbContext>>();
             services.RemoveAll<IDbContextOptionsConfiguration<NexoraDbContext>>();
-            services.AddDbContext<NexoraDbContext>(options => options.UseSqlite(_connectionString));
+            services.AddDbContext<NexoraDbContext>(options =>
+            {
+                options.UseSqlite(_connectionString);
+                options.AddInterceptors(_dbInterceptors);
+            });
             services.RemoveAll<IAiProvider>();
             services.AddSingleton(_aiProvider);
             services.RemoveAll<IEmailSender>();

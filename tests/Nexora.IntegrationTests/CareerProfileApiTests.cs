@@ -1,8 +1,10 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Nexora.Business.Ai;
 using Nexora.Business.Learning;
@@ -361,6 +363,15 @@ public sealed class CareerProfileApiTests
             "/api/v1/me/primary-resume", new { resumeId = firstResumeId });
         var firstSelectionData = await DataAsync(firstSelection);
         Assert.Equal(firstResumeId, firstSelectionData.GetProperty("id").GetGuid());
+        Assert.Equal(JsonValueKind.Null, firstSelectionData.GetProperty("latestAnalysis").ValueKind);
+
+        using (var zeroAnalysisProfile = await ownerClient.GetAsync("/api/v1/me/career-profile"))
+        {
+            var data = await DataAsync(zeroAnalysisProfile);
+            Assert.Equal(firstResumeId, data.GetProperty("primaryResume").GetProperty("id").GetGuid());
+            Assert.Equal(JsonValueKind.Null,
+                data.GetProperty("primaryResume").GetProperty("latestAnalysis").ValueKind);
+        }
 
         using var repeatedSelection = await ownerClient.PutAsJsonAsync(
             "/api/v1/me/primary-resume", new { resumeId = firstResumeId });
@@ -447,6 +458,127 @@ public sealed class CareerProfileApiTests
         var verificationDb = verificationScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         var profileRow = await verificationDb.UserProfiles.AsNoTracking().SingleAsync(item => item.UserId == owner.UserId);
         Assert.Null(profileRow.PrimaryResumeId);
+    }
+
+    [Fact]
+    public async Task LatestPrimaryResumeAnalysisUsesCreatedAtThenIdAndOwnerResumeScope()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var ownerClient = factory.CreateHttpsClient();
+        using var otherClient = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(ownerClient, "Analysis ordering owner");
+        var other = await RegisterAsync(otherClient, "Analysis ordering other");
+        Authorize(ownerClient, owner);
+
+        var selectedResumeId = await SeedResumeAsync(factory, owner.UserId, PracticeValues.Ready, At(1), "selected.pdf");
+        var otherResumeId = await SeedResumeAsync(factory, owner.UserId, PracticeValues.Ready, At(2), "other.pdf");
+        var foreignResumeId = await SeedResumeAsync(factory, other.UserId, PracticeValues.Ready, At(3), "foreign.pdf");
+        await SeedResumeAnalysisAsync(factory, owner.UserId, selectedResumeId, At(4), analysisId: Guid.Parse("10000000-0000-0000-0000-000000000001"));
+        await SeedResumeAnalysisAsync(factory, owner.UserId, otherResumeId, At(9));
+        await SeedResumeAnalysisAsync(factory, other.UserId, foreignResumeId, At(10));
+        await SeedResumeAnalysisAsync(factory, owner.UserId, selectedResumeId, At(5), analysisId: Guid.Parse("20000000-0000-0000-0000-000000000001"));
+        var expectedId = await SeedResumeAnalysisAsync(
+            factory,
+            owner.UserId,
+            selectedResumeId,
+            At(5),
+            analysisId: Guid.Parse("20000000-0000-0000-0000-000000000002"));
+
+        using var selection = await ownerClient.PutAsJsonAsync(
+            "/api/v1/me/primary-resume", new { resumeId = selectedResumeId });
+        var selectionData = await DataAsync(selection);
+        Assert.Equal(expectedId, selectionData.GetProperty("latestAnalysis").GetProperty("id").GetGuid());
+
+        using var profile = await ownerClient.GetAsync("/api/v1/me/career-profile");
+        var profileData = await DataAsync(profile);
+        Assert.Equal(expectedId,
+            profileData.GetProperty("primaryResume").GetProperty("latestAnalysis").GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task RejectedPrimaryResumeSelectionsPreserveExistingSelection()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var ownerClient = factory.CreateHttpsClient();
+        using var otherClient = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(ownerClient, "Rejected selection owner");
+        var other = await RegisterAsync(otherClient, "Rejected selection other");
+        Authorize(ownerClient, owner);
+
+        var currentId = await SeedResumeAsync(factory, owner.UserId, PracticeValues.Ready, At(1), "current.pdf");
+        var pendingId = await SeedResumeAsync(factory, owner.UserId, PracticeValues.Uploaded, At(2), "pending.pdf");
+        var deletedId = await SeedResumeAsync(factory, owner.UserId, PracticeValues.Ready, At(3), "deleted.pdf");
+        var foreignId = await SeedResumeAsync(factory, other.UserId, PracticeValues.Ready, At(4), "foreign.pdf");
+        await MarkResumeDeletedAsync(factory, deletedId, At(5));
+        using (var selected = await ownerClient.PutAsJsonAsync(
+                   "/api/v1/me/primary-resume", new { resumeId = currentId }))
+            Assert.Equal(HttpStatusCode.OK, selected.StatusCode);
+
+        var rejectedIds = new[] { Guid.NewGuid(), foreignId, deletedId, pendingId };
+        foreach (var rejectedId in rejectedIds)
+        {
+            using var response = await ownerClient.PutAsJsonAsync(
+                "/api/v1/me/primary-resume", new { resumeId = rejectedId });
+            Assert.True(response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Conflict);
+            Assert.Equal(currentId, await GetPersistedPrimaryResumeIdAsync(factory, owner.UserId));
+        }
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("deleted")]
+    [InlineData("not-ready")]
+    public async Task StalePrimaryResumeReferenceDegradesToNullWithoutMutation(string staleKind)
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, $"Stale primary {staleKind}");
+        Authorize(client, account);
+
+        var staleId = Guid.NewGuid();
+        if (staleKind != "missing")
+        {
+            staleId = await SeedResumeAsync(
+                factory,
+                account.UserId,
+                staleKind == "deleted" ? PracticeValues.Ready : PracticeValues.Uploaded,
+                At(1),
+                $"{staleKind}.pdf");
+            if (staleKind == "deleted") await MarkResumeDeletedAsync(factory, staleId, At(2));
+        }
+        await SetStalePrimaryResumeIdAsync(factory, account.UserId, staleId);
+
+        using var response = await client.GetAsync("/api/v1/me/career-profile");
+        var data = await DataAsync(response);
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("primaryResume").ValueKind);
+        Assert.False(data.GetProperty("onboarding").GetProperty("hasPrimaryResume").GetBoolean());
+        Assert.Equal(staleId, await GetPersistedPrimaryResumeIdAsync(factory, account.UserId));
+    }
+
+    [Fact]
+    public async Task ResponseSummaryFailureRollsBackPrimaryResumeChange()
+    {
+        var interceptor = new FailLatestAnalysisReadInterceptor();
+        using var factory = new NexoraApiFactory(interceptor);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "Primary resume rollback candidate");
+        Authorize(client, account);
+        var originalId = await SeedResumeAsync(factory, account.UserId, PracticeValues.Ready, At(1), "original.pdf");
+        var replacementId = await SeedResumeAsync(factory, account.UserId, PracticeValues.Ready, At(2), "replacement.pdf");
+        using (var original = await client.PutAsJsonAsync(
+                   "/api/v1/me/primary-resume", new { resumeId = originalId }))
+            Assert.Equal(HttpStatusCode.OK, original.StatusCode);
+
+        interceptor.Arm();
+        using var failed = await client.PutAsJsonAsync(
+            "/api/v1/me/primary-resume", new { resumeId = replacementId });
+
+        Assert.Equal(HttpStatusCode.InternalServerError, failed.StatusCode);
+        Assert.Equal(originalId, await GetPersistedPrimaryResumeIdAsync(factory, account.UserId));
     }
 
     [Fact]
@@ -636,7 +768,8 @@ public sealed class CareerProfileApiTests
         Guid userId,
         Guid resumeId,
         DateTimeOffset createdAt,
-        int scoreOffset = 0)
+        int scoreOffset = 0,
+        Guid? analysisId = null)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
@@ -659,7 +792,7 @@ public sealed class CareerProfileApiTests
             Mode: ResumeAnalysisModes.FieldBenchmark);
         var analysis = new ResumeAnalysis
         {
-            Id = Guid.NewGuid(),
+            Id = analysisId ?? Guid.NewGuid(),
             UserId = userId,
             ResumeId = resumeId,
             Mode = ResumeAnalysisModes.FieldBenchmark,
@@ -675,6 +808,75 @@ public sealed class CareerProfileApiTests
         db.ResumeAnalyses.Add(analysis);
         await db.SaveChangesAsync();
         return analysis.Id;
+    }
+
+    private static async Task MarkResumeDeletedAsync(
+        NexoraApiFactory factory,
+        Guid resumeId,
+        DateTimeOffset deletedAt)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var resume = await db.Resumes.SingleAsync(item => item.Id == resumeId);
+        resume.DeletedAt = deletedAt;
+        resume.UpdatedAt = deletedAt;
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SetStalePrimaryResumeIdAsync(
+        NexoraApiFactory factory,
+        Guid userId,
+        Guid resumeId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        await db.Database.OpenConnectionAsync();
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE user_profiles SET PrimaryResumeId = {resumeId} WHERE UserId = {userId}");
+            await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = ON;");
+        }
+        finally
+        {
+            await db.Database.CloseConnectionAsync();
+        }
+    }
+
+    private static async Task<Guid?> GetPersistedPrimaryResumeIdAsync(
+        NexoraApiFactory factory,
+        Guid userId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        return await db.UserProfiles.AsNoTracking()
+            .Where(item => item.UserId == userId)
+            .Select(item => item.PrimaryResumeId)
+            .SingleAsync();
+    }
+
+    private sealed class FailLatestAnalysisReadInterceptor : DbCommandInterceptor
+    {
+        private bool _armed;
+
+        public void Arm() => _armed = true;
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (_armed && command.CommandText.Contains("FROM \"resume_analyses\"", StringComparison.Ordinal))
+            {
+                _armed = false;
+                return ValueTask.FromException<InterceptionResult<DbDataReader>>(
+                    new InvalidOperationException("Injected latest-analysis read failure."));
+            }
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
     }
 
     private static async Task SeedLearningPathAsync(
