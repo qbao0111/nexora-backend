@@ -4,11 +4,14 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Nexora.Business.Authorization;
 using Nexora.Business.Billing;
 using Nexora.Data.Billing;
+using Nexora.Data.Identity;
 using Nexora.Data.Persistence;
 using Nexora.Integrations.Payments;
 using PayOS.Crypto;
@@ -61,7 +64,7 @@ public sealed class PayosBillingApiTests : IDisposable
 
         var first = await CreateCheckoutAsync(client, price.Id, "payos-checkout");
         Assert.Single(_handler.CreatedOrderCodes);
-        Assert.Equal("NEXORA BASIC", _handler.CreatedDescriptions[0]);
+        Assert.Equal("Basic", _handler.CreatedDescriptions[0]);
         var second = await CreateCheckoutAsync(client, price.Id, "payos-checkout");
 
         Assert.Equal(first.OrderId, second.OrderId);
@@ -85,6 +88,106 @@ public sealed class PayosBillingApiTests : IDisposable
         Assert.True(long.TryParse(order.ProviderTransactionId, NumberStyles.None, CultureInfo.InvariantCulture, out var orderCode));
         Assert.InRange(orderCode, 1L, 9_007_199_254_740_991L);
         Assert.Equal(order.ProviderTransactionId, _handler.CreatedOrderCodes[0]);
+    }
+
+    [Fact]
+    public async Task AdminCanEditBasicPriceAndReadUpdatedValueAfterReload()
+    {
+        using var registrationClient = _factory.CreateHttpsClient();
+        var account = await RegisterAsync(registrationClient);
+        var adminToken = await MakeAdminAsync(account);
+        var price = await FindPlanPriceAsync("basic");
+
+        using var adminClient = _factory.CreateHttpsClient();
+        adminClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        using var update = await adminClient.PatchAsJsonAsync($"/api/v1/admin/plan-prices/{price.Id}", new
+        {
+            amountMinor = 177_000,
+            currency = "VND",
+            durationDays = 14,
+            interviewQuota = 3,
+            isActive = true
+        });
+        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+
+        using var reload = await adminClient.GetAsync("/api/v1/admin/plans");
+        Assert.Equal(HttpStatusCode.OK, reload.StatusCode);
+        using var json = JsonDocument.Parse(await reload.Content.ReadAsStringAsync());
+        var updatedView = json.RootElement.GetProperty("data").EnumerateArray()
+            .SelectMany(plan => plan.GetProperty("prices").EnumerateArray())
+            .Single(priceView => priceView.GetProperty("id").GetGuid() == price.Id);
+        Assert.Equal(177_000, updatedView.GetProperty("amountMinor").GetInt64());
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(177_000, (await db.PlanPrices.SingleAsync(item => item.Id == price.Id)).AmountMinor);
+    }
+
+    [Fact]
+    public async Task AdminCreatedPlanWithNewCodeCanCheckoutAndFulfillMatchingSubscription()
+    {
+        using var registrationClient = _factory.CreateHttpsClient();
+        var adminAccount = await RegisterAsync(registrationClient);
+        var adminToken = await MakeAdminAsync(adminAccount);
+        var planCode = $"career-{Guid.NewGuid():N}";
+        var planName = "Career Starter";
+
+        using var adminClient = _factory.CreateHttpsClient();
+        adminClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        using var createPlan = await adminClient.PostAsJsonAsync("/api/v1/admin/plans", new
+        {
+            code = planCode,
+            name = planName,
+            description = "A package created during the payment flow test",
+            isHighlighted = false
+        });
+        Assert.Equal(HttpStatusCode.Created, createPlan.StatusCode);
+        using var createdPlanJson = JsonDocument.Parse(await createPlan.Content.ReadAsStringAsync());
+        var createdPlan = createdPlanJson.RootElement.GetProperty("data");
+        var planId = createdPlan.GetProperty("id").GetGuid();
+        Assert.Equal(planName, createdPlan.GetProperty("name").GetString());
+
+        using var createPrice = await adminClient.PostAsJsonAsync($"/api/v1/admin/plans/{planId}/prices", new
+        {
+            amountMinor = 123_000,
+            currency = "VND",
+            durationDays = 14,
+            interviewQuota = 7
+        });
+        Assert.Equal(HttpStatusCode.Created, createPrice.StatusCode);
+        using var createdPriceJson = JsonDocument.Parse(await createPrice.Content.ReadAsStringAsync());
+        var createdPrice = createdPriceJson.RootElement.GetProperty("data").GetProperty("prices").EnumerateArray()
+            .First(item => item.GetProperty("amountMinor").GetInt64() == 123_000);
+        var priceId = createdPrice.GetProperty("id").GetGuid();
+
+        using var catalogue = await adminClient.GetAsync("/api/v1/plans");
+        Assert.Equal(HttpStatusCode.OK, catalogue.StatusCode);
+        using var catalogueJson = JsonDocument.Parse(await catalogue.Content.ReadAsStringAsync());
+        var publicPlan = catalogueJson.RootElement.GetProperty("data").EnumerateArray()
+            .Single(item => item.GetProperty("id").GetGuid() == planId);
+        Assert.Equal(planName, publicPlan.GetProperty("name").GetString());
+        Assert.Contains(publicPlan.GetProperty("prices").EnumerateArray(), item => item.GetProperty("id").GetGuid() == priceId);
+
+        using var candidateClient = _factory.CreateHttpsClient();
+        var candidate = await RegisterAsync(candidateClient);
+        candidateClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", candidate.AccessToken);
+        var checkout = await CreateCheckoutAsync(candidateClient, priceId, "payos-admin-created-plan");
+        Assert.NotEmpty(_handler.CreatedDescriptions);
+        Assert.Equal(planName, _handler.CreatedDescriptions[^1]);
+
+        using var paid = await SendWebhookAsync(candidateClient, checkout.OrderId, reference: "PAYOS-NEW-PLAN-REFERENCE");
+        Assert.Equal(HttpStatusCode.OK, paid.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var order = await db.Orders.SingleAsync(item => item.Id == checkout.OrderId);
+        var subscription = await db.Subscriptions.SingleAsync(item => item.OrderId == checkout.OrderId);
+        var entitlement = await db.Entitlements.SingleAsync(item => item.SubscriptionId == subscription.Id);
+        Assert.Equal(priceId, order.PlanPriceId);
+        Assert.Equal(planCode, order.PlanCodeSnapshot);
+        Assert.Equal(candidate.UserId, order.UserId);
+        Assert.Equal(order.Id, subscription.OrderId);
+        Assert.Equal(planCode, entitlement.PlanCodeSnapshot);
     }
 
     [Fact]
@@ -294,6 +397,13 @@ public sealed class PayosBillingApiTests : IDisposable
         return price;
     }
 
+    private async Task<PlanPrice> FindPlanPriceAsync(string planCode)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        return await db.PlanPrices.SingleAsync(item => item.Plan.Code == planCode);
+    }
+
     private static async Task<Account> RegisterAsync(HttpClient client)
     {
         var email = $"payos-{Guid.NewGuid():N}@example.test";
@@ -304,7 +414,26 @@ public sealed class PayosBillingApiTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         using var json = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         var data = json.RootElement.GetProperty("data");
-        return new Account(data.GetProperty("user").GetProperty("id").GetGuid(), data.GetProperty("accessToken").GetString()!);
+        return new Account(data.GetProperty("user").GetProperty("id").GetGuid(), email, data.GetProperty("accessToken").GetString()!);
+    }
+
+    private async Task<string> MakeAdminAsync(Account account)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        if (await roleManager.RoleExistsAsync(RoleNames.Admin) is false)
+            await roleManager.CreateAsync(new IdentityRole<Guid>(RoleNames.Admin));
+        var user = await userManager.FindByIdAsync(account.UserId.ToString());
+        Assert.NotNull(user);
+        if (await userManager.IsInRoleAsync(user!, RoleNames.Admin) is false)
+            await userManager.AddToRoleAsync(user!, RoleNames.Admin);
+
+        using var client = _factory.CreateHttpsClient();
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email = account.Email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        using var json = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
+        return json.RootElement.GetProperty("data").GetProperty("accessToken").GetString()!;
     }
 
     private static async Task<CheckoutResponse> CreateCheckoutAsync(HttpClient client, Guid priceId, string key)
@@ -394,7 +523,7 @@ public sealed class PayosBillingApiTests : IDisposable
 
     public void Dispose() => _factory.Dispose();
 
-    private sealed record Account(Guid UserId, string AccessToken);
+    private sealed record Account(Guid UserId, string Email, string AccessToken);
     private sealed record CheckoutResponse(Guid OrderId, string CheckoutUrl);
 
     private sealed class PayosHttpHandler : HttpMessageHandler

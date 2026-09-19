@@ -89,7 +89,7 @@ public sealed record PaymentOrderRequest(
     string ProviderTransactionId,
     DateTimeOffset CreatedAt,
     string? IpAddress,
-    string? PlanCode = null);
+    string? PlanName = null);
 public sealed record CheckoutFormField(string Name, string Value);
 public sealed record CheckoutAction(string Method, string Url, IReadOnlyList<CheckoutFormField> Fields);
 public sealed record PaymentCheckout(string Provider, string ProviderTransactionId, CheckoutAction Action);

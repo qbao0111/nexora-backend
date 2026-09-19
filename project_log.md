@@ -2,6 +2,18 @@
 
 This log records completed implementation milestones and verification evidence. It must never contain credentials or other secrets.
 
+## 2026-09-19 — Dynamic package checkout and admin price editing
+
+- Status: Implementation complete / Ready for independent review
+- Owner: Codex / billing workstream
+- Branch: `main` (working tree changes pending review; no merge performed)
+- Scope: Restored admin plan-price editing by keeping the PriceModal commercial fields interactive and explicitly controlled. Removed the payOS adapter's fixed package-code-to-description mapping so checkout now uses the active package selected by `planPriceId`, with provider amount and currency still sourced from the server-owned order snapshot. Active package/name lookup remains server-side and inactive/missing prices return `PLAN_PRICE_NOT_FOUND`; fulfillment continues to link Subscription and Entitlement through the order's `PlanPriceId`/package snapshot.
+- Files/modules: `Nexora.Business/Billing/BillingContracts.cs`, `Nexora.Data/Billing/BillingService.cs`, `Nexora.Integrations/Payments/PayosPaymentProvider.cs`, PayOS unit/integration coverage.
+- Migration impact: None. No entity or public HTTP request shape changed; checkout continues to accept only `planPriceId` and ignores client-supplied price data.
+- Verification: `dotnet build --no-restore` passed with 0 warnings/errors; full backend tests passed (572 unit, 343 integration with 1 documented skip); focused payOS integration passed 15/15; `git diff --check` passed.
+- FE impact: Frontend changes and validation are recorded in the companion Nexora FE project log. No live payOS payment was run; the deterministic payOS HTTP handler covered link creation, webhook fulfillment and package-to-subscription persistence.
+- Dependencies/blockers: No Pull Request or merge was created; independent review remains required.
+
 ## 2026-09-14 — Current CV weakness-signal scoping
 
 - Status: Implementation complete / Ready for independent review
