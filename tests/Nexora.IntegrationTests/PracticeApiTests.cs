@@ -1447,6 +1447,93 @@ public sealed class PracticeApiTests
                 .First().Status);
     }
 
+    [Fact]
+    public async Task ReportMalformedTwiceUsesValidatedAnswerAggregateFallback()
+    {
+        var aiProvider = new TestAiProvider();
+        var malformed = new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "Malformed report response.",
+            retryHint: AiProviderRetryHint.MalformedStructuredOutput);
+        aiProvider.EnqueueResponse(AiPurposes.InterviewReport, malformed);
+        aiProvider.EnqueueResponse(AiPurposes.InterviewReport, malformed);
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "malformed-report-start");
+        await ProcessJobsAsync(factory);
+        var active = await GetInterviewAsync(client, interviewId);
+        var firstQuestionId = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        var firstAnswer = await AnswerAsync(client, interviewId, firstQuestionId, "Tôi đã phân tích nguyên nhân và xử lý sự cố.", "malformed-report-answer-one");
+        var secondQuestionId = firstAnswer.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        await AnswerAsync(client, interviewId, secondQuestionId, "Kết quả là hệ thống ổn định hơn.", "malformed-report-answer-two");
+        var afterSecondAnswer = await GetInterviewAsync(client, interviewId);
+        var thirdQuestionId = afterSecondAnswer.GetProperty("questions").EnumerateArray().Last().GetProperty("id").GetGuid();
+        await AnswerAsync(client, interviewId, thirdQuestionId, "Tôi tiếp tục theo dõi chỉ số sau thay đổi.", "malformed-report-answer-three");
+        await CompleteAsync(client, interviewId, "malformed-report-complete");
+
+        await ProcessJobsAsync(factory);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewReport));
+        var report = await db.InterviewReports.SingleAsync(item => item.InterviewSessionId == interviewId);
+        Assert.Equal("deterministic:validated-answer-aggregate-v1", report.ModelVersion);
+        Assert.Equal("interview-report-fallback-v1", report.PromptVersion);
+    }
+
+    [Theory]
+    [InlineData("Authentication", 1)]
+    [InlineData("Configuration", 1)]
+    [InlineData("RateLimited", 2)]
+    [InlineData("Unavailable", 2)]
+    [InlineData("Timeout", 2)]
+    public async Task ReportProviderFailuresNeverUseValidatedAnswerAggregateFallback(
+        string failureKindName,
+        int expectedProviderCalls)
+    {
+        var aiProvider = new TestAiProvider();
+        var failureKind = Enum.Parse<AiProviderFailureKind>(failureKindName);
+        for (var attempt = 0; attempt < expectedProviderCalls; attempt++)
+        {
+            aiProvider.EnqueueResponse(
+                AiPurposes.InterviewReport,
+                new AiProviderException(failureKind, $"{failureKindName} report failure."));
+        }
+
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, $"provider-failure-report-{failureKindName.ToLowerInvariant()}");
+        await ProcessJobsAsync(factory);
+        var active = await GetInterviewAsync(client, interviewId);
+        var firstQuestionId = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        var firstAnswer = await AnswerAsync(client, interviewId, firstQuestionId, "Tôi đã phân tích nguyên nhân và xử lý sự cố.", $"provider-failure-answer-one-{failureKindName}");
+        var secondQuestionId = firstAnswer.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        await AnswerAsync(client, interviewId, secondQuestionId, "Kết quả là hệ thống ổn định hơn.", $"provider-failure-answer-two-{failureKindName}");
+        var afterSecondAnswer = await GetInterviewAsync(client, interviewId);
+        var thirdQuestionId = afterSecondAnswer.GetProperty("questions").EnumerateArray().Last().GetProperty("id").GetGuid();
+        await AnswerAsync(client, interviewId, thirdQuestionId, "Tôi tiếp tục theo dõi chỉ số sau thay đổi.", $"provider-failure-answer-three-{failureKindName}");
+        await CompleteAsync(client, interviewId, $"provider-failure-report-complete-{failureKindName}");
+
+        await ProcessJobsAsync(factory);
+
+        Assert.Equal(expectedProviderCalls, aiProvider.GetCallCount(AiPurposes.InterviewReport));
+        Assert.Equal(
+            InterviewReportStates.Failed,
+            (await GetInterviewAsync(client, interviewId)).GetProperty("reportState").GetString());
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(PracticeValues.Completing, (await db.InterviewSessions.SingleAsync(item => item.Id == interviewId)).Status);
+        Assert.Empty(await db.InterviewReports.Where(item => item.InterviewSessionId == interviewId).ToArrayAsync());
+    }
+
     private static async Task<Guid> StartInterviewAsync(HttpClient client, string key, string interviewType = "behavioral")
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/interviews")

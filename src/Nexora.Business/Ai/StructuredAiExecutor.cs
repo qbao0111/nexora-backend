@@ -315,6 +315,8 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
     private static BusinessException MapProviderException(AiProviderException exception) => exception.Kind switch
     {
+        AiProviderFailureKind.Authentication => new BusinessException("AI_PROVIDER_AUTH_FAILED", "Không thể xác thực với AI provider.", BusinessErrorKind.ExternalFailure),
+        AiProviderFailureKind.Configuration => new BusinessException("AI_PROVIDER_CONFIGURATION_INVALID", "Cấu hình AI provider không hợp lệ.", BusinessErrorKind.ExternalFailure),
         AiProviderFailureKind.RateLimited => new BusinessException("AI_RATE_LIMITED", "AI provider đang bị giới hạn tốc độ.", BusinessErrorKind.ExternalFailure),
         AiProviderFailureKind.Timeout or AiProviderFailureKind.Unavailable => new BusinessException("AI_PROVIDER_UNAVAILABLE", "Dịch vụ AI tạm thời không khả dụng.", BusinessErrorKind.ExternalFailure),
         _ => new BusinessException("AI_OUTPUT_INVALID", "Dữ liệu phản hồi từ AI không hợp lệ.", BusinessErrorKind.ExternalFailure)

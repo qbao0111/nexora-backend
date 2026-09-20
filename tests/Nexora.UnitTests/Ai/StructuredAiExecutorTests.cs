@@ -435,11 +435,15 @@ public sealed class StructuredAiExecutorTests
         Assert.Equal(4_096, fakeProvider.Requests[1].MaxOutputTokens);
     }
 
-    [Fact]
-    public async Task ExecuteAsyncDoesNotRetryNonTransientProviderError()
+    [Theory]
+    [InlineData(AiProviderFailureKind.Authentication, "AI_PROVIDER_AUTH_FAILED")]
+    [InlineData(AiProviderFailureKind.Configuration, "AI_PROVIDER_CONFIGURATION_INVALID")]
+    public async Task ExecuteAsyncMapsNonRetryableProviderFailureWithoutOutputFallback(
+        AiProviderFailureKind failureKind,
+        string expectedCode)
     {
         var fakeProvider = new MockAiProvider();
-        fakeProvider.EnqueueException(new AiProviderException(AiProviderFailureKind.Authentication, "Invalid API key"));
+        fakeProvider.EnqueueException(new AiProviderException(failureKind, $"{failureKind} failure"));
         var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
 
         var ex = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
@@ -448,7 +452,7 @@ public sealed class StructuredAiExecutorTests
             new AiOperationContext("corr-6"),
             CancellationToken.None));
 
-        Assert.Equal("AI_OUTPUT_INVALID", ex.Code);
+        Assert.Equal(expectedCode, ex.Code);
         Assert.Equal(1, fakeProvider.CallCount);
     }
 
@@ -482,6 +486,24 @@ public sealed class StructuredAiExecutorTests
             AiOperations.InterviewFirstQuestion,
             "role: Backend Engineer",
             new AiOperationContext("corr-8"),
+            CancellationToken.None));
+
+        Assert.Equal("AI_PROVIDER_UNAVAILABLE", ex.Code);
+        Assert.Equal(2, fakeProvider.CallCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncMapsExhaustedUnavailableToAiProviderUnavailable()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueException(new AiProviderException(AiProviderFailureKind.Unavailable, "Unavailable 1"));
+        fakeProvider.EnqueueException(new AiProviderException(AiProviderFailureKind.Unavailable, "Unavailable 2"));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var ex = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.InterviewFirstQuestion,
+            "role: Backend Engineer",
+            new AiOperationContext("corr-8-unavailable"),
             CancellationToken.None));
 
         Assert.Equal("AI_PROVIDER_UNAVAILABLE", ex.Code);
