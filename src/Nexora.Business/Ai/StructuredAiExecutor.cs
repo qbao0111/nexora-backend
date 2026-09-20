@@ -30,15 +30,21 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
         AiProviderException? lastProviderException = null;
         AiReasoningEffortOverride? reasoningOverride = null;
         var outputTruncationRetry = false;
+        var malformedStructuredOutputRetry = false;
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var isRepairAttempt = attempt > 1 && currentValidation is not null && !currentValidation.IsValid;
-            var currentInstructions = isRepairAttempt
+            var isSemanticRepairAttempt = attempt > 1 && currentValidation is not null && !currentValidation.IsValid;
+            var isMalformedOutputRepairAttempt = attempt > 1 && malformedStructuredOutputRetry;
+            var isRepairAttempt = isSemanticRepairAttempt || isMalformedOutputRepairAttempt;
+            var currentInstructions = isSemanticRepairAttempt
                 ? operation.BuildRepairInstructions(currentValidation!, instructions)
-                : instructions;
+                : isMalformedOutputRepairAttempt
+                    ? operation.BuildMalformedStructuredOutputRepairInstructions(instructions)
+                    : instructions;
             var currentReasoningOverride = reasoningOverride;
             reasoningOverride = null;
+            malformedStructuredOutputRetry = false;
 
             var request = new AiRequest(
                 operation.Purpose,
@@ -196,6 +202,7 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                 {
                     AiProviderRetryHint.LowerReasoningEffort => "reasoning_budget_exhausted",
                     AiProviderRetryHint.OutputTruncated => "output_truncated",
+                    AiProviderRetryHint.MalformedStructuredOutput => "malformed_structured_output",
                     _ => "provider_failure"
                 };
                 LogProviderRequestFailed(
@@ -265,6 +272,13 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                         correlationId);
                     outputTruncationRetry = true;
                 }
+                else if (ex.Kind == AiProviderFailureKind.InvalidResponse &&
+                    ex.RetryHint == AiProviderRetryHint.MalformedStructuredOutput &&
+                    currentValidation is null &&
+                    attempt < maxAttempts)
+                {
+                    malformedStructuredOutputRetry = true;
+                }
 
                 if (ex.Kind is AiProviderFailureKind.Configuration or AiProviderFailureKind.Authentication ||
                     cancellationToken.IsCancellationRequested ||
@@ -301,6 +315,8 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
     private static BusinessException MapProviderException(AiProviderException exception) => exception.Kind switch
     {
+        AiProviderFailureKind.Authentication => new BusinessException("AI_PROVIDER_AUTH_FAILED", "Không thể xác thực với AI provider.", BusinessErrorKind.ExternalFailure),
+        AiProviderFailureKind.Configuration => new BusinessException("AI_PROVIDER_CONFIGURATION_INVALID", "Cấu hình AI provider không hợp lệ.", BusinessErrorKind.ExternalFailure),
         AiProviderFailureKind.RateLimited => new BusinessException("AI_RATE_LIMITED", "AI provider đang bị giới hạn tốc độ.", BusinessErrorKind.ExternalFailure),
         AiProviderFailureKind.Timeout or AiProviderFailureKind.Unavailable => new BusinessException("AI_PROVIDER_UNAVAILABLE", "Dịch vụ AI tạm thời không khả dụng.", BusinessErrorKind.ExternalFailure),
         _ => new BusinessException("AI_OUTPUT_INVALID", "Dữ liệu phản hồi từ AI không hợp lệ.", BusinessErrorKind.ExternalFailure)

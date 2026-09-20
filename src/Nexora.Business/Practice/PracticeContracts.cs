@@ -17,6 +17,14 @@ public static class PracticeValues
     public const string Completing = "completing";
 }
 
+public static class InterviewReportStates
+{
+    public const string None = "none";
+    public const string Processing = "processing";
+    public const string Ready = "ready";
+    public const string Failed = "failed";
+}
+
 /// <summary>
 /// Server-owned semantics for interview questions. Sequence is ordering only;
 /// it never determines whether a question is a follow-up.
@@ -499,7 +507,8 @@ public sealed record InterviewView(
     IReadOnlyCollection<AnswerView> Answers,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    InterviewContinuationView? Continuation = null);
+    InterviewContinuationView? Continuation = null,
+    string ReportState = InterviewReportStates.None);
 
 public sealed record AnswerResult(
     AnswerView Answer,

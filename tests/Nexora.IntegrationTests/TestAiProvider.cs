@@ -142,6 +142,9 @@ internal sealed class TestAiProvider : IAiProvider
         var groundedStrength = string.IsNullOrWhiteSpace(candidateAnswer)
             ? "Clear response."
             : $"Grounded point: {candidateAnswer[..Math.Min(candidateAnswer.Length, 120)]}";
+        var groundedEvidence = string.IsNullOrWhiteSpace(candidateAnswer)
+            ? "Candidate answer."
+            : candidateAnswer[..Math.Min(candidateAnswer.Length, 120)];
         var reportAnswer = GetFirstTranscriptAnswer(request.UntrustedInput) ?? "answer";
         var reportEvidence = reportAnswer[..Math.Min(reportAnswer.Length, 120)];
         var improvedAnswer = string.IsNullOrWhiteSpace(candidateAnswer)
@@ -152,10 +155,10 @@ internal sealed class TestAiProvider : IAiProvider
             var type when type == typeof(GeneratedQuestion) => new GeneratedQuestion(generatedQuestion),
             var type when type == typeof(AnswerEvaluation) => new AnswerEvaluation(
                 [
-                    new RubricScore("correctness", 75, "Câu trả lời nêu được cách xử lý."),
-                    new RubricScore("structure", 70, "Câu trả lời có trình tự cơ bản."),
-                    new RubricScore("completeness", 65, "Cần bổ sung kết quả định lượng."),
-                    new RubricScore("clarity", 80, "Diễn đạt rõ và dễ theo dõi.")
+                    new RubricScore("correctness", 75, groundedEvidence),
+                    new RubricScore("structure", 70, groundedEvidence),
+                    new RubricScore("completeness", 65, groundedEvidence),
+                    new RubricScore("clarity", 80, groundedEvidence)
                 ],
                 "Hãy thêm bối cảnh, hành động cá nhân và kết quả đo được.",
                 behavioral ? new StarEvaluation(

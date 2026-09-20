@@ -45,7 +45,8 @@ public enum AiProviderRetryHint
 {
     None,
     LowerReasoningEffort,
-    OutputTruncated
+    OutputTruncated,
+    MalformedStructuredOutput
 }
 
 public sealed class AiProviderException(
