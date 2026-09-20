@@ -322,20 +322,43 @@ public sealed partial class DeepSeekAiProvider(
                 "content_blank",
                 content?.Length ?? 0);
 
+        JsonDocument contentDocument;
         try
         {
-            return JsonSerializer.Deserialize<T>(content, JsonOptions)
-                ?? throw new JsonException("Structured response was empty.");
+            contentDocument = JsonDocument.Parse(content);
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
             throw CreateInvalidStructuredResponse(
                 request,
                 policy,
                 usage,
                 finishReason,
-                "content_json_deserialization_failed",
-                content.Length);
+                "content_json_parse_failed",
+                content.Length,
+                ex.LineNumber,
+                ex.BytePositionInLine);
+        }
+
+        using (contentDocument)
+        {
+            try
+            {
+                return contentDocument.RootElement.Deserialize<T>(JsonOptions)
+                    ?? throw new JsonException("Structured response was empty.");
+            }
+            catch (JsonException ex)
+            {
+                throw CreateInvalidStructuredResponse(
+                    request,
+                    policy,
+                    usage,
+                    finishReason,
+                    "content_contract_deserialization_failed",
+                    content.Length,
+                    ex.LineNumber,
+                    ex.BytePositionInLine);
+            }
         }
     }
 
@@ -358,6 +381,8 @@ public sealed partial class DeepSeekAiProvider(
                 "none",
                 0,
                 "envelope_json_parse_failed",
+                null,
+                null,
                 request.CorrelationId);
             throw new AiProviderException(
                 AiProviderFailureKind.InvalidResponse,
@@ -385,7 +410,9 @@ public sealed partial class DeepSeekAiProvider(
         DeepSeekUsage? usage,
         string? finishReason,
         string structuredFailureStage,
-        int contentLength = 0)
+        int contentLength = 0,
+        long? lineNumber = null,
+        long? bytePositionInLine = null)
     {
         LogStructuredResponseFailure(
             logger,
@@ -393,6 +420,8 @@ public sealed partial class DeepSeekAiProvider(
             finishReason ?? "none",
             contentLength,
             structuredFailureStage,
+            lineNumber,
+            bytePositionInLine,
             request.CorrelationId);
 
         if (policy.ThinkingEnabled &&
@@ -424,7 +453,9 @@ public sealed partial class DeepSeekAiProvider(
 
         return new AiProviderException(
             AiProviderFailureKind.InvalidResponse,
-            "AI provider returned an invalid structured response.");
+            "AI provider returned an invalid structured response.",
+            null,
+            AiProviderRetryHint.MalformedStructuredOutput);
     }
 
     private static bool IsReasoningBudgetExhausted(
@@ -584,13 +615,15 @@ public sealed partial class DeepSeekAiProvider(
     [LoggerMessage(
         EventId = 4103,
         Level = LogLevel.Warning,
-        Message = "DeepSeek structured response rejected purpose={Purpose} finishReason={FinishReason} contentLength={ContentLength} structuredFailureStage={StructuredFailureStage} correlationId={CorrelationId}")]
+        Message = "DeepSeek structured response rejected purpose={Purpose} finishReason={FinishReason} contentLength={ContentLength} structuredFailureStage={StructuredFailureStage} lineNumber={LineNumber} bytePositionInLine={BytePositionInLine} correlationId={CorrelationId}")]
     private static partial void LogStructuredResponseFailure(
         ILogger logger,
         string purpose,
         string finishReason,
         int contentLength,
         string structuredFailureStage,
+        long? lineNumber,
+        long? bytePositionInLine,
         string correlationId);
 
     private sealed record DeepSeekReasoningSelection(bool ThinkingEnabled, string? ReasoningEffort);

@@ -298,7 +298,7 @@ public sealed class DeepSeekAiProviderTests
     }
 
     [Fact]
-    public async Task GenericInvalidResponseKeepsConfiguredHighOnRetry()
+    public async Task MalformedStructuredResponseUsesJsonCorrectionAtConfiguredHigh()
     {
         var responses = new Queue<HttpResponseMessage>([
             SuccessResponse("{\"choices\":[{\"message\":{\"content\":\"not-json\"},\"finish_reason\":\"stop\"}]}"),
@@ -315,11 +315,39 @@ public sealed class DeepSeekAiProviderTests
             new AiOperationContext("generic-invalid-response", ExpectedStar: false),
             CancellationToken.None);
 
-        Assert.False(result.RepairUsed);
+        Assert.True(result.RepairUsed);
         Assert.Equal(2, result.Attempts);
         Assert.Equal(2, handler.Calls);
         Assert.Equal("high", RequestBody(handler, 0).RootElement.GetProperty("reasoning_effort").GetString());
         Assert.Equal("high", RequestBody(handler, 1).RootElement.GetProperty("reasoning_effort").GetString());
+        Assert.Contains("IMPORTANT JSON CORRECTION INSTRUCTION", handler.RequestBodies[1], StringComparison.Ordinal);
+        Assert.DoesNotContain("not-json", handler.RequestBodies[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ContractDeserializationFailureUsesJsonCorrectionOnce()
+    {
+        var responses = new Queue<HttpResponseMessage>([
+            SuccessResponse("{\"scoreScale\":123}"),
+            SuccessResponse(ValidInterviewEvaluationContent())
+        ]);
+        var handler = new RecordingHandler(_ => responses.Dequeue());
+        var logger = new RecordingLogger<DeepSeekAiProvider>();
+        var provider = CreateProvider(handler, logger: logger);
+        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "candidate input",
+            new AiOperationContext("contract-mismatch", ExpectedStar: false),
+            CancellationToken.None);
+
+        Assert.True(result.RepairUsed);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, handler.Calls);
+        Assert.Contains(logger.Messages, message =>
+            message.Contains("structuredFailureStage=content_contract_deserialization_failed", StringComparison.Ordinal));
+        Assert.Contains("IMPORTANT JSON CORRECTION INSTRUCTION", handler.RequestBodies[1], StringComparison.Ordinal);
     }
 
     [Theory]

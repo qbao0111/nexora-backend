@@ -27,6 +27,54 @@ public sealed class StructuredAiExecutorTests
     }
 
     [Fact]
+    public async Task MalformedStructuredOutputRetriesWithStrictJsonCorrectionOnlyOnce()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "Malformed response.",
+            retryHint: AiProviderRetryHint.MalformedStructuredOutput));
+        fakeProvider.EnqueueResult(new GeneratedQuestion("What is polymorphism?"));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewFirstQuestion,
+            "private candidate input",
+            new AiOperationContext("malformed-json"),
+            CancellationToken.None);
+
+        Assert.True(result.RepairUsed);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Contains("IMPORTANT JSON CORRECTION INSTRUCTION", fakeProvider.Requests[1].Instructions);
+        Assert.DoesNotContain("private candidate input", fakeProvider.Requests[1].Instructions);
+    }
+
+    [Fact]
+    public async Task DoubleMalformedStructuredOutputFailsWithoutThirdProviderCall()
+    {
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "Malformed response.",
+            retryHint: AiProviderRetryHint.MalformedStructuredOutput));
+        fakeProvider.EnqueueException(new AiProviderException(
+            AiProviderFailureKind.InvalidResponse,
+            "Malformed response.",
+            retryHint: AiProviderRetryHint.MalformedStructuredOutput));
+        var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.InterviewFirstQuestion,
+            "candidate input",
+            new AiOperationContext("double-malformed"),
+            CancellationToken.None));
+
+        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
+        Assert.Equal(2, fakeProvider.CallCount);
+    }
+
+    [Fact]
     public async Task InterviewReportRepairsRepairableSemanticFailureOnSecondAttempt()
     {
         var fakeProvider = new MockAiProvider();

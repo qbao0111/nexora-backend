@@ -20,7 +20,7 @@ public sealed class DeepSeekAiProviderTests
     [InlineData("{\"choices\":[{\"message\":{}}]}", "content_missing", 0, "none")]
     [InlineData("{\"choices\":[{\"message\":{\"content\":null},\"finish_reason\":\"stop\"}]}", "content_invalid", 0, "stop")]
     [InlineData("{\"choices\":[{\"message\":{\"content\":\"   \"},\"finish_reason\":\"stop\"}]}", "content_blank", 3, "stop")]
-    [InlineData("{\"choices\":[{\"message\":{\"content\":\"not-json-provider-private-raw-token\"},\"finish_reason\":\"stop\"}]}", "content_json_deserialization_failed", 35, "stop")]
+    [InlineData("{\"choices\":[{\"message\":{\"content\":\"not-json-provider-private-raw-token\"},\"finish_reason\":\"stop\"}]}", "content_json_parse_failed", 35, "stop")]
     public async Task InvalidEnvelopeShapesEmitSafeStageDiagnostics(
         string responseBody,
         string expectedStage,
@@ -36,13 +36,23 @@ public sealed class DeepSeekAiProviderTests
 
         Assert.Equal(AiProviderFailureKind.InvalidResponse, exception.Kind);
         Assert.Equal("AI provider returned an invalid structured response.", exception.Message);
-        Assert.Null(exception.InnerException);
+        if (expectedStage == "content_json_parse_failed")
+        {
+            Assert.Null(exception.InnerException);
+            Assert.Equal(AiProviderRetryHint.MalformedStructuredOutput, exception.RetryHint);
+        }
+        else
+        {
+            Assert.Null(exception.InnerException);
+        }
 
         var diagnostic = Assert.Single(logger.Messages, message =>
             message.Contains($"structuredFailureStage={expectedStage}", StringComparison.Ordinal));
         Assert.Contains("purpose=interview.evaluate", diagnostic, StringComparison.Ordinal);
         Assert.Contains($"finishReason={expectedFinishReason}", diagnostic, StringComparison.Ordinal);
         Assert.Contains($"contentLength={expectedContentLength}", diagnostic, StringComparison.Ordinal);
+        Assert.Contains("lineNumber=", diagnostic, StringComparison.Ordinal);
+        Assert.Contains("bytePositionInLine=", diagnostic, StringComparison.Ordinal);
         Assert.Contains($"correlationId={CorrelationId}", diagnostic, StringComparison.Ordinal);
         Assert.DoesNotContain(PrivateProviderContent, string.Join(Environment.NewLine, logger.Messages), StringComparison.Ordinal);
         Assert.DoesNotContain(PrivateProviderContent, exception.ToString(), StringComparison.Ordinal);
