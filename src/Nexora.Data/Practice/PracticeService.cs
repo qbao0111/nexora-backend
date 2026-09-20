@@ -831,7 +831,8 @@ public sealed partial class PracticeService(
             ?? throw NotFound();
         ValidateQuestionContracts(session.Questions);
         var continuation = await BuildContinuationAsync(userId, session, cancellationToken);
-        return MapInterview(session, session.Questions, session.Answers, continuation);
+        var reportState = await GetReportStateAsync(session.Id, session.Status, cancellationToken);
+        return MapInterview(session, session.Questions, session.Answers, continuation, reportState);
     }
 
     public async Task<AnswerResult> SubmitAnswerAsync(
@@ -1199,7 +1200,7 @@ public sealed partial class PracticeService(
             dbContext.Add(Idempotency(userId, "interview.complete", key, fingerprint, session.Id, timeProvider.GetUtcNow()));
             await dbContext.SaveChangesAsync(cancellationToken);
             await CommitAsync(transaction, cancellationToken);
-            return MapInterview(session, session.Questions, session.Answers);
+            return MapInterview(session, session.Questions, session.Answers, reportState: InterviewReportStates.Ready);
         }
         if (session.Status == PracticeValues.Completing)
         {
@@ -1209,7 +1210,7 @@ public sealed partial class PracticeService(
                 dbContext.Add(Outbox("InterviewReportRequested", "interview", session.Id, retryAt));
             await dbContext.SaveChangesAsync(cancellationToken);
             await CommitAsync(transaction, cancellationToken);
-            return MapInterview(session, session.Questions, session.Answers);
+            return MapInterview(session, session.Questions, session.Answers, reportState: InterviewReportStates.Processing);
         }
         var answeredCount = session.Answers.Count(answer => !string.IsNullOrWhiteSpace(answer.Content));
         if (session.Status != PracticeValues.Active || session.Questions.Count == 0 ||
@@ -1223,7 +1224,7 @@ public sealed partial class PracticeService(
             Outbox("InterviewReportRequested", "interview", session.Id, now));
         await dbContext.SaveChangesAsync(cancellationToken);
         await CommitAsync(transaction, cancellationToken);
-        return MapInterview(session, session.Questions, session.Answers);
+        return MapInterview(session, session.Questions, session.Answers, reportState: InterviewReportStates.Processing);
     }
 
     public async Task<InterviewView> RetryReportAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken)
@@ -1253,7 +1254,13 @@ public sealed partial class PracticeService(
             dbContext.Add(Outbox("InterviewReportRequested", "interview", session.Id, now));
         await dbContext.SaveChangesAsync(cancellationToken);
         await CommitAsync(transaction, cancellationToken);
-        return MapInterview(session, session.Questions, session.Answers);
+        return MapInterview(
+            session,
+            session.Questions,
+            session.Answers,
+            reportState: session.Status == PracticeValues.Completed
+                ? InterviewReportStates.Ready
+                : InterviewReportStates.Processing);
     }
 
     public async Task<ReportView> GetReportAsync(Guid userId, Guid interviewId, CancellationToken cancellationToken)
@@ -1911,14 +1918,27 @@ public sealed partial class PracticeService(
         // profile claims are not interview evidence and are intentionally not
         // included in the synthesis input.
         var reportContext = resumeContextBuilder.BuildReportContext(transcript, profile: null);
-        var execResult = await structuredAiExecutor.ExecuteAsync(
-            AiOperations.InterviewReport,
-            reportContext,
-            new AiOperationContext(
-                snapshot.Id.ToString("N"),
-                snapshot.UserId,
-                GroundingTranscript: string.Join("\n", answeredQuestions.Select(item => item.Answer!.Content))),
-            cancellationToken);
+        var groundingTranscript = string.Join("\n", answeredQuestions.Select(item => item.Answer!.Content));
+        var reportOperationContext = new AiOperationContext(
+            snapshot.Id.ToString("N"),
+            snapshot.UserId,
+            GroundingTranscript: groundingTranscript);
+        AiExecutionResult<InterviewReportOutput> execResult;
+        try
+        {
+            execResult = await structuredAiExecutor.ExecuteAsync(
+                AiOperations.InterviewReport,
+                reportContext,
+                reportOperationContext,
+                cancellationToken);
+        }
+        catch (BusinessException ex) when (string.Equals(ex.Code, "AI_OUTPUT_INVALID", StringComparison.Ordinal))
+        {
+            var fallback = BuildDeterministicReportFallback(answeredQuestions, reportOperationContext);
+            if (fallback is null)
+                throw;
+            execResult = fallback;
+        }
         var output = execResult.Value;
         ValidateScores(output.Scores);
         if (output.Strengths.Count == 0 || output.Gaps.Count == 0 || output.ActionPlan.Count == 0) throw InvalidAiOutput();
@@ -2495,6 +2515,96 @@ public sealed partial class PracticeService(
 
     private static bool NotBlank(string? value) => !string.IsNullOrWhiteSpace(value);
 
+    private static AiExecutionResult<InterviewReportOutput>? BuildDeterministicReportFallback(
+        InterviewQuestion[] answeredQuestions,
+        AiOperationContext context)
+    {
+        var evaluations = answeredQuestions
+            .Select(question => new
+            {
+                Question = question,
+                Answer = question.Answer!,
+                Evaluation = TryDeserializeAnswerEvaluation(question.Answer!.Evaluation)
+            })
+            .Where(item => item.Evaluation is not null)
+            .ToArray();
+        if (evaluations.Length != answeredQuestions.Length)
+            return null;
+
+        var scores = new List<RubricScore>(CanonicalRubricValidator.RequiredCriteria.Length);
+        foreach (var criterion in CanonicalRubricValidator.RequiredCriteria)
+        {
+            var candidates = evaluations
+                .Select(item => new
+                {
+                    item.Question.Sequence,
+                    item.Answer.Id,
+                    Score = item.Evaluation!.Scores.SingleOrDefault(score =>
+                        string.Equals(score.Criterion, criterion, StringComparison.Ordinal))
+                })
+                .ToArray();
+            if (candidates.Any(item => item.Score is null))
+                return null;
+
+            var aggregate = (int)Math.Round(
+                candidates.Average(item => item.Score!.Score),
+                MidpointRounding.AwayFromZero);
+            var evidence = candidates
+                .OrderBy(item => Math.Abs(item.Score!.Score - aggregate))
+                .ThenBy(item => item.Sequence)
+                .ThenBy(item => item.Id)
+                .Select(item => item.Score!.Evidence.Trim())
+                .FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(evidence))
+                return null;
+            scores.Add(new RubricScore(criterion, aggregate, evidence));
+        }
+
+        var strengths = evaluations
+            .OrderBy(item => item.Question.Sequence)
+            .ThenBy(item => item.Answer.Id)
+            .SelectMany(item => item.Evaluation!.Strengths ?? [])
+            .Select(item => item?.Trim() ?? string.Empty)
+            .Where(item => item.Length is > 0 and <= 500)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(3)
+            .ToArray();
+        if (strengths.Length == 0)
+            return null;
+
+        var improvements = evaluations
+            .OrderBy(item => item.Question.Sequence)
+            .ThenBy(item => item.Answer.Id)
+            .SelectMany(item => item.Evaluation!.Improvements ?? [])
+            .Select(item => item?.Trim() ?? string.Empty)
+            .Where(item => item.Length is > 0 and <= 500)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(3)
+            .ToArray();
+        if (improvements.Length == 0)
+            return null;
+
+        var fallback = new InterviewReportOutput(
+            scores,
+            strengths,
+            improvements,
+            improvements,
+            AiOperations.ScoreScale);
+        var validation = AiOperations.InterviewReport.NormalizeAndValidate(fallback, context);
+        if (!validation.IsValid)
+            return null;
+
+        return new AiExecutionResult<InterviewReportOutput>(
+            validation.NormalizedValue!,
+            "deterministic:validated-answer-aggregate-v1",
+            "interview-report-fallback-v1",
+            AiOperations.InterviewReport.SchemaVersion,
+            AiOperations.InterviewReport.RubricVersion,
+            true,
+            AiOperations.InterviewReport.MaxAttempts,
+            0);
+    }
+
     private static int WeightedScore(IReadOnlyCollection<RubricScore> scores)
     {
         var values = scores.ToDictionary(item => item.Criterion, item => item.Score, StringComparer.Ordinal);
@@ -2593,9 +2703,34 @@ public sealed partial class PracticeService(
         InterviewSession session,
         IEnumerable<InterviewQuestion> questions,
         IEnumerable<InterviewAnswer> answers,
-        InterviewContinuationView? continuation = null) =>
+        InterviewContinuationView? continuation = null,
+        string reportState = InterviewReportStates.None) =>
         new(session.Id, session.Status, session.Role, session.Seniority, session.InterviewType, session.Difficulty, session.Version,
-            questions.OrderBy(item => item.Sequence).Select(MapQuestion).ToArray(), answers.OrderBy(item => item.CreatedAt).Select(MapAnswer).ToArray(), session.CreatedAt, session.UpdatedAt, continuation);
+            questions.OrderBy(item => item.Sequence).Select(MapQuestion).ToArray(), answers.OrderBy(item => item.CreatedAt).Select(MapAnswer).ToArray(), session.CreatedAt, session.UpdatedAt, continuation, reportState);
+
+    private async Task<string> GetReportStateAsync(
+        Guid interviewId,
+        string interviewStatus,
+        CancellationToken cancellationToken)
+    {
+        if (await dbContext.InterviewReports.AsNoTracking()
+                .AnyAsync(item => item.InterviewSessionId == interviewId, cancellationToken))
+            return InterviewReportStates.Ready;
+
+        var latestJob = (await dbContext.OutboxEvents.AsNoTracking()
+                .Where(item => item.AggregateId == interviewId && item.Type == "InterviewReportRequested")
+                .Select(item => new { item.Id, item.Status, item.CreatedAt })
+                .ToArrayAsync(cancellationToken))
+            .OrderByDescending(item => item.CreatedAt)
+            .ThenByDescending(item => item.Id)
+            .FirstOrDefault();
+        if (latestJob?.Status == BillingValues.Failed)
+            return InterviewReportStates.Failed;
+        if (string.Equals(interviewStatus, PracticeValues.Completing, StringComparison.Ordinal) &&
+            latestJob?.Status is BillingValues.Pending or BillingValues.Processing)
+            return InterviewReportStates.Processing;
+        return InterviewReportStates.None;
+    }
 
     private async Task<InterviewContinuationView?> BuildContinuationAsync(
         Guid userId,

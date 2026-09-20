@@ -1338,6 +1338,9 @@ public sealed class PracticeApiTests
         var thirdQuestion = afterSecondAnswer.GetProperty("questions").EnumerateArray().Last().GetProperty("id").GetGuid();
         await AnswerAsync(client, interviewId, thirdQuestion, "Third primary answer.", "report-answer-three");
         await CompleteAsync(client, interviewId, "report-complete-one");
+        Assert.Equal(
+            InterviewReportStates.Processing,
+            (await GetInterviewAsync(client, interviewId)).GetProperty("reportState").GetString());
         using (var processingResponse = await client.GetAsync($"/api/v1/interviews/{interviewId}/report"))
         {
             var processingBody = await processingResponse.Content.ReadAsStringAsync();
@@ -1346,6 +1349,10 @@ public sealed class PracticeApiTests
             Assert.Equal("INTERVIEW_REPORT_PROCESSING", processingDocument.RootElement.GetProperty("error").GetProperty("code").GetString());
         }
         await ProcessJobsAsync(factory);
+
+        Assert.Equal(
+            InterviewReportStates.Failed,
+            (await GetInterviewAsync(client, interviewId)).GetProperty("reportState").GetString());
 
         using (var scope = factory.Services.CreateScope())
         {
@@ -1367,11 +1374,15 @@ public sealed class PracticeApiTests
         }
 
         await RetryReportAsync(client, interviewId, "report-retry-one");
+        Assert.Equal(
+            InterviewReportStates.Processing,
+            (await GetInterviewAsync(client, interviewId)).GetProperty("reportState").GetString());
         await RetryReportAsync(client, interviewId, "report-retry-one");
         ai.FailReport = false;
         await ProcessJobsAsync(factory);
         var completed = await GetInterviewAsync(client, interviewId);
         Assert.Equal(PracticeValues.Completed, completed.GetProperty("status").GetString());
+        Assert.Equal(InterviewReportStates.Ready, completed.GetProperty("reportState").GetString());
         using var finalScope = factory.Services.CreateScope();
         var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Equal(1, (await finalDb.Entitlements.SingleAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free")).Consumed);
@@ -1380,7 +1391,7 @@ public sealed class PracticeApiTests
     }
 
     [Fact]
-    public async Task ReportSemanticInvalidTwiceDoesNotPersistFabricatedReport()
+    public async Task ReportSemanticInvalidTwiceUsesValidatedAnswerAggregateFallback()
     {
         var aiProvider = new TestAiProvider();
         var invalid = new InterviewReportOutput(
@@ -1419,8 +1430,21 @@ public sealed class PracticeApiTests
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewReport));
-        Assert.Equal(PracticeValues.Completing, (await db.InterviewSessions.SingleAsync(item => item.Id == interviewId)).Status);
-        Assert.Equal(0, await db.InterviewReports.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(PracticeValues.Completed, (await db.InterviewSessions.SingleAsync(item => item.Id == interviewId)).Status);
+        var report = await db.InterviewReports.SingleAsync(item => item.InterviewSessionId == interviewId);
+        Assert.Equal("deterministic:validated-answer-aggregate-v1", report.ModelVersion);
+        Assert.Equal("interview-report-fallback-v1", report.PromptVersion);
+        var rubric = JsonSerializer.Deserialize<RubricScore[]>(report.Rubric, JsonOptions)!;
+        Assert.Equal([75, 70, 65, 80], rubric.Select(item => item.Score));
+        Assert.All(rubric, item => Assert.False(string.IsNullOrWhiteSpace(item.Evidence)));
+        Assert.Equal(
+            BillingValues.Processed,
+            (await db.OutboxEvents
+                .Where(item => item.AggregateId == interviewId && item.Type == "InterviewReportRequested")
+                .ToArrayAsync())
+                .OrderByDescending(item => item.CreatedAt)
+                .ThenByDescending(item => item.Id)
+                .First().Status);
     }
 
     private static async Task<Guid> StartInterviewAsync(HttpClient client, string key, string interviewType = "behavioral")

@@ -564,6 +564,21 @@ GET `/interviews/{id}/report` trả `409 INTERVIEW_REPORT_PROCESSING` khi report
 đang chạy, hoặc `409 INTERVIEW_REPORT_FAILED` khi job cuối thất bại và có thể
 retry; các trạng thái này không làm interview chuyển sang `failed`.
 
+`GET /interviews/{id}` trả thêm `reportState` để frontend theo dõi báo cáo mà
+không phải probe report endpoint: `none`, `processing`, `ready`, hoặc `failed`.
+Report đã tồn tại luôn thắng và cho `ready`; nếu chưa có report thì job report
+mới nhất quyết định `failed` hoặc `processing`. Response retry report được chấp
+nhận trả `processing`; cùng `Idempotency-Key` không enqueue thêm job.
+
+Nếu report AI hết đúng ngân sách hai provider call với `AI_OUTPUT_INVALID`,
+worker được phép tạo fallback deterministic chỉ từ các `AnswerEvaluation` đã
+persist và candidate answers tương ứng. Fallback tính trung bình bốn rubric,
+chọn evidence ổn định, tái dùng strength/improvement đã validate và chạy lại
+toàn bộ canonical report validation. Thiếu strength/evidence an toàn thì fail
+closed. Provider unavailable/rate-limit/auth/config không đi qua fallback này.
+Metadata fallback là `deterministic:validated-answer-aggregate-v1` và
+`interview-report-fallback-v1`; report/history cũ không bị sửa.
+
 ### Scenario Practice v2
 
 Scenario catalogue data is server-owned and published scenarios are grouped by their active category/track:
