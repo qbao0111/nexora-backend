@@ -576,7 +576,9 @@ public sealed partial class ScenarioStarService(
         var avgScore = recentScores.Length > 0 ? (double?)recentScores.Average(item => item.Score) : null;
 
         var starAnswers = await dbContext.InterviewAnswers.AsNoTracking()
-            .Where(item => item.UserId == userId).Select(item => item.Evaluation).ToArrayAsync(cancellationToken);
+            .Where(item => item.UserId == userId &&
+                           item.EvaluationStatus == InterviewAnswerEvaluationStates.Ready && item.Evaluation != null)
+            .Select(item => item.Evaluation!).ToArrayAsync(cancellationToken);
         ProgressStarAverages? starAverages = null;
         var starComponents = starAnswers.SelectMany(eval =>
         {

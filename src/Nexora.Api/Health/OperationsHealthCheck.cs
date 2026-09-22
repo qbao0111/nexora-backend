@@ -21,7 +21,7 @@ public sealed class OperationsHealthCheck(
     TimeProvider timeProvider) : IHealthCheck
 {
     private static readonly string[] JobTypes =
-        ["ResumeExtractionRequested", "ResumeAnalysisRequested", "InterviewStartRequested", "InterviewReportRequested"];
+        ["ResumeExtractionRequested", "ResumeAnalysisRequested", "InterviewStartRequested", "InterviewQuestionPlanRequested", "InterviewAnswerEvaluationRequested", "InterviewReportRequested"];
 
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
     {

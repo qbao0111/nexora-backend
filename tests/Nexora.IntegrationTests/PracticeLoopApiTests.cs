@@ -966,8 +966,15 @@ public sealed class PracticeLoopApiTests
 
     private static async Task ProcessJobsAsync(NexoraApiFactory factory)
     {
-        using var scope = factory.Services.CreateScope();
-        await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(CancellationToken.None);
+        for (var pass = 0; pass < 10; pass++)
+        {
+            using var scope = factory.Services.CreateScope();
+            if (await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>()
+                    .ProcessPendingAsync(CancellationToken.None) == 0)
+                return;
+        }
+
+        throw new InvalidOperationException("Practice jobs did not drain.");
     }
 
     private static async Task<Guid> SeedReadyResumeAsync(

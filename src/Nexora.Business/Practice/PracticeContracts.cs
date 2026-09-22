@@ -25,6 +25,29 @@ public static class InterviewReportStates
     public const string Failed = "failed";
 }
 
+public static class InterviewAnswerEvaluationStates
+{
+    public const string Queued = "queued";
+    public const string Processing = "processing";
+    public const string Ready = "ready";
+    public const string Failed = "failed";
+}
+
+public static class InterviewResultStates
+{
+    public const string Collecting = "collecting";
+    public const string Processing = "processing";
+    public const string Ready = "ready";
+    public const string Failed = "failed";
+}
+
+public static class InterviewQuestionPreparationStates
+{
+    public const string Ready = "ready";
+    public const string Processing = "processing";
+    public const string Failed = "failed";
+}
+
 /// <summary>
 /// Server-owned semantics for interview questions. Sequence is ordering only;
 /// it never determines whether a question is a follow-up.
@@ -494,7 +517,20 @@ public sealed record QuestionView(
     Guid? ParentQuestionId,
     string Content,
     DateTimeOffset CreatedAt);
-public sealed record AnswerView(Guid Id, Guid QuestionId, string Content, int? DurationSeconds, object? Evaluation, DateTimeOffset CreatedAt);
+public sealed record AnswerView(
+    Guid Id,
+    Guid QuestionId,
+    string Content,
+    int? DurationSeconds,
+    object? Evaluation,
+    DateTimeOffset CreatedAt,
+    string EvaluationState = InterviewAnswerEvaluationStates.Ready);
+public sealed record InterviewEvaluationProgress(
+    int Total,
+    int Queued,
+    int Processing,
+    int Ready,
+    int Failed);
 public sealed record InterviewView(
     Guid Id,
     string Status,
@@ -508,7 +544,10 @@ public sealed record InterviewView(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     InterviewContinuationView? Continuation = null,
-    string ReportState = InterviewReportStates.None);
+    string ReportState = InterviewReportStates.None,
+    string ResultState = InterviewResultStates.Collecting,
+    InterviewEvaluationProgress? EvaluationProgress = null,
+    string QuestionPreparationState = InterviewQuestionPreparationStates.Processing);
 
 public sealed record AnswerResult(
     AnswerView Answer,
@@ -581,8 +620,10 @@ public interface IPracticeService
     Task<InterviewView> PracticeAgainAsync(Guid userId, Guid interviewId, PracticeAgainCommand command, string idempotencyKey, CancellationToken cancellationToken);
     Task<AnswerResult> SubmitAnswerAsync(Guid userId, Guid interviewId, Guid questionId, string content, int? durationSeconds, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> ContinueInterviewAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
+    Task<InterviewView> RetryQuestionPreparationAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> CompleteInterviewAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> RetryReportAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
+    Task<InterviewView> RetryResultsAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
     Task<ReportView> GetReportAsync(Guid userId, Guid interviewId, CancellationToken cancellationToken);
     Task<DashboardView> GetDashboardAsync(Guid userId, CancellationToken cancellationToken);
 }

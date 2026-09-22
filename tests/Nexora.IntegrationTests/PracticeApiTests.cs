@@ -74,6 +74,15 @@ public sealed class PracticeApiTests
         using var continueResponse = await client.SendAsync(continueRequest);
         Assert.Equal(HttpStatusCode.Forbidden, continueResponse.StatusCode);
         Assert.Contains("INTERVIEW_UPGRADE_REQUIRED", await continueResponse.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        var freePaywallView = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(InterviewQuestionPreparationStates.Ready,
+            freePaywallView.GetProperty("questionPreparationState").GetString());
+
+        using var retryRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/questions/retry");
+        retryRequest.Headers.Add("Idempotency-Key", "a7-free-question-retry");
+        using var retryResponse = await client.SendAsync(retryRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, retryResponse.StatusCode);
+        Assert.Contains("INTERVIEW_UPGRADE_REQUIRED", await retryResponse.Content.ReadAsStringAsync(), StringComparison.Ordinal);
         Assert.Equal(0, aiProvider.GetCallCount(AiPurposes.InterviewFollowup));
     }
 
@@ -98,6 +107,7 @@ public sealed class PracticeApiTests
         var savedAnswer = firstResult.GetProperty("answer");
         var answerId = savedAnswer.GetProperty("id").GetGuid();
         Assert.Equal(confirmedText, savedAnswer.GetProperty("content").GetString());
+        await ProcessJobsAsync(factory);
 
         var evaluationInvocation = aiProvider.Invocations
             .Single(item => item.Purpose == AiPurposes.InterviewEvaluate);
@@ -165,8 +175,8 @@ public sealed class PracticeApiTests
         var firstQuestion = active.GetProperty("questions")[0];
         var firstQuestionId = firstQuestion.GetProperty("id").GetGuid();
         var firstQuestionContent = firstQuestion.GetProperty("content").GetString();
-        var initialQuestionCall = aiProvider.Invocations.Single(item => item.Purpose == AiPurposes.InterviewFirstQuestion);
-        Assert.Contains(resumeMarker, initialQuestionCall.UntrustedInput, StringComparison.Ordinal);
+        Assert.All(aiProvider.Invocations.Where(item => item.Purpose == AiPurposes.InterviewFirstQuestion),
+            item => Assert.Contains(resumeMarker, item.UntrustedInput, StringComparison.Ordinal));
 
         var firstAnswerContent = "Tôi đã cải thiện độ tin cậy của dịch vụ bằng kiểm thử và giám sát.";
         var firstAnswer = await AnswerAsync(client, interviewId, firstQuestionId, firstAnswerContent, "deleted-resume-active-answer-one");
@@ -174,17 +184,16 @@ public sealed class PracticeApiTests
         var secondQuestion = firstAnswer.GetProperty("nextQuestion");
         var secondQuestionId = secondQuestion.GetProperty("id").GetGuid();
         var secondQuestionContent = secondQuestion.GetProperty("content").GetString();
+        await ProcessJobsAsync(factory);
         Assert.Contains(resumeMarker, aiProvider.Invocations
             .Last(item => item.Purpose == AiPurposes.InterviewEvaluate).UntrustedInput, StringComparison.Ordinal);
-        Assert.Contains(resumeMarker, aiProvider.Invocations
-            .Last(item => item.Purpose == AiPurposes.InterviewFirstQuestion).UntrustedInput, StringComparison.Ordinal);
 
         string firstEvaluation;
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-            firstEvaluation = await db.InterviewAnswers.Where(item => item.Id == firstAnswerId)
-                .Select(item => item.Evaluation).SingleAsync();
+            firstEvaluation = (await db.InterviewAnswers.Where(item => item.Id == firstAnswerId)
+                .Select(item => item.Evaluation).SingleAsync())!;
         }
 
         var invocationCountBeforeDelete = aiProvider.Invocations.Count;
@@ -197,29 +206,18 @@ public sealed class PracticeApiTests
             "deleted-resume-active-answer-two");
         var thirdQuestion = deletedAnswer.GetProperty("nextQuestion");
         var thirdQuestionId = thirdQuestion.GetProperty("id").GetGuid();
-        Assert.Equal(InterviewQuestionValues.Technical, thirdQuestion.GetProperty("topic").GetString());
+        Assert.Equal(InterviewQuestionValues.CvTargeted, thirdQuestion.GetProperty("topic").GetString());
+        await ProcessJobsAsync(factory);
         var afterDeleteAnswerCalls = aiProvider.Invocations.Skip(invocationCountBeforeDelete).ToArray();
         Assert.Single(afterDeleteAnswerCalls, item => item.Purpose == AiPurposes.InterviewEvaluate);
-        Assert.Single(afterDeleteAnswerCalls, item => item.Purpose == AiPurposes.InterviewFirstQuestion);
         Assert.All(afterDeleteAnswerCalls, item =>
             Assert.DoesNotContain(resumeMarker, item.UntrustedInput, StringComparison.Ordinal));
 
-        await AnswerAsync(client, interviewId, thirdQuestionId,
+        var thirdAnswer = await AnswerAsync(client, interviewId, thirdQuestionId,
             "Tôi theo dõi chỉ số sau phát hành và chia sẻ kết quả với nhóm.",
             "deleted-resume-active-answer-three");
-
-        JsonElement continued;
-        using (var continuation = await ContinueAsync(client, interviewId, "deleted-resume-paid-continue"))
-        {
-            Assert.Equal(HttpStatusCode.OK, continuation.StatusCode);
-            continued = await DataAsync(continuation);
-        }
-        var fourthQuestion = continued.GetProperty("questions").EnumerateArray()
-            .Single(item => item.GetProperty("sequence").GetInt32() == 4);
-        Assert.Equal(InterviewQuestionValues.Technical, fourthQuestion.GetProperty("topic").GetString());
-        var paidContinuationCall = aiProvider.Invocations.Last(item => item.Purpose == AiPurposes.InterviewFirstQuestion);
-        Assert.Contains("question-topic: technical", paidContinuationCall.UntrustedInput, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(resumeMarker, paidContinuationCall.UntrustedInput, StringComparison.Ordinal);
+        var fourthQuestion = thirdAnswer.GetProperty("nextQuestion");
+        Assert.Equal(InterviewQuestionValues.CvTargeted, fourthQuestion.GetProperty("topic").GetString());
 
         await AnswerAsync(client, interviewId, fourthQuestion.GetProperty("id").GetGuid(),
             "Tôi tổng kết kết quả bằng số liệu đã theo dõi.", "deleted-resume-active-answer-four");
@@ -258,7 +256,7 @@ public sealed class PracticeApiTests
     }
 
     [Fact]
-    public async Task DeletedResumeIsOmittedFromPaidBehavioralFollowupContext()
+    public async Task DeletedResumeIsOmittedFromFutureAnswerEvaluationContext()
     {
         const string resumeMarker = "SECRET_DELETED_RESUME_MARKER";
         var aiProvider = new TestAiProvider();
@@ -306,32 +304,14 @@ public sealed class PracticeApiTests
         var thirdQuestion = await AnswerAsync(
             client, interviewId, secondQuestionId, "Tôi đã phối hợp khắc phục và kiểm tra lại.", "deleted-resume-followup-answer-two");
         var thirdQuestionId = thirdQuestion.GetProperty("nextQuestion").GetProperty("id").GetGuid();
-        await AnswerAsync(client, interviewId, thirdQuestionId,
+        var thirdAnswer = await AnswerAsync(client, interviewId, thirdQuestionId,
             "Nhóm thống nhất được phương án và cải thiện bàn giao.", "deleted-resume-followup-answer-three");
+        var fourthQuestion = thirdAnswer.GetProperty("nextQuestion");
 
-        JsonElement continued;
-        using (var response = await ContinueAsync(client, interviewId, "deleted-resume-followup-continue"))
-        {
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            continued = await DataAsync(response);
-        }
-        var fourthQuestion = continued.GetProperty("questions").EnumerateArray()
-            .Single(item => item.GetProperty("sequence").GetInt32() == 4);
-        Assert.Equal(InterviewQuestionValues.Behavioral, fourthQuestion.GetProperty("topic").GetString());
-
-        await AnswerAsync(client, interviewId, fourthQuestion.GetProperty("id").GetGuid(),
+        var fourthAnswer = await AnswerAsync(client, interviewId, fourthQuestion.GetProperty("id").GetGuid(),
             "Tôi trình bày tình huống, hành động và kết quả.", "deleted-resume-followup-answer-four");
-        using (var response = await ContinueAsync(client, interviewId, "deleted-resume-followup-continue-two"))
-        {
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var continuedFollowup = await DataAsync(response);
-            var fifthQuestion = continuedFollowup.GetProperty("questions").EnumerateArray()
-                .Single(item => item.GetProperty("sequence").GetInt32() == 5);
-            Assert.Equal(InterviewQuestionValues.Followup, fifthQuestion.GetProperty("kind").GetString());
-        }
-
-        var followupInvocation = aiProvider.Invocations.Single(item => item.Purpose == AiPurposes.InterviewFollowup);
-        Assert.DoesNotContain(resumeMarker, followupInvocation.UntrustedInput, StringComparison.Ordinal);
+        Assert.Equal(5, fourthAnswer.GetProperty("nextQuestion").GetProperty("sequence").GetInt32());
+        await ProcessJobsAsync(factory);
         Assert.All(aiProvider.Invocations.Skip(invocationCountBeforeDelete), item =>
             Assert.DoesNotContain(resumeMarker, item.UntrustedInput, StringComparison.Ordinal));
     }
@@ -355,7 +335,8 @@ public sealed class PracticeApiTests
         var a2 = await AnswerAsync(client, interviewId, q2, "Một tình huống tôi đã xử lý.", "a7-paid-a2");
         var q3 = a2.GetProperty("nextQuestion").GetProperty("id").GetGuid();
         var a3 = await AnswerAsync(client, interviewId, q3, "Tôi phù hợp với vai trò.", "a7-paid-a3");
-        Assert.Equal(JsonValueKind.Null, a3.GetProperty("nextQuestion").ValueKind);
+        var q4 = a3.GetProperty("nextQuestion");
+        Assert.Equal(4, q4.GetProperty("sequence").GetInt32());
         var firstQuestionCallsBeforeContinuation = aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion);
 
         using var firstRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/continue");
@@ -364,7 +345,6 @@ public sealed class PracticeApiTests
         Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
         var first = await DataAsync(firstResponse);
         Assert.Equal(interviewId, first.GetProperty("id").GetGuid());
-        var q4 = first.GetProperty("questions").EnumerateArray().Single(item => item.GetProperty("sequence").GetInt32() == 4);
         Assert.Equal(InterviewQuestionValues.Primary, q4.GetProperty("kind").GetString());
         Assert.Equal(InterviewQuestionValues.Technical, q4.GetProperty("topic").GetString());
         Assert.Equal(JsonValueKind.Null, q4.GetProperty("parentQuestionId").ValueKind);
@@ -376,19 +356,14 @@ public sealed class PracticeApiTests
         Assert.Equal(HttpStatusCode.OK, replayResponse.StatusCode);
         var replay = await DataAsync(replayResponse);
         Assert.Equal(first.GetProperty("questions").GetArrayLength(), replay.GetProperty("questions").GetArrayLength());
-        Assert.Equal(1, aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion) - firstQuestionCallsBeforeContinuation);
+        Assert.Equal(0, aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion) - firstQuestionCallsBeforeContinuation);
 
         var q4Answer = await AnswerAsync(client, interviewId, q4.GetProperty("id").GetGuid(), "A measurable technical result.", "a7-paid-a4");
         Assert.False(q4Answer.GetProperty("isComplete").GetBoolean());
         Assert.Equal(InterviewContinuationValues.InProgress, q4Answer.GetProperty("continuation").GetProperty("state").GetString());
         Assert.True(q4Answer.GetProperty("continuation").GetProperty("canFinishNow").GetBoolean());
 
-        using var fifthRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/continue");
-        fifthRequest.Headers.Add("Idempotency-Key", "a7-paid-continue-q5");
-        using var fifthResponse = await client.SendAsync(fifthRequest);
-        Assert.Equal(HttpStatusCode.OK, fifthResponse.StatusCode);
-        var fifth = await DataAsync(fifthResponse);
-        var q5 = fifth.GetProperty("questions").EnumerateArray().Single(item => item.GetProperty("sequence").GetInt32() == 5);
+        var q5 = q4Answer.GetProperty("nextQuestion");
         Assert.Equal(InterviewQuestionValues.Primary, q5.GetProperty("kind").GetString());
         Assert.Equal(InterviewQuestionValues.Technical, q5.GetProperty("topic").GetString());
         Assert.Contains("[technical]", q5.GetProperty("content").GetString(), StringComparison.Ordinal);
@@ -397,17 +372,181 @@ public sealed class PracticeApiTests
         Assert.False(q5Answer.GetProperty("isComplete").GetBoolean());
         Assert.Equal(InterviewContinuationValues.InProgress, q5Answer.GetProperty("continuation").GetProperty("state").GetString());
         Assert.True(q5Answer.GetProperty("continuation").GetProperty("canFinishNow").GetBoolean());
-        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion) - firstQuestionCallsBeforeContinuation);
+        Assert.Equal(0, aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion) - firstQuestionCallsBeforeContinuation);
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         var persistedQuestions = await db.InterviewQuestions.Where(item => item.InterviewSessionId == interviewId).ToListAsync();
-        Assert.Equal(5, persistedQuestions.Count);
+        Assert.Equal(6, persistedQuestions.Count);
         Assert.All(persistedQuestions, item =>
         {
             Assert.Equal(AiOperations.InterviewFirstQuestion.PromptVersion, item.PromptVersion);
             Assert.Equal(aiProvider.ModelVersion, item.ModelVersion);
         });
+    }
+
+    [Fact]
+    public async Task FailedPaidContinuationQuestionPlanCanBeRetriedIdempotently()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var interviewId = await StartInterviewAsync(client, "a7-retry-plan-start", "technical");
+        await ProcessJobsAsync(factory);
+        var active = await GetInterviewAsync(client, interviewId);
+        var q1 = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        var q2 = (await AnswerAsync(client, interviewId, q1, "Primary answer one.", "a7-retry-plan-a1"))
+            .GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        var q3 = (await AnswerAsync(client, interviewId, q2, "Primary answer two.", "a7-retry-plan-a2"))
+            .GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        var freeResult = await AnswerAsync(client, interviewId, q3, "Primary answer three.", "a7-retry-plan-a3");
+        Assert.Equal(InterviewContinuationValues.UpgradeRequired,
+            freeResult.GetProperty("continuation").GetProperty("state").GetString());
+
+        await SeedEntitlementAsync(factory, account.UserId, 1, questionLimit: 6);
+        using (var continueRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/continue"))
+        {
+            continueRequest.Headers.Add("Idempotency-Key", "a7-retry-plan-continue");
+            using var continueResponse = await client.SendAsync(continueRequest);
+            Assert.Equal(HttpStatusCode.OK, continueResponse.StatusCode);
+            var queued = await DataAsync(continueResponse);
+            Assert.Equal(InterviewQuestionPreparationStates.Processing,
+                queued.GetProperty("questionPreparationState").GetString());
+        }
+
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
+            new AiProviderException(AiProviderFailureKind.Unavailable, "question plan failure"));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
+            new AiProviderException(AiProviderFailureKind.Unavailable, "question plan failure retry"));
+        await ProcessJobsAsync(factory);
+
+        var failed = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(PracticeValues.Active, failed.GetProperty("status").GetString());
+        Assert.Equal(InterviewResultStates.Collecting, failed.GetProperty("resultState").GetString());
+        Assert.Equal(InterviewQuestionPreparationStates.Failed,
+            failed.GetProperty("questionPreparationState").GetString());
+        Assert.Equal(3, failed.GetProperty("questions").GetArrayLength());
+
+        using (var retryRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/questions/retry"))
+        {
+            retryRequest.Headers.Add("Idempotency-Key", "a7-retry-plan-retry");
+            using var retryResponse = await client.SendAsync(retryRequest);
+            Assert.Equal(HttpStatusCode.Accepted, retryResponse.StatusCode);
+            var retryView = await DataAsync(retryResponse);
+            Assert.Equal(InterviewQuestionPreparationStates.Processing,
+                retryView.GetProperty("questionPreparationState").GetString());
+        }
+
+        using (var replayRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/questions/retry"))
+        {
+            replayRequest.Headers.Add("Idempotency-Key", "a7-retry-plan-retry");
+            using var replayResponse = await client.SendAsync(replayRequest);
+            Assert.Equal(HttpStatusCode.Accepted, replayResponse.StatusCode);
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(2, await db.OutboxEvents.CountAsync(item =>
+                item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
+            Assert.Equal(3, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        }
+
+        await ProcessJobsAsync(factory);
+        var recovered = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(InterviewQuestionPreparationStates.Ready,
+            recovered.GetProperty("questionPreparationState").GetString());
+        var q4 = recovered.GetProperty("questions").EnumerateArray().Single(item => item.GetProperty("sequence").GetInt32() == 4);
+        Assert.Equal(4, q4.GetProperty("sequence").GetInt32());
+        Assert.Equal(4, recovered.GetProperty("questions").GetArrayLength());
+
+        using var finalScope = factory.Services.CreateScope();
+        var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var sequences = await finalDb.InterviewQuestions
+            .Where(item => item.InterviewSessionId == interviewId)
+            .Select(item => item.Sequence)
+            .ToArrayAsync();
+        Assert.Equal(6, sequences.Length);
+        Assert.Equal(sequences.Length, sequences.Distinct().Count());
+        Assert.Equal(2, await finalDb.OutboxEvents.CountAsync(item =>
+            item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
+    }
+
+    [Fact]
+    public async Task UnlimitedBatchBoundaryQuestionPlanFailureCanBeRetriedWithoutDuplicateSequence()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 1, unlimitedQuestionLimit: true);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var interviewId = await StartInterviewAsync(client, "a7-unlimited-plan-start", "technical");
+        await ProcessJobsAsync(factory);
+        var current = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(1, current.GetProperty("questions").GetArrayLength());
+
+        for (var sequence = 1; sequence <= 20; sequence++)
+        {
+            var question = current.GetProperty("questions").EnumerateArray()
+                .Single(item => item.GetProperty("sequence").GetInt32() == sequence);
+            var answer = await AnswerAsync(
+                client,
+                interviewId,
+                question.GetProperty("id").GetGuid(),
+                $"Unlimited answer {sequence}.",
+                $"a7-unlimited-plan-answer-{sequence}");
+            if (sequence < 20)
+            {
+                Assert.Equal(sequence + 1, answer.GetProperty("nextQuestion").GetProperty("sequence").GetInt32());
+                current = await GetInterviewAsync(client, interviewId);
+            }
+            else
+            {
+                Assert.Equal(JsonValueKind.Null, answer.GetProperty("nextQuestion").ValueKind);
+            }
+        }
+
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
+            new AiProviderException(AiProviderFailureKind.Unavailable, "unlimited batch failure"));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
+            new AiProviderException(AiProviderFailureKind.Unavailable, "unlimited batch failure retry"));
+        await ProcessJobsAsync(factory);
+
+        var failed = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(InterviewQuestionPreparationStates.Failed,
+            failed.GetProperty("questionPreparationState").GetString());
+        Assert.Equal(20, failed.GetProperty("questions").GetArrayLength());
+        Assert.DoesNotContain(failed.GetProperty("questions").EnumerateArray(),
+            item => item.GetProperty("sequence").GetInt32() == 21);
+
+        using var retryRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/questions/retry");
+        retryRequest.Headers.Add("Idempotency-Key", "a7-unlimited-plan-retry");
+        using var retryResponse = await client.SendAsync(retryRequest);
+        Assert.Equal(HttpStatusCode.Accepted, retryResponse.StatusCode);
+        await ProcessJobsAsync(factory);
+
+        var recovered = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(InterviewQuestionPreparationStates.Ready,
+            recovered.GetProperty("questionPreparationState").GetString());
+        Assert.Contains(recovered.GetProperty("questions").EnumerateArray(),
+            item => item.GetProperty("sequence").GetInt32() == 21);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var sequences = await db.InterviewQuestions
+            .Where(item => item.InterviewSessionId == interviewId)
+            .Select(item => item.Sequence)
+            .ToArrayAsync();
+        Assert.Equal(sequences.Length, sequences.Distinct().Count());
+        Assert.Equal(2, await db.OutboxEvents.CountAsync(item =>
+            item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
     }
 
     [Fact]
@@ -450,7 +589,8 @@ public sealed class PracticeApiTests
         continueRequest.Headers.Add("Idempotency-Key", "a7-checkout-continue");
         using var continueResponse = await client.SendAsync(continueRequest);
         Assert.Equal(HttpStatusCode.OK, continueResponse.StatusCode);
-        var continued = await DataAsync(continueResponse);
+        await ProcessJobsAsync(factory);
+        var continued = await GetInterviewAsync(client, interviewId);
         Assert.Equal(interviewId, continued.GetProperty("id").GetGuid());
         var q4 = continued.GetProperty("questions").EnumerateArray().Single(item => item.GetProperty("sequence").GetInt32() == 4);
         Assert.Equal(InterviewQuestionValues.Primary, q4.GetProperty("kind").GetString());
@@ -459,7 +599,7 @@ public sealed class PracticeApiTests
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         var session = await db.InterviewSessions.SingleAsync(item => item.Id == interviewId);
-        Assert.Equal(4, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(6, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
         Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Reserve));
         Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Consume));
         var originalReservation = await db.UsageEvents.SingleAsync(item => item.Id == session.ReservationEventId);
@@ -514,17 +654,13 @@ public sealed class PracticeApiTests
         q4Request.Headers.Add("Idempotency-Key", "a7-paid-cap-q4");
         using var q4Response = await client.SendAsync(q4Request);
         Assert.Equal(HttpStatusCode.OK, q4Response.StatusCode);
-        var q4 = (await DataAsync(q4Response)).GetProperty("questions").EnumerateArray()
+        await ProcessJobsAsync(factory);
+        var q4 = (await GetInterviewAsync(client, interviewId)).GetProperty("questions").EnumerateArray()
             .Single(item => item.GetProperty("sequence").GetInt32() == 4);
         var q4Answer = await AnswerAsync(client, interviewId, q4.GetProperty("id").GetGuid(), "Paid answer four.", "a7-paid-cap-a4");
         Assert.Equal(InterviewContinuationValues.InProgress, q4Answer.GetProperty("continuation").GetProperty("state").GetString());
 
-        using var q5Request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/continue");
-        q5Request.Headers.Add("Idempotency-Key", "a7-paid-cap-q5");
-        using var q5Response = await client.SendAsync(q5Request);
-        Assert.Equal(HttpStatusCode.OK, q5Response.StatusCode);
-        var q5 = (await DataAsync(q5Response)).GetProperty("questions").EnumerateArray()
-            .Single(item => item.GetProperty("sequence").GetInt32() == 5);
+        var q5 = q4Answer.GetProperty("nextQuestion");
         var q5Answer = await AnswerAsync(client, interviewId, q5.GetProperty("id").GetGuid(), "Paid answer five.", "a7-paid-cap-a5");
         Assert.True(q5Answer.GetProperty("isComplete").GetBoolean());
         Assert.Equal(InterviewContinuationValues.MaxQuestionsReached, q5Answer.GetProperty("continuation").GetProperty("state").GetString());
@@ -582,14 +718,14 @@ public sealed class PracticeApiTests
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        Assert.Equal(4, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
-        Assert.Equal(1, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId && item.Sequence > InterviewQuestionValues.FreeQuestionLimit));
+        Assert.Equal(6, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(3, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId && item.Sequence > InterviewQuestionValues.FreeQuestionLimit));
         Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Reserve));
         Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Consume));
     }
 
     [Fact]
-    public async Task PaidBehavioralContinuationUsesFollowupOnlyForMissingStarEvidence()
+    public async Task PaidBehavioralProgressionUsesDeterministicPreparedPrimaryQuestions()
     {
         var aiProvider = new TestAiProvider();
         using var factory = new NexoraApiFactory(aiProvider);
@@ -607,36 +743,24 @@ public sealed class PracticeApiTests
             .GetProperty("nextQuestion").GetProperty("id").GetGuid();
         var q3 = (await AnswerAsync(client, interviewId, q2, "Một tình huống tôi đã xử lý.", "a7-paid-behavioral-a2"))
             .GetProperty("nextQuestion").GetProperty("id").GetGuid();
-        await AnswerAsync(client, interviewId, q3, "Tôi phù hợp với vai trò.", "a7-paid-behavioral-a3");
-
-        using var continueRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/continue");
-        continueRequest.Headers.Add("Idempotency-Key", "a7-paid-behavioral-q4");
-        using var continueResponse = await client.SendAsync(continueRequest);
-        Assert.Equal(HttpStatusCode.OK, continueResponse.StatusCode);
-        var q4 = (await DataAsync(continueResponse)).GetProperty("questions").EnumerateArray()
-            .Single(item => item.GetProperty("sequence").GetInt32() == 4);
+        var thirdAnswer = await AnswerAsync(client, interviewId, q3, "Tôi phù hợp với vai trò.", "a7-paid-behavioral-a3");
+        var q4 = thirdAnswer.GetProperty("nextQuestion");
         Assert.Equal(InterviewQuestionValues.Behavioral, q4.GetProperty("topic").GetString());
         Assert.Equal(InterviewQuestionValues.Primary, q4.GetProperty("kind").GetString());
         var q4Id = q4.GetProperty("id").GetGuid();
 
-        await AnswerAsync(client, interviewId, q4Id, "Tôi đã phối hợp với nhóm để xử lý sự cố.", "a7-paid-behavioral-a4");
-
-        using var followupRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/continue");
-        followupRequest.Headers.Add("Idempotency-Key", "a7-paid-behavioral-q5");
-        using var followupResponse = await client.SendAsync(followupRequest);
-        Assert.Equal(HttpStatusCode.OK, followupResponse.StatusCode);
-        var q5 = (await DataAsync(followupResponse)).GetProperty("questions").EnumerateArray()
-            .Single(item => item.GetProperty("sequence").GetInt32() == 5);
-        Assert.Equal(InterviewQuestionValues.Followup, q5.GetProperty("kind").GetString());
+        var fourthAnswer = await AnswerAsync(client, interviewId, q4Id, "Tôi đã phối hợp với nhóm để xử lý sự cố.", "a7-paid-behavioral-a4");
+        var q5 = fourthAnswer.GetProperty("nextQuestion");
+        Assert.Equal(InterviewQuestionValues.Primary, q5.GetProperty("kind").GetString());
         Assert.Equal(InterviewQuestionValues.Behavioral, q5.GetProperty("topic").GetString());
-        Assert.Equal(q4Id, q5.GetProperty("parentQuestionId").GetGuid());
-        Assert.Equal(1, aiProvider.GetCallCount(AiPurposes.InterviewFollowup));
+        Assert.Equal(JsonValueKind.Null, q5.GetProperty("parentQuestionId").ValueKind);
+        Assert.Equal(0, aiProvider.GetCallCount(AiPurposes.InterviewFollowup));
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        var persistedFollowup = await db.InterviewQuestions.SingleAsync(item => item.Id == q5.GetProperty("id").GetGuid());
-        Assert.Equal(AiOperations.InterviewFollowup.PromptVersion, persistedFollowup.PromptVersion);
-        Assert.Equal(aiProvider.ModelVersion, persistedFollowup.ModelVersion);
+        var persisted = await db.InterviewQuestions.SingleAsync(item => item.Id == q5.GetProperty("id").GetGuid());
+        Assert.Equal(AiOperations.InterviewFirstQuestion.PromptVersion, persisted.PromptVersion);
+        Assert.Equal(aiProvider.ModelVersion, persisted.ModelVersion);
     }
 
     [Fact]
@@ -739,7 +863,7 @@ public sealed class PracticeApiTests
         Assert.Equal(InterviewQuestionValues.SelfIntroduction, firstQuestionView.GetProperty("topic").GetString());
         Assert.Equal(JsonValueKind.Null, firstQuestionView.GetProperty("parentQuestionId").ValueKind);
         var firstAnswer = await AnswerAsync(client, interviewId, firstQuestion, "Tôi phân tích nguyên nhân, phối hợp đội và giảm 30% lỗi.", "answer-one");
-        var firstStar = firstAnswer.GetProperty("answer").GetProperty("evaluation").GetProperty("star");
+        var firstStar = (await ProcessAndGetEvaluationAsync(factory, firstAnswer)).GetProperty("star");
         Assert.False(firstStar.GetProperty("applicable").GetBoolean());
         var secondQuestionView = firstAnswer.GetProperty("nextQuestion");
         var secondQuestion = secondQuestionView.GetProperty("id").GetGuid();
@@ -751,7 +875,7 @@ public sealed class PracticeApiTests
         Assert.Equal(2, refreshed.GetProperty("questions").GetArrayLength());
         Assert.Single(refreshed.GetProperty("answers").EnumerateArray());
         var secondAnswer = await AnswerAsync(client, interviewId, secondQuestion, "Tôi sẽ đo baseline sớm hơn và kiểm tra theo tuần.", "answer-two");
-        Assert.True(secondAnswer.GetProperty("answer").GetProperty("evaluation").GetProperty("star").GetProperty("applicable").GetBoolean());
+        Assert.True((await ProcessAndGetEvaluationAsync(factory, secondAnswer)).GetProperty("star").GetProperty("applicable").GetBoolean());
         var thirdQuestionView = secondAnswer.GetProperty("nextQuestion");
         var thirdQuestion = thirdQuestionView.GetProperty("id").GetGuid();
         Assert.Equal(InterviewQuestionValues.Primary, thirdQuestionView.GetProperty("kind").GetString());
@@ -921,7 +1045,7 @@ public sealed class PracticeApiTests
         var firstResult = await AnswerAsync(client, interviewId, firstQuestion, candidateAnswer, "partial-report-answer-one");
         var persistedAnswer = firstResult.GetProperty("answer");
         Assert.Equal(candidateAnswer, persistedAnswer.GetProperty("content").GetString());
-        var persistedEvaluation = persistedAnswer.GetProperty("evaluation");
+        var persistedEvaluation = await ProcessAndGetEvaluationAsync(factory, firstResult);
         Assert.Equal(candidateAnswer, persistedEvaluation.GetProperty("improvedAnswer").GetString());
         Assert.Equal(illustrativeText, persistedEvaluation.GetProperty("sampleAnswer").GetProperty("fullAnswer").GetString());
         var secondQuestion = firstResult.GetProperty("nextQuestion").GetProperty("id").GetGuid();
@@ -1023,8 +1147,8 @@ public sealed class PracticeApiTests
             "star-story-strongest-evidence");
         var sample = report.GetProperty("sample");
         Assert.Equal(4, sample.GetProperty("answeredQuestions").GetInt32());
-        Assert.Equal(4, sample.GetProperty("issuedQuestions").GetInt32());
-        Assert.False(sample.GetProperty("isPartial").GetBoolean());
+        Assert.Equal(5, sample.GetProperty("issuedQuestions").GetInt32());
+        Assert.True(sample.GetProperty("isPartial").GetBoolean());
         Assert.Equal(4, report.GetProperty("questionReviews").GetArrayLength());
         var summary = report.GetProperty("starSummary");
         var averages = summary.GetProperty("componentAverages");
@@ -1091,22 +1215,17 @@ public sealed class PracticeApiTests
         var firstAnswer = await AnswerAsync(client, interviewId, firstQuestion, "Câu trả lời chính cho câu hỏi đầu tiên.", "explicit-lineage-one");
         var followupQuestion = firstAnswer.GetProperty("nextQuestion").GetProperty("id").GetGuid();
 
-        var primaryQuestion = new InterviewQuestion
-        {
-            Id = Guid.NewGuid(),
-            InterviewSessionId = interviewId,
-            Sequence = 3,
-            Kind = InterviewQuestionValues.Primary,
-            Topic = InterviewQuestionValues.MotivationRoleFit,
-            Content = "Vì sao bạn phù hợp với vai trò này?",
-            PromptVersion = "test-prompt",
-            ModelVersion = "test-model",
-            CreatedAt = DateTimeOffset.UtcNow
-        };
+        Guid primaryQuestionId;
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-            db.InterviewQuestions.Add(primaryQuestion);
+            var primaryQuestion = await db.InterviewQuestions.SingleAsync(item =>
+                item.InterviewSessionId == interviewId && item.Sequence == 3);
+            primaryQuestion.Kind = InterviewQuestionValues.Primary;
+            primaryQuestion.Topic = InterviewQuestionValues.MotivationRoleFit;
+            primaryQuestion.ParentQuestionId = null;
+            primaryQuestion.Content = "Vì sao bạn phù hợp với vai trò này?";
+            primaryQuestionId = primaryQuestion.Id;
             await db.SaveChangesAsync();
         }
 
@@ -1115,12 +1234,12 @@ public sealed class PracticeApiTests
 
         var afterFollowup = await GetInterviewAsync(client, interviewId);
         var primaryQuestionView = afterFollowup.GetProperty("questions").EnumerateArray()
-            .Single(item => item.GetProperty("id").GetGuid() == primaryQuestion.Id);
+            .Single(item => item.GetProperty("id").GetGuid() == primaryQuestionId);
         Assert.Equal(InterviewQuestionValues.Primary, primaryQuestionView.GetProperty("kind").GetString());
         Assert.Equal(InterviewQuestionValues.MotivationRoleFit, primaryQuestionView.GetProperty("topic").GetString());
         Assert.Equal(JsonValueKind.Null, primaryQuestionView.GetProperty("parentQuestionId").ValueKind);
 
-        await AnswerAsync(client, interviewId, primaryQuestion.Id, "Tôi phù hợp với vai trò nhờ kinh nghiệm liên quan.", "explicit-lineage-three");
+        await AnswerAsync(client, interviewId, primaryQuestionId, "Tôi phù hợp với vai trò nhờ kinh nghiệm liên quan.", "explicit-lineage-three");
         await CompleteAsync(client, interviewId, "explicit-lineage-complete");
         await ProcessJobsAsync(factory);
 
@@ -1154,21 +1273,15 @@ public sealed class PracticeApiTests
             var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
             var secondQuestion = await db.InterviewQuestions
                 .Where(item => item.InterviewSessionId == secondInterviewId)
-                .SingleAsync();
+                .OrderBy(item => item.Sequence)
+                .FirstAsync();
             secondQuestionId = secondQuestion.Id;
-            db.InterviewQuestions.Add(new InterviewQuestion
-            {
-                Id = Guid.NewGuid(),
-                InterviewSessionId = firstInterviewId,
-                Sequence = 2,
-                Kind = InterviewQuestionValues.Followup,
-                Topic = secondQuestion.Topic,
-                ParentQuestionId = secondQuestionId,
-                Content = "Invalid cross-session follow-up",
-                PromptVersion = "test-prompt",
-                ModelVersion = "test-model",
-                CreatedAt = DateTimeOffset.UtcNow
-            });
+            var invalidFollowup = await db.InterviewQuestions.SingleAsync(item =>
+                item.InterviewSessionId == firstInterviewId && item.Sequence == 2);
+            invalidFollowup.Kind = InterviewQuestionValues.Followup;
+            invalidFollowup.Topic = secondQuestion.Topic;
+            invalidFollowup.ParentQuestionId = secondQuestionId;
+            invalidFollowup.Content = "Invalid cross-session follow-up";
             await db.SaveChangesAsync();
         }
 
@@ -1194,36 +1307,22 @@ public sealed class PracticeApiTests
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-            var firstQuestion = await db.InterviewQuestions.SingleAsync(item => item.InterviewSessionId == interviewId);
-            var secondQuestion = new InterviewQuestion
-            {
-                Id = Guid.NewGuid(),
-                InterviewSessionId = interviewId,
-                Sequence = 2,
-                Kind = InterviewQuestionValues.Primary,
-                Topic = InterviewQuestionValues.BehavioralStar,
-                Content = "Tell another independent story.",
-                PromptVersion = "test-prompt",
-                ModelVersion = "test-model",
-                CreatedAt = DateTimeOffset.UtcNow
-            };
-            var followupQuestion = new InterviewQuestion
-            {
-                Id = Guid.NewGuid(),
-                InterviewSessionId = interviewId,
-                Sequence = 3,
-                Kind = InterviewQuestionValues.Followup,
-                Topic = firstQuestion.Topic,
-                ParentQuestionId = firstQuestion.Id,
-                Content = "Add the result for the first story.",
-                PromptVersion = "test-prompt",
-                ModelVersion = "test-model",
-                CreatedAt = DateTimeOffset.UtcNow
-            };
+            var questions = await db.InterviewQuestions.Where(item => item.InterviewSessionId == interviewId)
+                .OrderBy(item => item.Sequence).ToArrayAsync();
+            var firstQuestion = questions[0];
+            var secondQuestion = questions[1];
+            secondQuestion.Kind = InterviewQuestionValues.Primary;
+            secondQuestion.Topic = InterviewQuestionValues.BehavioralStar;
+            secondQuestion.Content = "Tell another independent story.";
+            var followupQuestion = questions[2];
+            followupQuestion.Kind = InterviewQuestionValues.Followup;
+            followupQuestion.Topic = firstQuestion.Topic;
+            followupQuestion.ParentQuestionId = firstQuestion.Id;
+            followupQuestion.Content = "Add the result for the first story.";
             var now = DateTimeOffset.UtcNow;
+            secondQuestion.ReleasedAt = now;
+            followupQuestion.ReleasedAt = now;
             db.AddRange(
-                secondQuestion,
-                followupQuestion,
                 new InterviewAnswer
                 {
                     Id = Guid.NewGuid(),
@@ -1232,6 +1331,7 @@ public sealed class PracticeApiTests
                     QuestionId = firstQuestion.Id,
                     Content = "Primary answer without STAR.",
                     Evaluation = JsonSerializer.Serialize(AnswerEvaluationWithoutStar(), jsonOptions),
+                    EvaluationStatus = InterviewAnswerEvaluationStates.Ready,
                     CreatedAt = now
                 },
                 new InterviewAnswer
@@ -1242,6 +1342,7 @@ public sealed class PracticeApiTests
                     QuestionId = secondQuestion.Id,
                     Content = "Independent story.",
                     Evaluation = JsonSerializer.Serialize(AnswerEvaluationWithStar(Star(75, 75, 75, 75)), jsonOptions),
+                    EvaluationStatus = InterviewAnswerEvaluationStates.Ready,
                     CreatedAt = now.AddSeconds(1)
                 },
                 new InterviewAnswer
@@ -1252,6 +1353,7 @@ public sealed class PracticeApiTests
                     QuestionId = followupQuestion.Id,
                     Content = "Follow-up for the first story.",
                     Evaluation = JsonSerializer.Serialize(AnswerEvaluationWithStar(Star(85, 85, 85, 85)), jsonOptions),
+                    EvaluationStatus = InterviewAnswerEvaluationStates.Ready,
                     CreatedAt = now.AddSeconds(2)
                 });
             await db.SaveChangesAsync();
@@ -1312,7 +1414,7 @@ public sealed class PracticeApiTests
         var active = await GetInterviewAsync(client, interviewId);
         var firstQuestion = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
         var answer = await AnswerAsync(client, interviewId, firstQuestion, "Dependency injection passes dependencies from outside instead of constructing them inside the class.", "technical-answer");
-        var star = answer.GetProperty("answer").GetProperty("evaluation").GetProperty("star");
+        var star = (await ProcessAndGetEvaluationAsync(factory, answer)).GetProperty("star");
         Assert.False(star.GetProperty("applicable").GetBoolean());
         Assert.False(star.TryGetProperty("situation", out var situation) && situation.ValueKind != JsonValueKind.Null);
     }
@@ -1339,8 +1441,11 @@ public sealed class PracticeApiTests
         await AnswerAsync(client, interviewId, thirdQuestion, "Third primary answer.", "report-answer-three");
         await CompleteAsync(client, interviewId, "report-complete-one");
         Assert.Equal(
-            InterviewReportStates.Processing,
+            InterviewReportStates.None,
             (await GetInterviewAsync(client, interviewId)).GetProperty("reportState").GetString());
+        Assert.Equal(
+            InterviewResultStates.Processing,
+            (await GetInterviewAsync(client, interviewId)).GetProperty("resultState").GetString());
         using (var processingResponse = await client.GetAsync($"/api/v1/interviews/{interviewId}/report"))
         {
             var processingBody = await processingResponse.Content.ReadAsStringAsync();
@@ -1360,9 +1465,11 @@ public sealed class PracticeApiTests
             Assert.Equal(PracticeValues.Completing, (await db.InterviewSessions.SingleAsync(item => item.Id == interviewId)).Status);
             Assert.Equal(1, (await db.Entitlements.SingleAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free")).Adjustment);
             Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.Action == BillingValues.Adjustment && item.SourceType == "report_failure"));
-            // Report failures deliberately keep completing and do not publish a misleading interview.failed event.
-            Assert.Equal(1, await db.RealtimeNotifications.CountAsync(item => item.ResourceId == interviewId));
-            Assert.Equal("active", (await db.RealtimeNotifications.SingleAsync(item => item.ResourceId == interviewId)).Status);
+            // Evaluation progress is published, but report failure never emits a misleading interview.failed event.
+            Assert.Equal(1, await db.RealtimeNotifications.CountAsync(item =>
+                item.ResourceId == interviewId && item.Status == PracticeValues.Active));
+            Assert.Equal(3, await db.RealtimeNotifications.CountAsync(item =>
+                item.ResourceId == interviewId && item.Status == InterviewAnswerEvaluationStates.Ready));
         }
 
         using (var failedResponse = await client.GetAsync($"/api/v1/interviews/{interviewId}/report"))
@@ -1590,8 +1697,32 @@ public sealed class PracticeApiTests
 
     private static async Task ProcessJobsAsync(NexoraApiFactory factory)
     {
+        for (var pass = 0; pass < 10; pass++)
+        {
+            using var scope = factory.Services.CreateScope();
+            if (await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>()
+                    .ProcessPendingAsync(CancellationToken.None) == 0)
+                return;
+        }
+
+        throw new InvalidOperationException("Practice jobs did not drain.");
+    }
+
+    private static async Task<JsonElement> ProcessAndGetEvaluationAsync(
+        NexoraApiFactory factory,
+        JsonElement answerResult)
+    {
+        await ProcessJobsAsync(factory);
+        var answerId = answerResult.GetProperty("answer").GetProperty("id").GetGuid();
         using var scope = factory.Services.CreateScope();
-        await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(CancellationToken.None);
+        var evaluation = await scope.ServiceProvider.GetRequiredService<NexoraDbContext>()
+            .InterviewAnswers.AsNoTracking()
+            .Where(item => item.Id == answerId)
+            .Select(item => item.Evaluation)
+            .SingleAsync();
+        Assert.False(string.IsNullOrWhiteSpace(evaluation));
+        using var document = JsonDocument.Parse(evaluation);
+        return document.RootElement.Clone();
     }
 
     private static async Task<Guid> SeedReadyResumeWithProfileAsync(
@@ -1707,7 +1838,12 @@ public sealed class PracticeApiTests
         return new Webhook(body, timestamp, signature);
     }
 
-    private static async Task SeedEntitlementAsync(NexoraApiFactory factory, Guid userId, int quota, int? questionLimit = null)
+    private static async Task SeedEntitlementAsync(
+        NexoraApiFactory factory,
+        Guid userId,
+        int quota,
+        int? questionLimit = null,
+        bool unlimitedQuestionLimit = false)
     {
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
@@ -1747,7 +1883,7 @@ public sealed class PracticeApiTests
             ConcurrencyToken = Guid.NewGuid()
         };
         db.AddRange(plan, price, order, subscription, entitlement);
-        if (questionLimit is not null)
+        if (questionLimit is not null || unlimitedQuestionLimit)
         {
             var definition = await db.FeatureDefinitions.SingleAsync(item => item.Code == FeatureValues.InterviewQuestionLimit);
             db.EntitlementFeatures.Add(new EntitlementFeature
@@ -1757,7 +1893,7 @@ public sealed class PracticeApiTests
                 FeatureDefinitionId = definition.Id,
                 FeatureCode = definition.Code,
                 IsEnabled = true,
-                Limit = questionLimit,
+                Limit = unlimitedQuestionLimit ? null : questionLimit,
                 CreatedAt = now,
                 UpdatedAt = now,
                 ConcurrencyToken = Guid.NewGuid()
@@ -1815,31 +1951,22 @@ public sealed class PracticeApiTests
         var q3 = (await AnswerAsync(client, interviewId, q2, "STAR primary answer.", $"{key}-two"))
             .GetProperty("nextQuestion").GetProperty("id").GetGuid();
         var q3Result = await AnswerAsync(client, interviewId, q3, "Third primary answer.", $"{key}-three");
-        Assert.Equal(JsonValueKind.Null, q3Result.GetProperty("nextQuestion").ValueKind);
 
         Guid q4;
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-            var starPrimary = await db.InterviewQuestions.SingleAsync(item =>
-                item.InterviewSessionId == interviewId && item.Topic == InterviewQuestionValues.BehavioralStar);
-            var followup = new InterviewQuestion
-            {
-                Id = Guid.NewGuid(),
-                InterviewSessionId = interviewId,
-                Sequence = 4,
-                Kind = InterviewQuestionValues.Followup,
-                Topic = InterviewQuestionValues.BehavioralStar,
-                ParentQuestionId = starPrimary.Id,
-                Content = "Explicit STAR follow-up.",
-                PromptVersion = "test-prompt",
-                ModelVersion = "test-model",
-                CreatedAt = DateTimeOffset.UtcNow
-            };
+            var starPrimary = await db.InterviewQuestions.SingleAsync(item => item.Id == q2);
+            var followup = await db.InterviewQuestions.SingleAsync(item =>
+                item.InterviewSessionId == interviewId && item.Sequence == 4);
+            followup.Kind = InterviewQuestionValues.Followup;
+            followup.Topic = InterviewQuestionValues.BehavioralStar;
+            followup.ParentQuestionId = starPrimary.Id;
+            followup.Content = "Explicit STAR follow-up.";
             q4 = followup.Id;
-            db.InterviewQuestions.Add(followup);
             await db.SaveChangesAsync();
         }
+        Assert.Equal(q4, q3Result.GetProperty("nextQuestion").GetProperty("id").GetGuid());
         await AnswerAsync(client, interviewId, q4, "Follow-up answer.", $"{key}-four");
         await CompleteAsync(client, interviewId, $"{key}-complete");
         await ProcessJobsAsync(factory);

@@ -77,7 +77,8 @@ public sealed class AiContractReliabilityTests
 
         var answerData = await DataAsync(answerResponse);
         Assert.True(answerData.TryGetProperty("answer", out var answerElement));
-        var evalElement = answerElement.GetProperty("evaluation");
+        Assert.Equal(JsonValueKind.Null, answerElement.GetProperty("evaluation").ValueKind);
+        var evalElement = await ProcessAndGetEvaluationAsync(factory, answerData);
         var starElement = evalElement.GetProperty("star");
         // Authoritatively normalized to applicable = false:
         Assert.False(starElement.GetProperty("applicable").GetBoolean());
@@ -149,13 +150,15 @@ public sealed class AiContractReliabilityTests
     }
 
     [Fact]
-    public async Task OverlongPaidContinuationQuestionRepairsOnceThenFailsWithoutPersistingQuestion() =>
-        await PaidContinuationOverlongQuestionFailsAfterTwoAttemptsAsync();
+    public async Task OverlongPreparedQuestionRepairsOnceThenFailsWithoutPersistingPlan() =>
+        await PreparedOverlongQuestionFailsAfterTwoAttemptsAsync();
 
-    private static async Task PaidContinuationOverlongQuestionFailsAfterTwoAttemptsAsync()
+    private static async Task PreparedOverlongQuestionFailsAfterTwoAttemptsAsync()
     {
         var aiProvider = new TestAiProvider();
         var overlong = new GeneratedQuestion(new string('x', 2_001));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion, overlong);
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion, overlong);
         using var factory = new NexoraApiFactory(aiProvider);
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
@@ -165,27 +168,12 @@ public sealed class AiContractReliabilityTests
         var interviewId = await StartInterviewAsync(client, "technical", "overlong-followup");
         await ProcessJobsAsync(factory);
 
-        var interview = await GetInterviewAsync(client, interviewId);
-        var q1 = interview.GetProperty("questions")[0].GetProperty("id").GetGuid();
-        var q2 = (await SubmitAnswerAsync(client, interviewId, q1, "First answer.", "overlong-answer-one"))
-            .GetProperty("nextQuestion").GetProperty("id").GetGuid();
-        var q3 = (await SubmitAnswerAsync(client, interviewId, q2, "Second answer.", "overlong-answer-two"))
-            .GetProperty("nextQuestion").GetProperty("id").GetGuid();
-        var q3Result = await SubmitAnswerAsync(client, interviewId, q3, "Third answer.", "overlong-answer-three");
-        Assert.Equal(JsonValueKind.Null, q3Result.GetProperty("nextQuestion").ValueKind);
-
-        var firstQuestionCallsBeforeContinuation = aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion);
-        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion, overlong);
-        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion, overlong);
-        using var continueRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/continue");
-        continueRequest.Headers.Add("Idempotency-Key", "overlong-continuation");
-        using var continueResponse = await client.SendAsync(continueRequest);
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, continueResponse.StatusCode);
-        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion) - firstQuestionCallsBeforeContinuation);
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion));
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        Assert.Equal(3, await db.InterviewAnswers.CountAsync(item => item.InterviewSessionId == interviewId));
-        Assert.Equal(3, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Empty(await db.InterviewQuestions.Where(item => item.InterviewSessionId == interviewId).ToArrayAsync());
+        Assert.Equal(BillingValues.Failed, (await db.OutboxEvents.SingleAsync(item =>
+            item.AggregateId == interviewId && item.Type == "InterviewStartRequested")).Status);
     }
 
     private static async Task<JsonElement> SubmitAnswerAsync(
@@ -260,6 +248,7 @@ public sealed class AiContractReliabilityTests
         using var answerResponse = await client.SendAsync(answerRequest);
 
         Assert.True(answerResponse.IsSuccessStatusCode, await answerResponse.Content.ReadAsStringAsync());
+        await ProcessJobsAsync(factory);
         // Exactly 2 calls made for interview.evaluate (1 initial + 1 repair)
         Assert.Equal(2, aiProvider.GetCallCount("interview.evaluate"));
 
@@ -315,7 +304,7 @@ public sealed class AiContractReliabilityTests
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
         var account = await RegisterAsync(client);
-        await SeedEntitlementAsync(factory, account.UserId, 5);
+        await SeedEntitlementAsync(factory, account.UserId, 5, questionLimit: 6);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
 
         var interviewId = await StartInterviewAsync(client, "technical", "coaching-actionable-repair");
@@ -330,6 +319,7 @@ public sealed class AiContractReliabilityTests
         using var answerResponse = await client.SendAsync(answerRequest);
 
         Assert.Equal(HttpStatusCode.OK, answerResponse.StatusCode);
+        await ProcessJobsAsync(factory);
         Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
 
         var evaluationRequests = aiProvider.Invocations
@@ -388,20 +378,21 @@ public sealed class AiContractReliabilityTests
         answerRequest.Headers.Add("Idempotency-Key", "answer-capped-1");
         using var answerResponse = await client.SendAsync(answerRequest);
 
-        // Must fail with BadGateway or ServiceUnavailable (ExternalFailure)
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, answerResponse.StatusCode);
-        // Capped at exactly 2 calls!
+        Assert.Equal(HttpStatusCode.OK, answerResponse.StatusCode);
+        var accepted = await DataAsync(answerResponse);
+        await ProcessJobsAsync(factory);
         Assert.Equal(2, aiProvider.GetCallCount("interview.evaluate"));
 
-        // Verify in DB that no answer was persisted
+        // Provider failure is asynchronous: the accepted answer remains durable and retryable.
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        var answerCount = await db.InterviewAnswers.CountAsync(a => a.QuestionId == questionId);
-        Assert.Equal(0, answerCount);
+        var persisted = await db.InterviewAnswers.SingleAsync(a => a.QuestionId == questionId);
+        Assert.Equal(InterviewAnswerEvaluationStates.Failed, persisted.EvaluationStatus);
+        Assert.Equal("AI_OUTPUT_INVALID", persisted.EvaluationErrorCode);
         var questionCountAfterFailure = await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId);
         var usageCountAfterFailure = await db.UsageEvents.CountAsync(item => item.UserId == account.UserId);
         var notificationCountAfterFailure = await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId);
-        Assert.Equal(0, await db.IdempotencyRecords.CountAsync(item =>
+        Assert.Equal(1, await db.IdempotencyRecords.CountAsync(item =>
             item.ActorId == account.UserId && item.Operation == "interview.answer" && item.Key == "answer-capped-1"));
 
         using var retryRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/answers")
@@ -416,6 +407,8 @@ public sealed class AiContractReliabilityTests
         retryRequest.Headers.Add("Idempotency-Key", "answer-capped-1");
         using var retryResponse = await client.SendAsync(retryRequest);
         Assert.Equal(HttpStatusCode.OK, retryResponse.StatusCode);
+        Assert.Equal(accepted.GetProperty("answer").GetProperty("id").GetGuid(),
+            (await DataAsync(retryResponse)).GetProperty("answer").GetProperty("id").GetGuid());
 
         using var replayRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/answers")
         {
@@ -429,12 +422,12 @@ public sealed class AiContractReliabilityTests
         replayRequest.Headers.Add("Idempotency-Key", "answer-capped-1");
         using var replayResponse = await client.SendAsync(replayRequest);
         Assert.Equal(HttpStatusCode.OK, replayResponse.StatusCode);
-
-        Assert.Equal(3, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
-        Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
-        Assert.Equal(questionCountAfterFailure + 1, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(2, aiProvider.GetCallCount("interview.evaluate"));
+        Assert.Equal(questionCountAfterFailure, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
         Assert.Equal(usageCountAfterFailure, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId));
         Assert.Equal(notificationCountAfterFailure, await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId));
+
+        Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
         Assert.Equal(1, await db.IdempotencyRecords.CountAsync(item =>
             item.ActorId == account.UserId && item.Operation == "interview.answer" && item.Key == "answer-capped-1"));
     }
@@ -448,7 +441,7 @@ public sealed class AiContractReliabilityTests
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
         var account = await RegisterAsync(client);
-        await SeedEntitlementAsync(factory, account.UserId, 5);
+        await SeedEntitlementAsync(factory, account.UserId, 5, questionLimit: 6);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
 
         var interviewId = await StartInterviewAsync(client, "technical", "low-information-answer");
@@ -464,7 +457,7 @@ public sealed class AiContractReliabilityTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var data = await DataAsync(response);
-        var evaluation = data.GetProperty("answer").GetProperty("evaluation");
+        var evaluation = await ProcessAndGetEvaluationAsync(factory, data);
         Assert.Empty(evaluation.GetProperty("strengths").EnumerateArray());
         Assert.NotEmpty(evaluation.GetProperty("improvements").EnumerateArray());
         Assert.Equal(1, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
@@ -512,14 +505,17 @@ public sealed class AiContractReliabilityTests
         request.Headers.Add("Idempotency-Key", "null-rubric-item-answer");
         using var response = await client.SendAsync(request);
 
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
-        Assert.Contains("AI_OUTPUT_INVALID", body, StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var data = await DataAsync(response);
+        await ProcessJobsAsync(factory);
         Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        Assert.Equal(0, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
+        var answer = await db.InterviewAnswers.SingleAsync(item => item.QuestionId == questionId);
+        Assert.Equal(data.GetProperty("answer").GetProperty("id").GetGuid(), answer.Id);
+        Assert.Equal(InterviewAnswerEvaluationStates.Failed, answer.EvaluationStatus);
+        Assert.Equal("AI_OUTPUT_INVALID", answer.EvaluationErrorCode);
     }
     [Fact]
     public async Task AnswerCoachingPersistsAndIdempotentReplayDoesNotReevaluate()
@@ -538,7 +534,7 @@ public sealed class AiContractReliabilityTests
         const string answer = "I debugged the API.";
 
         var first = await SubmitAnswerAsync(client, interviewId, questionId, answer, "coaching-replay-answer");
-        var firstEvaluation = first.GetProperty("answer").GetProperty("evaluation");
+        var firstEvaluation = await ProcessAndGetEvaluationAsync(factory, first);
         Assert.Equal(JsonValueKind.Array, firstEvaluation.GetProperty("strengths").ValueKind);
         Assert.NotEmpty(firstEvaluation.GetProperty("strengths").EnumerateArray());
         Assert.NotEmpty(firstEvaluation.GetProperty("improvements").EnumerateArray());
@@ -546,11 +542,9 @@ public sealed class AiContractReliabilityTests
         var evaluationCalls = aiProvider.GetCallCount(AiPurposes.InterviewEvaluate);
 
         var replay = await SubmitAnswerAsync(client, interviewId, questionId, answer, "coaching-replay-answer");
-        var replayEvaluation = replay.GetProperty("answer").GetProperty("evaluation");
         Assert.Equal(evaluationCalls, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
-        Assert.Equal(firstEvaluation.GetProperty("strengths").GetRawText(), replayEvaluation.GetProperty("strengths").GetRawText());
-        Assert.Equal(firstEvaluation.GetProperty("improvements").GetRawText(), replayEvaluation.GetProperty("improvements").GetRawText());
-        Assert.Equal(firstEvaluation.GetProperty("improvedAnswer").GetString(), replayEvaluation.GetProperty("improvedAnswer").GetString());
+        Assert.Equal(first.GetProperty("answer").GetProperty("id").GetGuid(), replay.GetProperty("answer").GetProperty("id").GetGuid());
+        Assert.Equal(JsonValueKind.Null, replay.GetProperty("answer").GetProperty("evaluation").ValueKind);
     }
 
     [Fact]
@@ -573,7 +567,7 @@ public sealed class AiContractReliabilityTests
         var questionId = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
 
         var data = await SubmitAnswerAsync(client, interviewId, questionId, "I debugged the API.", "coaching-repair-answer");
-        var evaluation = data.GetProperty("answer").GetProperty("evaluation");
+        var evaluation = await ProcessAndGetEvaluationAsync(factory, data);
         Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
         Assert.Equal("I debugged the API.", evaluation.GetProperty("improvedAnswer").GetString());
         Assert.DoesNotContain("RabbitMQ", evaluation.GetProperty("improvedAnswer").GetString(), StringComparison.OrdinalIgnoreCase);
@@ -606,10 +600,11 @@ public sealed class AiContractReliabilityTests
         using var response = await client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
         var data = await DataAsync(response);
-        Assert.Equal("I debugged the API.", data.GetProperty("answer").GetProperty("evaluation").GetProperty("improvedAnswer").GetString());
-        Assert.DoesNotContain("RabbitMQ", await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+        var evaluation = await ProcessAndGetEvaluationAsync(factory, data);
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+        Assert.Equal("I debugged the API.", evaluation.GetProperty("improvedAnswer").GetString());
+        Assert.DoesNotContain("RabbitMQ", evaluation.GetRawText(), StringComparison.OrdinalIgnoreCase);
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
@@ -661,7 +656,7 @@ public sealed class AiContractReliabilityTests
 
         var first = await SubmitAnswerAsync(client, interviewId, questionId, candidateAnswer, "coaching-semantic-regression-answer");
         var firstAnswer = first.GetProperty("answer");
-        var evaluation = firstAnswer.GetProperty("evaluation");
+        var evaluation = await ProcessAndGetEvaluationAsync(factory, first);
         Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
         Assert.Equal(candidateAnswer, evaluation.GetProperty("improvedAnswer").GetString());
         Assert.Equal(priorEvaluation.Feedback, evaluation.GetProperty("feedback").GetString());
@@ -680,7 +675,7 @@ public sealed class AiContractReliabilityTests
 
         var persistedAnswer = await db.InterviewAnswers.SingleAsync(item => item.QuestionId == questionId);
         Assert.Equal(firstAnswer.GetProperty("id").GetGuid(), persistedAnswer.Id);
-        using (var persistedEvaluation = JsonDocument.Parse(persistedAnswer.Evaluation))
+        using (var persistedEvaluation = JsonDocument.Parse(persistedAnswer.Evaluation!))
         {
             Assert.Equal(candidateAnswer, persistedEvaluation.RootElement.GetProperty("improvedAnswer").GetString());
             Assert.Equal(priorEvaluation.Feedback, persistedEvaluation.RootElement.GetProperty("feedback").GetString());
@@ -691,12 +686,12 @@ public sealed class AiContractReliabilityTests
         var usageCountAfterSuccess = await db.UsageEvents.CountAsync(item => item.UserId == account.UserId);
         var featureUsageCountAfterSuccess = await db.FeatureUsageEvents.CountAsync(item => item.UserId == account.UserId);
         var notificationCountAfterSuccess = await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId);
-        Assert.Equal(questionCountBeforeAnswer + 1, questionCountAfterSuccess);
+        Assert.Equal(questionCountBeforeAnswer, questionCountAfterSuccess);
         Assert.Equal(usageCountBeforeAnswer, usageCountAfterSuccess);
         Assert.Equal(featureUsageCountBeforeAnswer, featureUsageCountAfterSuccess);
         Assert.Equal(reservationCountBeforeAnswer, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Reserve));
         Assert.Equal(consumptionCountBeforeAnswer, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Consume));
-        Assert.Equal(notificationCountBeforeAnswer, notificationCountAfterSuccess);
+        Assert.True(notificationCountAfterSuccess >= notificationCountBeforeAnswer);
         Assert.Equal(1, await db.IdempotencyRecords.CountAsync(item =>
             item.ActorId == account.UserId && item.Operation == "interview.answer" && item.Key == "coaching-semantic-regression-answer"));
 
@@ -704,7 +699,7 @@ public sealed class AiContractReliabilityTests
         var replayAnswer = replay.GetProperty("answer");
         Assert.Equal(firstAnswer.GetProperty("id").GetGuid(), replayAnswer.GetProperty("id").GetGuid());
         Assert.Equal(first.GetProperty("nextQuestion").GetProperty("id").GetGuid(), replay.GetProperty("nextQuestion").GetProperty("id").GetGuid());
-        Assert.Equal(evaluation.GetRawText(), replayAnswer.GetProperty("evaluation").GetRawText());
+        Assert.Equal(JsonValueKind.Null, replayAnswer.GetProperty("evaluation").ValueKind);
         Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
         Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
         Assert.Equal(questionCountAfterSuccess, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
@@ -746,7 +741,7 @@ public sealed class AiContractReliabilityTests
 
         var first = await SubmitAnswerAsync(client, interviewId, questionId, candidateAnswer, "coaching-malformed-repair-answer");
         var firstAnswer = first.GetProperty("answer");
-        var firstEvaluation = firstAnswer.GetProperty("evaluation");
+        var firstEvaluation = await ProcessAndGetEvaluationAsync(factory, first);
         Assert.Equal(candidateAnswer, firstEvaluation.GetProperty("improvedAnswer").GetString());
         Assert.Equal("Good answer.", firstEvaluation.GetProperty("feedback").GetString());
         Assert.Equal(4, firstEvaluation.GetProperty("scores").GetArrayLength());
@@ -760,7 +755,7 @@ public sealed class AiContractReliabilityTests
 
         var persistedAnswer = await db.InterviewAnswers.SingleAsync(item => item.QuestionId == questionId);
         Assert.Equal(firstAnswer.GetProperty("id").GetGuid(), persistedAnswer.Id);
-        using (var persistedEvaluation = JsonDocument.Parse(persistedAnswer.Evaluation))
+        using (var persistedEvaluation = JsonDocument.Parse(persistedAnswer.Evaluation!))
         {
             Assert.Equal(candidateAnswer, persistedEvaluation.RootElement.GetProperty("improvedAnswer").GetString());
             Assert.Equal(4, persistedEvaluation.RootElement.GetProperty("scores").GetArrayLength());
@@ -769,9 +764,9 @@ public sealed class AiContractReliabilityTests
         var questionCountAfterSuccess = await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId);
         var usageCountAfterSuccess = await db.UsageEvents.CountAsync(item => item.UserId == account.UserId);
         var notificationCountAfterSuccess = await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId);
-        Assert.Equal(questionCountBeforeAnswer + 1, questionCountAfterSuccess);
+        Assert.Equal(questionCountBeforeAnswer, questionCountAfterSuccess);
         Assert.Equal(usageCountBeforeAnswer, usageCountAfterSuccess);
-        Assert.Equal(notificationCountBeforeAnswer, notificationCountAfterSuccess);
+        Assert.True(notificationCountAfterSuccess >= notificationCountBeforeAnswer);
         Assert.Equal(reservationsBeforeAnswer, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Reserve));
         Assert.Equal(consumptionsBeforeAnswer, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Consume));
         Assert.Equal(1, await db.IdempotencyRecords.CountAsync(item =>
@@ -781,7 +776,7 @@ public sealed class AiContractReliabilityTests
         var replayAnswer = replay.GetProperty("answer");
         Assert.Equal(firstAnswer.GetProperty("id").GetGuid(), replayAnswer.GetProperty("id").GetGuid());
         Assert.Equal(first.GetProperty("nextQuestion").GetProperty("id").GetGuid(), replay.GetProperty("nextQuestion").GetProperty("id").GetGuid());
-        Assert.Equal(firstEvaluation.GetRawText(), replayAnswer.GetProperty("evaluation").GetRawText());
+        Assert.Equal(JsonValueKind.Null, replayAnswer.GetProperty("evaluation").ValueKind);
         Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
         Assert.Equal(1, await db.InterviewAnswers.CountAsync(item => item.QuestionId == questionId));
         Assert.Equal(questionCountAfterSuccess, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
@@ -854,7 +849,7 @@ public sealed class AiContractReliabilityTests
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
         var account = await RegisterAsync(client);
-        await SeedEntitlementAsync(factory, account.UserId, 5);
+        await SeedEntitlementAsync(factory, account.UserId, 5, questionLimit: 6);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
         var interviewId = await StartInterviewAsync(client, "behavioral", "regression-test-star");
         await ProcessJobsAsync(factory);
@@ -862,42 +857,36 @@ public sealed class AiContractReliabilityTests
         var active = await GetInterviewAsync(client, interviewId);
         var q1 = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
         var a1 = await SubmitAnswerAsync(client, interviewId, q1, "First primary answer.", "ans-1-regression");
-        Assert.False(a1.GetProperty("answer").GetProperty("evaluation").GetProperty("star").GetProperty("applicable").GetBoolean());
+        var a1Evaluation = await ProcessAndGetEvaluationAsync(factory, a1);
+        Assert.False(a1Evaluation.GetProperty("star").GetProperty("applicable").GetBoolean());
 
         var q2 = a1.GetProperty("nextQuestion").GetProperty("id").GetGuid();
         var a2 = await SubmitAnswerAsync(client, interviewId, q2, "STAR story with action and result.", "ans-2-regression");
-        var a2Star = a2.GetProperty("answer").GetProperty("evaluation").GetProperty("star");
+        var a2Star = (await ProcessAndGetEvaluationAsync(factory, a2)).GetProperty("star");
         Assert.True(a2Star.GetProperty("action").GetProperty("detected").GetBoolean());
         Assert.True(a2Star.GetProperty("result").GetProperty("detected").GetBoolean());
         Assert.False(a2Star.GetProperty("task").GetProperty("detected").GetBoolean());
 
         var q3 = a2.GetProperty("nextQuestion").GetProperty("id").GetGuid();
-        await SubmitAnswerAsync(client, interviewId, q3, "Third primary answer.", "ans-3-regression");
+        var a3 = await SubmitAnswerAsync(client, interviewId, q3, "Third primary answer.", "ans-3-regression");
+        await ProcessAndGetEvaluationAsync(factory, a3);
 
         Guid q4;
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-            var followup = new InterviewQuestion
-            {
-                Id = Guid.NewGuid(),
-                InterviewSessionId = interviewId,
-                Sequence = 4,
-                Kind = InterviewQuestionValues.Followup,
-                Topic = InterviewQuestionValues.BehavioralStar,
-                ParentQuestionId = q2,
-                Content = "Explicit STAR follow-up.",
-                PromptVersion = "test-prompt",
-                ModelVersion = "test-model",
-                CreatedAt = DateTimeOffset.UtcNow
-            };
+            var followup = await db.InterviewQuestions.SingleAsync(item =>
+                item.InterviewSessionId == interviewId && item.Sequence == 4);
+            followup.Kind = InterviewQuestionValues.Followup;
+            followup.Topic = InterviewQuestionValues.BehavioralStar;
+            followup.ParentQuestionId = q2;
+            followup.Content = "Explicit STAR follow-up.";
             q4 = followup.Id;
-            db.InterviewQuestions.Add(followup);
             await db.SaveChangesAsync();
         }
 
         var a4 = await SubmitAnswerAsync(client, interviewId, q4, "Follow-up adds the missing task and action details.", "ans-4-regression");
-        var a4Star = a4.GetProperty("answer").GetProperty("evaluation").GetProperty("star");
+        var a4Star = (await ProcessAndGetEvaluationAsync(factory, a4)).GetProperty("star");
         Assert.True(a4Star.GetProperty("situation").GetProperty("detected").GetBoolean());
         Assert.True(a4Star.GetProperty("task").GetProperty("detected").GetBoolean());
         Assert.True(a4Star.GetProperty("action").GetProperty("detected").GetBoolean());
@@ -1042,7 +1031,7 @@ public sealed class AiContractReliabilityTests
         Assert.Equal(HttpStatusCode.OK, a1Resp.StatusCode);
 
         var a1Data = await DataAsync(a1Resp);
-        var a1Star = a1Data.GetProperty("answer").GetProperty("evaluation").GetProperty("star");
+        var a1Star = (await ProcessAndGetEvaluationAsync(factory, a1Data)).GetProperty("star");
         Assert.True(a1Star.GetProperty("action").GetProperty("detected").GetBoolean());
         Assert.True(a1Star.GetProperty("result").GetProperty("detected").GetBoolean());
         Assert.False(a1Star.GetProperty("task").GetProperty("detected").GetBoolean());
@@ -1067,7 +1056,7 @@ public sealed class AiContractReliabilityTests
         Assert.Equal(HttpStatusCode.OK, a2Resp.StatusCode);
 
         var a2Data = await DataAsync(a2Resp);
-        var a2Star = a2Data.GetProperty("answer").GetProperty("evaluation").GetProperty("star");
+        var a2Star = (await ProcessAndGetEvaluationAsync(factory, a2Data)).GetProperty("star");
         Assert.True(a2Star.GetProperty("situation").GetProperty("detected").GetBoolean());
         Assert.True(a2Star.GetProperty("task").GetProperty("detected").GetBoolean());
         Assert.True(a2Star.GetProperty("action").GetProperty("detected").GetBoolean());
@@ -1077,8 +1066,32 @@ public sealed class AiContractReliabilityTests
 
     private static async Task ProcessJobsAsync(NexoraApiFactory factory)
     {
+        for (var pass = 0; pass < 10; pass++)
+        {
+            using var scope = factory.Services.CreateScope();
+            if (await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>()
+                    .ProcessPendingAsync(CancellationToken.None) == 0)
+                return;
+        }
+
+        throw new InvalidOperationException("Practice jobs did not drain.");
+    }
+
+    private static async Task<JsonElement> ProcessAndGetEvaluationAsync(
+        NexoraApiFactory factory,
+        JsonElement answerResult)
+    {
+        await ProcessJobsAsync(factory);
+        var answerId = answerResult.GetProperty("answer").GetProperty("id").GetGuid();
         using var scope = factory.Services.CreateScope();
-        await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(CancellationToken.None);
+        var evaluation = await scope.ServiceProvider.GetRequiredService<NexoraDbContext>()
+            .InterviewAnswers.AsNoTracking()
+            .Where(item => item.Id == answerId)
+            .Select(item => item.Evaluation)
+            .SingleAsync();
+        Assert.False(string.IsNullOrWhiteSpace(evaluation));
+        using var document = JsonDocument.Parse(evaluation);
+        return document.RootElement.Clone();
     }
 
     private static async Task SeedEntitlementAsync(NexoraApiFactory factory, Guid userId, int quota, int? questionLimit = null)

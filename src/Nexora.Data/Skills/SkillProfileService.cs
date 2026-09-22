@@ -26,8 +26,9 @@ public sealed class SkillProfileService(NexoraDbContext dbContext) : ISkillProfi
             .ToArrayAsync(cancellationToken);
 
         var answers = await dbContext.InterviewAnswers.AsNoTracking()
-            .Where(item => item.UserId == userId && item.InterviewSession.UserId == userId)
-            .Select(item => new InterviewAnswerRow(item.Id, item.InterviewSessionId, item.Evaluation, item.CreatedAt))
+            .Where(item => item.UserId == userId && item.InterviewSession.UserId == userId &&
+                           item.EvaluationStatus == InterviewAnswerEvaluationStates.Ready && item.Evaluation != null)
+            .Select(item => new InterviewAnswerRow(item.Id, item.InterviewSessionId, item.Evaluation!, item.CreatedAt))
             .ToArrayAsync(cancellationToken);
 
         var starAttempts = await dbContext.StarAttempts.AsNoTracking()

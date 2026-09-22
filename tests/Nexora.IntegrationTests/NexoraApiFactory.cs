@@ -37,8 +37,8 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
 
     internal NexoraApiFactory(IInterceptor dbInterceptor) : this((IAiProvider?)null, null, null, [dbInterceptor]) { }
 
-    internal static NexoraApiFactory CreatePostgres(string connectionString) =>
-        new((IAiProvider?)null, null, postgresConnectionString: connectionString);
+    internal static NexoraApiFactory CreatePostgres(string connectionString, IAiProvider? aiProvider = null) =>
+        new(aiProvider, null, postgresConnectionString: connectionString);
 
     internal NexoraApiFactory(string environment) : this(environment, new Dictionary<string, string?>())
     { }

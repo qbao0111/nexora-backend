@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Nexora.Business.Practice;
 using Nexora.Data.Billing;
 using Nexora.Data.Career;
+using Nexora.Data.Feedback;
 using Nexora.Data.Identity;
 using Nexora.Data.Learning;
 using Nexora.Data.Practice;
@@ -47,6 +49,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<LearningPath> LearningPaths => Set<LearningPath>();
     public DbSet<LearningPathMilestone> LearningPathMilestones => Set<LearningPathMilestone>();
     public DbSet<LearningPathActivity> LearningPathActivities => Set<LearningPathActivity>();
+    public DbSet<ProductFeedback> ProductFeedbacks => Set<ProductFeedback>();
     public DbSet<Nexora.Data.Realtime.RealtimeNotification> RealtimeNotifications => Set<Nexora.Data.Realtime.RealtimeNotification>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -116,6 +119,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
         ConfigureScenarioStar(builder);
         ConfigureCareerGoals(builder);
         ConfigureLearningPaths(builder);
+        ConfigureFeedback(builder);
         builder.Entity<Nexora.Data.Realtime.RealtimeNotification>(entity =>
         {
             entity.ToTable("realtime_notifications");
@@ -532,6 +536,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.HasKey(question => question.Id);
             entity.HasIndex(question => new { question.InterviewSessionId, question.Sequence }).IsUnique();
             entity.HasIndex(question => question.ParentQuestionId);
+            entity.HasIndex(question => new { question.InterviewSessionId, question.ReleasedAt });
             entity.Property(question => question.Kind).HasMaxLength(16).IsRequired();
             entity.Property(question => question.Topic).HasMaxLength(80).IsRequired();
             entity.Property(question => question.Content).HasMaxLength(2_000).IsRequired();
@@ -549,7 +554,10 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.HasIndex(answer => new { answer.InterviewSessionId, answer.QuestionId }).IsUnique();
             entity.HasIndex(answer => new { answer.UserId, answer.CreatedAt });
             entity.Property(answer => answer.Content).HasMaxLength(12_000).IsRequired();
-            entity.Property(answer => answer.Evaluation).HasColumnType("jsonb").IsRequired();
+            entity.Property(answer => answer.Evaluation).HasColumnType("jsonb");
+            entity.Property(answer => answer.EvaluationStatus).HasMaxLength(20).IsRequired()
+                .HasDefaultValue(InterviewAnswerEvaluationStates.Queued);
+            entity.Property(answer => answer.EvaluationErrorCode).HasMaxLength(80);
             entity.HasOne(answer => answer.User).WithMany().HasForeignKey(answer => answer.UserId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(answer => answer.InterviewSession).WithMany(session => session.Answers)
                 .HasForeignKey(answer => answer.InterviewSessionId).OnDelete(DeleteBehavior.Restrict);
@@ -671,6 +679,34 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
                 .HasForeignKey(item => item.LearningPathId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(item => item.Milestone).WithMany(milestone => milestone.Activities)
                 .HasForeignKey(item => item.LearningPathMilestoneId).OnDelete(DeleteBehavior.Cascade);
+        });
+    }
+
+    private static void ConfigureFeedback(ModelBuilder builder)
+    {
+        builder.Entity<ProductFeedback>(entity =>
+        {
+            entity.ToTable("product_feedback", table =>
+            {
+                table.HasCheckConstraint("CK_product_feedback_rating", "\"Rating\" BETWEEN 1 AND 5");
+                table.HasCheckConstraint("CK_product_feedback_status", "\"Status\" IN ('pending', 'approved', 'rejected')");
+            });
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => item.UserId)
+                .IsUnique()
+                .HasDatabaseName("IX_product_feedback_one_current_per_user")
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(item => new { item.Status, item.Consent, item.Featured, item.PublishedAt, item.CreatedAt });
+            entity.HasIndex(item => new { item.UserId, item.CreatedAt });
+            entity.Property(item => item.Rating).IsRequired();
+            entity.Property(item => item.Comment).HasMaxLength(1_000);
+            entity.Property(item => item.Status).HasMaxLength(20).IsRequired();
+            entity.Property(item => item.Consent).IsRequired();
+            entity.Property(item => item.Featured).IsRequired();
+            entity.Property(item => item.CreatedAt).IsRequired();
+            entity.Property(item => item.UpdatedAt).IsRequired();
+            entity.HasOne(item => item.User).WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(item => item.ModeratedByUser).WithMany().HasForeignKey(item => item.ModeratedByUserId).OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

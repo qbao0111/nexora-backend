@@ -140,6 +140,7 @@ public sealed class InterviewQuestion
     public string PromptVersion { get; set; } = string.Empty;
     public string ModelVersion { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? ReleasedAt { get; set; }
     public InterviewSession InterviewSession { get; set; } = null!;
     public InterviewQuestion? ParentQuestion { get; set; }
     public ICollection<InterviewQuestion> FollowUps { get; } = [];
@@ -154,7 +155,10 @@ public sealed class InterviewAnswer
     public Guid QuestionId { get; set; }
     public string Content { get; set; } = string.Empty;
     public int? DurationSeconds { get; set; }
-    public string Evaluation { get; set; } = string.Empty;
+    public string? Evaluation { get; set; }
+    public string EvaluationStatus { get; set; } = Nexora.Business.Practice.InterviewAnswerEvaluationStates.Ready;
+    public string? EvaluationErrorCode { get; set; }
+    public DateTimeOffset? EvaluationCompletedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public ApplicationUser User { get; set; } = null!;
     public InterviewSession InterviewSession { get; set; } = null!;

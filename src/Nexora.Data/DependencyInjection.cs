@@ -6,6 +6,7 @@ using Nexora.Business.Admin;
 using Nexora.Business.Auth;
 using Nexora.Business.Billing;
 using Nexora.Business.Career;
+using Nexora.Business.Feedback;
 using Nexora.Business.Learning;
 using Nexora.Business.Practice;
 using Nexora.Business.Privacy;
@@ -15,6 +16,7 @@ using Nexora.Business.Skills;
 using Nexora.Data.Auth;
 using Nexora.Data.Billing;
 using Nexora.Data.Career;
+using Nexora.Data.Feedback;
 using Nexora.Data.Identity;
 using Nexora.Data.Learning;
 using Nexora.Data.Persistence;
@@ -66,6 +68,7 @@ public static class DependencyInjection
         services.AddScoped<IAuthService, IdentityAuthService>();
         services.AddScoped<IAdminService, AdminService>();
         services.AddScoped<IAdminDashboardService, AdminDashboardService>();
+        services.AddScoped<IProductFeedbackService, FeedbackService>();
         return services;
     }
 

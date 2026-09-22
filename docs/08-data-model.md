@@ -1,7 +1,7 @@
 # Data Model Specification — Nexora
 
 **Status:** Approved implementation baseline; retention values deferred  
-**Last updated:** 2026-09-18
+**Last updated:** 2026-09-22
 
 ## 1. Aggregates và ownership
 
@@ -10,6 +10,7 @@ ApplicationUser 1--N Resume 1--N ResumeAnalysis
 ApplicationUser 1--N InterviewSession 1--N InterviewQuestion 1--1 InterviewAnswer
 InterviewQuestion 1--N InterviewQuestion (ParentQuestion -> FollowUps)
 InterviewSession 1--1 InterviewReport
+ApplicationUser 1--0..1 ProductFeedback
 ApplicationUser 1--N StarDraft / ScenarioAttempt
 ApplicationUser 1--N Order 1--N PaymentEvent
 ApplicationUser 1--N Subscription 1--N Entitlement 1--N UsageEvent
@@ -29,13 +30,31 @@ ApplicationUser 1--N Subscription 1--N Entitlement 1--N UsageEvent
 | `resumes`, `stored_files` | CV file + extracted text | `storage_key` private; checksum, MIME, scan/extract state; `DeletedAt` tombstone and durable storage cleanup state (`StorageDeletedAt`, attempts, next attempt). |
 | `upload_intents` | Durable browser-upload capability state | owner-scoped token hash, private storage key, expected/actual size, expiry, checksum and finalized timestamp; unique token/storage-key constraints. |
 | `job_descriptions`, `resume_analyses` | JD và output analysis | input snapshot/model/prompt version. |
-| `interview_sessions`, `interview_questions`, `interview_answers`, `interview_reports` | Practice loop | answer unique per official question, session state machine. `kind` is `primary` or `followup`; `topic` is explicit and `parent_question_id` links a follow-up to its parent. |
+| `interview_sessions`, `interview_questions`, `interview_answers`, `interview_reports` | Practice loop | answer unique per official question; question release and answer evaluation are durable states. |
+| `product_feedback` | Owner feedback + moderation state | one non-deleted row per user; rating 1–5; consent/status/featured publication gates. |
 | `star_drafts`, `scenario_attempts` | Practice support | owner ID, version/status. |
 | `idempotency_keys`, `outbox_events`, `audit_logs` | Reliability/operations | expiry/retention job. |
 | `data_privacy_requests` | Audit/retry state cho export/delete workflow | unique `(user_id, idempotency_key)`; không FK cascade để audit còn lại sau anonymization. |
 | `realtime_notifications` | Minimal owner-targeted resource-change delivery metadata | `Id`, `UserId`, `ResourceType`, `ResourceId`, `Status`, `CreatedAt`, nullable `ProcessedAt`/`NextAttemptAt`, `Attempts`; pending index `(ProcessedAt, CreatedAt)`. Inserted with resource transition; see [delivery contract](realtime-notifications.md). |
 
-`interview_answers.Evaluation` stores the validated per-answer evaluation/coaching JSON. `sampleAnswer` is an additive nullable object inside that existing JSON value; it is an illustrative example, not candidate evidence. It must not be aggregated into answer/report scores or evidence, report transcript, Skill Profile, progress or recommendations. No relational column or database migration is required. Historical JSON without `sampleAnswer` remains readable and is interpreted as a null/absent sample.
+`interview_answers.Evaluation` stores validated evaluation/coaching JSON.
+`EvaluationStatus` is `queued|processing|ready|failed`; nullable error, attempt,
+processing and completion fields support durable retry without deleting the
+submitted answer. Existing populated evaluations migrate to `ready`; legacy
+missing/blank evaluations migrate to `failed` for explicit retry. `sampleAnswer`
+remains nullable inside the JSON and is never candidate evidence.
+
+`interview_questions.ReleasedAt` separates prepared rows from candidate-visible
+questions. Existing questions are backfilled as released. New normal sessions
+prepare a bounded deterministic primary plan; persisting the official answer
+releases the next row transactionally. Outbox types
+`InterviewQuestionPlanRequested` and `InterviewAnswerEvaluationRequested` make
+plan extension and evaluation durable.
+
+`product_feedback` stores owner input, consent, moderation/publication timestamps
+and soft-delete state. A PostgreSQL partial unique index enforces one current row
+per user. Public reads require every publication gate; moderation history uses
+the existing admin audit stream.
 
 ## 3. Required columns
 
@@ -85,7 +104,11 @@ starting -> failed
 active -> abandoned
 ```
 
-Only `active` permits an official answer. Completion occurs exactly once and report generation is idempotent. `completed`, `failed`, `abandoned` are immutable terminal states except explicit audited administrative/recovery processes. State transition has optimistic concurrency/version to prevent duplicate answer, completion or report.
+Only `active` permits an official answer. Completion moves to `completing`
+without waiting for AI; report work is queued only after every persisted answer
+evaluation is `ready`. Failed evaluation keeps the session in `completing` for
+explicit idempotent results retry. Completion/report generation remain
+idempotent. Terminal states remain immutable except explicit audited recovery.
 
 ### Interview question contract v1
 

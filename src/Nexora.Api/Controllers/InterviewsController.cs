@@ -81,6 +81,13 @@ public sealed class InterviewsController(IPracticeService practiceService) : Con
         Ok(new ApiResponse<InterviewView>(await practiceService.ContinueInterviewAsync(
             User.GetRequiredUserId(), id, Request.Headers["Idempotency-Key"].ToString(), cancellationToken)));
 
+    [HttpPost("{id:guid}/questions/retry"), EnableRateLimiting(RateLimitPolicies.AiJob)]
+    public async Task<ActionResult<ApiResponse<InterviewView>>> RetryQuestionPreparation(
+        Guid id,
+        CancellationToken cancellationToken) =>
+        Accepted(new ApiResponse<InterviewView>(await practiceService.RetryQuestionPreparationAsync(
+            User.GetRequiredUserId(), id, Request.Headers["Idempotency-Key"].ToString(), cancellationToken)));
+
     [HttpPost("{id:guid}/complete"), EnableRateLimiting(RateLimitPolicies.AiJob)]
     public async Task<ActionResult<ApiResponse<InterviewView>>> Complete(Guid id, CancellationToken cancellationToken) =>
         Accepted(new ApiResponse<InterviewView>(await practiceService.CompleteInterviewAsync(
@@ -89,6 +96,11 @@ public sealed class InterviewsController(IPracticeService practiceService) : Con
     [HttpPost("{id:guid}/report/retry"), EnableRateLimiting(RateLimitPolicies.AiJob)]
     public async Task<ActionResult<ApiResponse<InterviewView>>> RetryReport(Guid id, CancellationToken cancellationToken) =>
         Accepted(new ApiResponse<InterviewView>(await practiceService.RetryReportAsync(
+            User.GetRequiredUserId(), id, Request.Headers["Idempotency-Key"].ToString(), cancellationToken)));
+
+    [HttpPost("{id:guid}/results/retry"), EnableRateLimiting(RateLimitPolicies.AiJob)]
+    public async Task<ActionResult<ApiResponse<InterviewView>>> RetryResults(Guid id, CancellationToken cancellationToken) =>
+        Accepted(new ApiResponse<InterviewView>(await practiceService.RetryResultsAsync(
             User.GetRequiredUserId(), id, Request.Headers["Idempotency-Key"].ToString(), cancellationToken)));
 
     [HttpGet("{id:guid}/report")]

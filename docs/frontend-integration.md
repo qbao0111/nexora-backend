@@ -251,6 +251,10 @@ Only pending activities can be selected. Completed/obsolete activities and stale
    ```
 
    `GET /interviews/{id}` (`200`) moves `starting → active` or `failed`. Render questions only when `active`.
+   While active, use `data.questionPreparationState` (`ready|processing|failed`) to
+   show whether the next server-owned question is available. If it is `failed`,
+   paid/unlimited users may retry with `POST /interviews/{id}/questions/retry`
+   and a new `Idempotency-Key`; free users must be sent through upgrade instead.
 
    The legacy explicit body remains valid. To start from a Career Goal, send
    `careerGoalId` with `interviewType` and `difficulty`; role, seniority, resume
@@ -263,6 +267,8 @@ Only pending activities can be selected. Completed/obsolete activities and stale
    ```
 
    Render `data.nextQuestion` when present; stop collecting answers when `data.isComplete` is `true`.
+   During an `active` session, `GET /interviews/{id}` always reports
+   `data.resultState: "collecting"`, including when an answer evaluation failed.
    - **Score Scale**: All evaluation scores (rubric `correctness`, `structure`, `completeness`, `clarity` and STAR components) use a uniform `0-100` integer scale with server-computed weighted averages.
    - **Follow-up Reliability**: Even if AI follow-up generation encounters a transient failure or rate limit, the evaluated answer is guaranteed to be persisted and a deterministic Nexora-owned fallback follow-up question is provided in `data.nextQuestion`.
 

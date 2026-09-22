@@ -62,6 +62,14 @@ public sealed record ExportAnalysis(
     string? ProfilePromptVersion,
     string? ProfileSchemaVersion);
 public sealed record ExportInterview(InterviewView Interview, ReportView? Report);
+public sealed record ExportFeedback(
+    Guid Id,
+    int Rating,
+    string? Comment,
+    bool AllowPublicDisplay,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset? DeletedAt);
 public sealed record CoreDataExport(
     DateTimeOffset GeneratedAt,
     ExportProfile Profile,
@@ -71,7 +79,8 @@ public sealed record CoreDataExport(
     IReadOnlyCollection<ExportCareerGoal> CareerGoals,
     IReadOnlyCollection<ExportLearningPath> LearningPaths,
     IReadOnlyCollection<ExportAnalysis> Analyses,
-    IReadOnlyCollection<ExportInterview> Interviews);
+    IReadOnlyCollection<ExportInterview> Interviews,
+    IReadOnlyCollection<ExportFeedback>? Feedback = null);
 public sealed record DeletionRequestView(Guid Id, string Status, int Attempts, DateTimeOffset RequestedAt, DateTimeOffset? CompletedAt);
 
 public interface IPrivacyService

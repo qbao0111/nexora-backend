@@ -1,7 +1,7 @@
 # Test Strategy — Nexora .NET 10 MVP
 
 **Status:** Approved implementation baseline; canonical Definition of Done  
-**Last updated:** 2026-09-18
+**Last updated:** 2026-09-22
 
 ## 1. Mục tiêu
 
@@ -33,6 +33,8 @@ Chứng minh requirement trong SRS hoạt động đúng, đặc biệt là quy�
 | T-10 | Restore backup vào môi trường cô lập | API đọc được dữ liệu hợp lệ sau restore. |
 | T-11 | Owner deletes one resume while another user, profile, history, and workers reference resumes | Foreign/unknown delete remains opaque 404; owner delete/replay is 204; only matching Primary Resume is cleared; current list/selector/Skill Profile/export exclude the tombstone; analysis/interview history remains; storage failure retries durably and extraction/queued AI work cannot race cleanup. |
 | T-12 | Resume is deleted after an interview becomes active | Existing questions/answers/evaluations/report and historical ResumeId remain; future answer evaluation, next/follow-up and paid continuation AI inputs contain no deleted ResumeProfile; topic selection treats resume availability as false; Practice Again rejects an inherited deleted Resume. |
+| T-13 | Answer submit, replay and completion while evaluation is asynchronous | POST persists one answer and one effective outbox job without an AI call; only the next prepared question is released; active reads hide coaching; completion waits for all evaluations, then creates one report. Critical idempotency/release queries run on PostgreSQL CI. |
+| T-14 | Feedback submission, moderation, consent withdrawal and deletion | One current owner row; validation/auth enforced; edit resets moderation; only approved + consented + non-empty feedback is public; feature/audit/summary work; public DTO and privacy export do not leak internal or identity fields. |
 
 ### A2 upload-intent coverage
 
@@ -48,7 +50,7 @@ Khi corresponding projects tồn tại, baseline local/CI bắt buộc gồm `do
 | Staging | Migration fresh + upgrade pass; E2E critical paths pass; payment sandbox pass. |
 | Production | Smoke test health/auth/plan read; error rate và queue lag bình thường sau deploy. |
 
-Coverage phần trăm không thay thế test risk-based. Mục tiêu initial: business services quan trọng ≥80% line coverage; 100% scenario trong bảng T-01..T-11 phải có automated hoặc checklist evidence.
+Coverage phần trăm không thay thế test risk-based. Mục tiêu initial: business services quan trọng ≥80% line coverage; 100% scenario trong bảng T-01..T-14 phải có automated hoặc checklist evidence.
 
 ## 5. Canonical Definition of Done
 
