@@ -279,7 +279,7 @@ public sealed class AdminDashboardService(NexoraDbContext dbContext, TimeProvide
     }
 
     private static IQueryable<AdminTransactionView> QueryTransactionRows(IQueryable<Order> orders) =>
-        ProjectTransactionRows(orders).OrderByDescending(order => order.CreatedAt).ThenByDescending(order => order.Id);
+        ProjectTransactionRows(orders.OrderByDescending(order => order.CreatedAt).ThenByDescending(order => order.Id));
 
     private static IQueryable<AdminTransactionView> ProjectTransactionRows(IQueryable<Order> orders) =>
         orders.Select(order => new AdminTransactionView(
