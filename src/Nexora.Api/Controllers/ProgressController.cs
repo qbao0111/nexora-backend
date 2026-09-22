@@ -70,7 +70,12 @@ public sealed class ProgressController(
                     dashboard.NextRecommendedPractice.ActivityType,
                     dashboard.NextRecommendedPractice.ResourceId,
                     dashboard.NextRecommendedPractice.EstimatedMinutes,
-                    dashboard.NextRecommendedPractice.Priority),
+                    dashboard.NextRecommendedPractice.Priority,
+                    null,
+                    dashboard.NextRecommendedPractice.Rationale is null ? null : new NextPracticeRecommendationRationaleResponse(
+                        dashboard.NextRecommendedPractice.Rationale.CompetencyName,
+                        dashboard.NextRecommendedPractice.Rationale.EvidenceCount,
+                        dashboard.NextRecommendedPractice.Rationale.HasMoreRecentlyPracticedPeer)),
             new ProgressResponse(
                 historical.CompletedInterviews,
                 historical.RecentInterviewScores.Select(s => new RecentInterviewScoreResponse(s.InterviewId, s.Score, s.CompletedAt)).ToArray(),

@@ -27,6 +27,10 @@ public sealed class RecommendationsController(INextPracticeRecommendationService
                     recommendation.Action.SourceInterviewId,
                     recommendation.Action.SourceQuestionId,
                     recommendation.Action.FocusTopic,
-                    recommendation.Action.SuggestedInterviewType))));
+                    recommendation.Action.SuggestedInterviewType),
+                recommendation.Rationale is null ? null : new NextPracticeRecommendationRationaleResponse(
+                    recommendation.Rationale.CompetencyName,
+                    recommendation.Rationale.EvidenceCount,
+                    recommendation.Rationale.HasMoreRecentlyPracticedPeer))));
     }
 }

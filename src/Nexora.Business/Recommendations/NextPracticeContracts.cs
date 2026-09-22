@@ -12,13 +12,19 @@ public sealed record NextPracticeActionView(
     string? FocusTopic,
     string? SuggestedInterviewType);
 
+public sealed record NextPracticeRecommendationRationaleView(
+    string CompetencyName,
+    int EvidenceCount,
+    bool HasMoreRecentlyPracticedPeer);
+
 public sealed record NextPracticeRecommendationView(
     string Reason,
     string ActivityType,
     Guid? ResourceId,
     int EstimatedMinutes,
     int Priority,
-    NextPracticeActionView? Action = null);
+    NextPracticeActionView? Action = null,
+    NextPracticeRecommendationRationaleView? Rationale = null);
 
 public interface INextPracticeRecommendationService
 {
@@ -116,9 +122,10 @@ public static class NextPracticeRecommendationPolicy
 
         var selected = candidates.FirstOrDefault();
         if (selected is null) return null;
+        var hasMoreRecentlyPracticedPeer = HasMoreRecentlyPracticedPeer(selected, candidates);
 
         return new NextPracticeRecommendationView(
-            BuildReason(selected, candidates),
+            BuildReason(selected, hasMoreRecentlyPracticedPeer),
             selected.Activity.Type,
             selected.Activity.ResourceId,
             selected.EstimatedMinutes,
@@ -131,6 +138,12 @@ public static class NextPracticeRecommendationPolicy
                     null,
                     FocusTopicForInterviewCompetency(selected.CompetencyCode),
                     null)
+                : null,
+            selected.IsScored
+                ? new NextPracticeRecommendationRationaleView(
+                    selected.CompetencyName ?? selected.Activity.Title,
+                    selected.EvidenceCount,
+                    hasMoreRecentlyPracticedPeer)
                 : null);
     }
 
@@ -179,7 +192,7 @@ public static class NextPracticeRecommendationPolicy
             estimatedMinutes);
     }
 
-    private static string BuildReason(Candidate selected, IReadOnlyCollection<Candidate> candidates)
+    private static string BuildReason(Candidate selected, bool hasMoreRecentlyPracticedPeer)
     {
         if (!selected.IsScored)
             return "Address this resume improvement next because no higher-priority evidence-backed practice activity is currently pending.";
@@ -187,15 +200,17 @@ public static class NextPracticeRecommendationPolicy
         var name = string.IsNullOrWhiteSpace(selected.CompetencyName) ? "this competency" : selected.CompetencyName;
         var evidenceLabel = selected.EvidenceCount == 1 ? "evidence item" : "evidence items";
         var reason = $"Practice {name} next because it is a priority {selected.Activity.Priority} gap supported by {selected.EvidenceCount} {evidenceLabel}.";
-        var hasLessRecentPeer = candidates.Any(candidate =>
+        return hasMoreRecentlyPracticedPeer
+            ? $"{reason} It has not been practiced as recently as another current-priority gap."
+            : reason;
+    }
+
+    private static bool HasMoreRecentlyPracticedPeer(Candidate selected, IReadOnlyCollection<Candidate> candidates) =>
+        selected.IsScored && candidates.Any(candidate =>
             candidate.IsScored &&
             candidate.Activity.Id != selected.Activity.Id &&
             candidate.Activity.Priority == selected.Activity.Priority &&
             candidate.LastPracticeAt > selected.LastPracticeAt);
-        return hasLessRecentPeer
-            ? $"{reason} It has not been practiced as recently as another current-priority gap."
-            : reason;
-    }
 
     private static string? NormalizeCode(string? code)
     {

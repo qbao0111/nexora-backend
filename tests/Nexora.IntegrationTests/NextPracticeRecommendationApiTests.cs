@@ -107,6 +107,10 @@ public sealed class NextPracticeRecommendationApiTests
 
         Assert.Contains("Structure", data.GetProperty("reason").GetString(), StringComparison.Ordinal);
         Assert.Contains("3 evidence items", data.GetProperty("reason").GetString(), StringComparison.Ordinal);
+        var rationale = data.GetProperty("rationale");
+        Assert.Equal("Structure", rationale.GetProperty("competencyName").GetString());
+        Assert.Equal(3, rationale.GetProperty("evidenceCount").GetInt32());
+        Assert.False(rationale.GetProperty("hasMoreRecentlyPracticedPeer").GetBoolean());
     }
 
     [Fact]
@@ -123,6 +127,7 @@ public sealed class NextPracticeRecommendationApiTests
         var data = await GetRecommendationAsync(client);
 
         Assert.Contains("Structure", data.GetProperty("reason").GetString(), StringComparison.Ordinal);
+        Assert.True(data.GetProperty("rationale").GetProperty("hasMoreRecentlyPracticedPeer").GetBoolean());
     }
 
     [Fact]
