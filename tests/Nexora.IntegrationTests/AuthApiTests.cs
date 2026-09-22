@@ -229,6 +229,30 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
     }
 
     [Fact]
+    public async Task VerifiedAccountStillRejectsMalformedVerificationToken()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"confirmed-invalid-token-{Guid.NewGuid():N}@example.test";
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email,
+            password = "Strong!Pass123"
+        });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+        await TestEmailInbox.VerifyAsync(client, email);
+        var verification = ReadVerificationToken(TestEmailInbox.GetVerificationLink(email));
+
+        using var malformed = await client.PostAsJsonAsync("/api/v1/auth/verify-email", new
+        {
+            userId = verification.UserId,
+            token = "malformed-verification-token"
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, malformed.StatusCode);
+        Assert.Equal("EMAIL_VERIFICATION_INVALID", await ReadErrorCodeAsync(malformed));
+    }
+
+    [Fact]
     public async Task RefreshRotatesTokenAndRejectsPreviousToken()
     {
         using var client = _factory.CreateHttpsClient();

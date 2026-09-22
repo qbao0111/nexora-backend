@@ -106,24 +106,32 @@ public sealed class FeedbackService(
         double? averageRating = ratingCount == 0
             ? null
             : await eligible.Select(item => (double)item.Rating).AverageAsync(cancellationToken);
-        var query = eligible
-            .Select(item => new PublicFeedbackRow(
-                item.Id,
-                item.User.Profile == null ? null : item.User.Profile.DisplayName,
-                item.Rating,
-                item.Comment!,
-                item.Featured,
-                item.CreatedAt,
-                item.PublishedAt ?? item.UpdatedAt));
         var rows = dbContext.Database.IsNpgsql()
-            ? await query
+            ? await eligible
                 .OrderByDescending(item => item.Featured)
-                .ThenByDescending(item => item.PublishedAt)
+                .ThenByDescending(item => item.PublishedAt ?? item.UpdatedAt)
                 .ThenByDescending(item => item.CreatedAt)
                 .ThenByDescending(item => item.Id)
                 .Take(limit)
+                .Select(item => new PublicFeedbackRow(
+                    item.Id,
+                    item.User.Profile == null ? null : item.User.Profile.DisplayName,
+                    item.Rating,
+                    item.Comment!,
+                    item.Featured,
+                    item.CreatedAt,
+                    item.PublishedAt ?? item.UpdatedAt))
                 .ToArrayAsync(cancellationToken)
-            : (await query.ToArrayAsync(cancellationToken))
+            : (await eligible
+                    .Select(item => new PublicFeedbackRow(
+                        item.Id,
+                        item.User.Profile == null ? null : item.User.Profile.DisplayName,
+                        item.Rating,
+                        item.Comment!,
+                        item.Featured,
+                        item.CreatedAt,
+                        item.PublishedAt ?? item.UpdatedAt))
+                    .ToArrayAsync(cancellationToken))
                 .OrderByDescending(item => item.Featured)
                 .ThenByDescending(item => item.PublishedAt)
                 .ThenByDescending(item => item.CreatedAt)

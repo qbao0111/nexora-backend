@@ -2,12 +2,108 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Nexora.Business.Billing;
+using Nexora.Data.Persistence;
 
 namespace Nexora.IntegrationTests;
 
 [Collection("PostgreSQL primary resume")]
 public sealed class AuthPostgresApiTests
 {
+    [PostgresFact]
+    public async Task ConcurrentEmailVerificationWithSameTokenIsIdempotentOnPostgres()
+    {
+        var connectionString = Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!;
+        await using var factory = NexoraApiFactory.CreatePostgres(connectionString);
+        factory.InitializeDatabase();
+        using var registrationClient = factory.CreateHttpsClient();
+        var email = $"postgres-concurrent-verify-{Guid.NewGuid():N}@example.test";
+        const string password = "Strong!Pass123";
+
+        using var register = await registrationClient.PostAsJsonAsync("/api/v1/auth/register", new { email, password });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+        var verification = ReadVerificationToken(TestEmailInbox.GetVerificationLink(email));
+        await using (var beforeScope = factory.Services.CreateAsyncScope())
+        {
+            var db = beforeScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.False((await db.Users.SingleAsync(item => item.Id == verification.UserId)).EmailConfirmed);
+            Assert.Empty(await db.Entitlements.Where(item => item.UserId == verification.UserId).ToListAsync());
+        }
+
+        using var firstClient = factory.CreateHttpsClient(handleCookies: false);
+        using var secondClient = factory.CreateHttpsClient(handleCookies: false);
+        var payload = new { userId = verification.UserId, token = verification.Token };
+        var firstTask = firstClient.PostAsJsonAsync("/api/v1/auth/verify-email", payload);
+        var secondTask = secondClient.PostAsJsonAsync("/api/v1/auth/verify-email", payload);
+        var responses = await Task.WhenAll(firstTask, secondTask);
+
+        try
+        {
+            Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
+            var results = await Task.WhenAll(responses.Select(ReadVerificationResponseAsync));
+            Assert.All(results, result => Assert.Equal(email, result.Email));
+            Assert.Equal([false, true], results.Select(result => result.AlreadyVerified).Order().ToArray());
+        }
+        finally
+        {
+            foreach (var response in responses)
+                response.Dispose();
+        }
+
+        await using (var afterScope = factory.Services.CreateAsyncScope())
+        {
+            var db = afterScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.True((await db.Users.SingleAsync(item => item.Id == verification.UserId)).EmailConfirmed);
+            var entitlements = await db.Entitlements
+                .Where(item => item.UserId == verification.UserId &&
+                               item.PlanCodeSnapshot == "free" &&
+                               item.Status == BillingValues.Active)
+                .ToArrayAsync();
+            var entitlement = Assert.Single(entitlements);
+            Assert.Single(await db.Subscriptions.Where(item => item.UserId == verification.UserId).ToArrayAsync());
+            var features = await db.EntitlementFeatures
+                .Where(item => item.EntitlementId == entitlement.Id)
+                .ToArrayAsync();
+            Assert.Equal(features.Length, features.Select(item => item.FeatureCode).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+            Assert.Empty(await db.FeatureUsageEvents.Where(item => item.UserId == verification.UserId).ToArrayAsync());
+            Assert.Empty(await db.UsageEvents.Where(item => item.UserId == verification.UserId).ToArrayAsync());
+        }
+
+        using var login = await registrationClient.PostAsJsonAsync("/api/v1/auth/login", new { email, password });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+    }
+
+    [PostgresFact]
+    public async Task VerifiedAccountStillRejectsMalformedVerificationTokenOnPostgres()
+    {
+        var connectionString = Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!;
+        await using var factory = NexoraApiFactory.CreatePostgres(connectionString);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var email = $"postgres-confirmed-invalid-token-{Guid.NewGuid():N}@example.test";
+
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+        var verification = ReadVerificationToken(TestEmailInbox.GetVerificationLink(email));
+        using var verified = await client.PostAsJsonAsync("/api/v1/auth/verify-email", new
+        {
+            userId = verification.UserId,
+            token = verification.Token
+        });
+        Assert.Equal(HttpStatusCode.OK, verified.StatusCode);
+
+        using var malformed = await client.PostAsJsonAsync("/api/v1/auth/verify-email", new
+        {
+            userId = verification.UserId,
+            token = "malformed-verification-token"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, malformed.StatusCode);
+        using var document = JsonDocument.Parse(await malformed.Content.ReadAsStringAsync());
+        Assert.Equal("EMAIL_VERIFICATION_INVALID", document.RootElement.GetProperty("error").GetProperty("code").GetString());
+    }
+
     [PostgresFact]
     public async Task PostgresVerificationAndSessionSwitchRegressionUsesDatabaseBackedOwnership()
     {
@@ -95,6 +191,13 @@ public sealed class AuthPostgresApiTests
         return data.TryGetProperty("user", out var sessionUser)
             ? sessionUser.GetProperty("email").GetString()!
             : data.GetProperty("email").GetString()!;
+    }
+
+    private static async Task<(string Email, bool AlreadyVerified)> ReadVerificationResponseAsync(HttpResponseMessage response)
+    {
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var data = json.RootElement.GetProperty("data");
+        return (data.GetProperty("email").GetString()!, data.GetProperty("alreadyVerified").GetBoolean());
     }
 
     private static string ReadRefreshCookie(HttpResponseMessage response)

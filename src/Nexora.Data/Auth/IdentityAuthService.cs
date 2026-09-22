@@ -73,15 +73,30 @@ public sealed partial class IdentityAuthService(
 
     public async Task<EmailVerificationResult> VerifyEmailAsync(VerifyEmailCommand command, CancellationToken cancellationToken)
     {
-        var user = await userManager.FindByIdAsync(command.UserId.ToString());
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+        var user = dbContext.Database.IsNpgsql()
+            ? await dbContext.Users
+                .FromSqlInterpolated($"SELECT * FROM asp_net_users WHERE \"Id\" = {command.UserId} FOR UPDATE")
+                .SingleOrDefaultAsync(cancellationToken)
+            : await dbContext.Users.SingleOrDefaultAsync(item => item.Id == command.UserId, cancellationToken);
         if (user is null || !user.IsActive || user.DeletionRequestedAt is not null || user.DeletedAt is not null)
             throw InvalidEmailVerification();
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        var alreadyVerified = user.EmailConfirmed;
-        var result = await userManager.ConfirmEmailAsync(user, command.Token);
-        if (!result.Succeeded)
+        var validToken = await userManager.VerifyUserTokenAsync(
+            user,
+            userManager.Options.Tokens.EmailConfirmationTokenProvider,
+            UserManager<ApplicationUser>.ConfirmEmailTokenPurpose,
+            command.Token);
+        if (!validToken)
             throw InvalidEmailVerification();
+
+        var alreadyVerified = user.EmailConfirmed;
+        if (!alreadyVerified)
+        {
+            var result = await userManager.ConfirmEmailAsync(user, command.Token);
+            if (!result.Succeeded)
+                throw InvalidEmailVerification();
+        }
 
         var now = timeProvider.GetUtcNow();
         user.UpdatedAt = now;
