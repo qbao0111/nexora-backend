@@ -93,15 +93,7 @@ public sealed class FeedbackService(
         CancellationToken cancellationToken)
     {
         limit = Math.Clamp(limit <= 0 ? FeedbackRules.DefaultPublicLimit : limit, 1, FeedbackRules.MaximumPublicLimit);
-        var eligible = dbContext.ProductFeedbacks.AsNoTracking()
-            .Where(item => item.DeletedAt == null &&
-                          item.Status == FeedbackValues.Approved &&
-                          item.Consent &&
-                          item.Comment != null &&
-                          item.Comment.Trim() != string.Empty &&
-                          item.User.IsActive &&
-                          item.User.DeletionRequestedAt == null &&
-                          item.User.DeletedAt == null);
+        var eligible = PublicFeedbackEligibility.Query(dbContext);
         var ratingCount = await eligible.CountAsync(cancellationToken);
         double? averageRating = ratingCount == 0
             ? null

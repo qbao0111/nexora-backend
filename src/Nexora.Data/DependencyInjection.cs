@@ -8,6 +8,7 @@ using Nexora.Business.Billing;
 using Nexora.Business.Career;
 using Nexora.Business.Feedback;
 using Nexora.Business.Learning;
+using Nexora.Business.Platform;
 using Nexora.Business.Practice;
 using Nexora.Business.Privacy;
 using Nexora.Business.Progress;
@@ -20,6 +21,7 @@ using Nexora.Data.Feedback;
 using Nexora.Data.Identity;
 using Nexora.Data.Learning;
 using Nexora.Data.Persistence;
+using Nexora.Data.Platform;
 using Nexora.Data.Practice;
 using Nexora.Data.Privacy;
 using Nexora.Data.Progress;
@@ -69,6 +71,8 @@ public static class DependencyInjection
         services.AddScoped<IAdminService, AdminService>();
         services.AddScoped<IAdminDashboardService, AdminDashboardService>();
         services.AddScoped<IProductFeedbackService, FeedbackService>();
+        services.AddMemoryCache();
+        services.AddScoped<IPlatformStatsService, PlatformStatsService>();
         return services;
     }
 
