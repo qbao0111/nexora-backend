@@ -46,6 +46,8 @@ public sealed partial class PrivacyService(
         var sessions = await dbContext.InterviewSessions.AsNoTracking()
             .Include(item => item.Questions).Include(item => item.Answers).Include(item => item.Report)
             .Where(item => item.UserId == userId).ToArrayAsync(cancellationToken);
+        var feedback = await dbContext.ProductFeedbacks.AsNoTracking()
+            .Where(item => item.UserId == userId).ToArrayAsync(cancellationToken);
 
         return new CoreDataExport(
             timeProvider.GetUtcNow(),
@@ -101,7 +103,15 @@ public sealed partial class PrivacyService(
                 item.ProfileModelVersion,
                 item.ProfilePromptVersion,
                 item.ProfileSchemaVersion)).ToArray(),
-            sessions.OrderBy(item => item.CreatedAt).Select(item => new ExportInterview(MapInterview(item), item.Report is null ? null : MapReport(item.Report))).ToArray());
+            sessions.OrderBy(item => item.CreatedAt).Select(item => new ExportInterview(MapInterview(item), item.Report is null ? null : MapReport(item.Report))).ToArray(),
+            feedback.OrderBy(item => item.CreatedAt).Select(item => new ExportFeedback(
+                item.Id,
+                item.Rating,
+                item.Comment,
+                item.Consent,
+                item.CreatedAt,
+                item.UpdatedAt,
+                item.DeletedAt)).ToArray());
     }
 
     public async Task<DeletionRequestView> RequestDeletionAsync(Guid userId, string idempotencyKey, CancellationToken cancellationToken)
@@ -270,6 +280,7 @@ public sealed partial class PrivacyService(
 
         dbContext.InterviewReports.RemoveRange(dbContext.InterviewReports.Where(item => item.UserId == request.UserId));
         dbContext.InterviewAnswers.RemoveRange(dbContext.InterviewAnswers.Where(item => item.UserId == request.UserId));
+        dbContext.ProductFeedbacks.RemoveRange(dbContext.ProductFeedbacks.Where(item => item.UserId == request.UserId));
         dbContext.InterviewQuestions.RemoveRange(dbContext.InterviewQuestions.Where(item => sessionIds.Contains(item.InterviewSessionId)));
         // Practice-again sessions use restrictive self-references so normal
         // history cannot be deleted accidentally. Clear those links first as
@@ -330,7 +341,8 @@ public sealed partial class PrivacyService(
             question.Id, question.Sequence, question.Kind, question.Topic, question.ParentQuestionId,
             question.Content, question.CreatedAt)).ToArray(),
         item.Answers.OrderBy(answer => answer.CreatedAt).Select(answer => new AnswerView(
-            answer.Id, answer.QuestionId, answer.Content, answer.DurationSeconds, Parse(answer.Evaluation), answer.CreatedAt)).ToArray(),
+            answer.Id, answer.QuestionId, answer.Content, answer.DurationSeconds, Parse(answer.Evaluation), answer.CreatedAt,
+            answer.EvaluationStatus)).ToArray(),
         item.CreatedAt, item.UpdatedAt);
 
     private static ReportView MapReport(Nexora.Data.Practice.InterviewReport item) => new(

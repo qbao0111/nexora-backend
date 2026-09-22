@@ -54,6 +54,18 @@ public sealed class PrivacyApiTests
                 Status = "ready",
                 CreatedAt = DateTimeOffset.UtcNow
             });
+            db.ProductFeedbacks.Add(new Nexora.Data.Feedback.ProductFeedback
+            {
+                Id = Guid.NewGuid(),
+                UserId = account.UserId,
+                Rating = 5,
+                Comment = "Public feedback removed with account deletion.",
+                Consent = true,
+                Status = Nexora.Business.Feedback.FeedbackValues.Approved,
+                PublishedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
             await db.SaveChangesAsync();
         }
 
@@ -64,7 +76,11 @@ public sealed class PrivacyApiTests
         Assert.Equal(4, exported.GetProperty("profile").GetProperty("yearsOfExperience").GetInt32());
         Assert.Equal("Private role", exported.GetProperty("jobDescriptions")[0].GetProperty("title").GetString());
         Assert.Equal("Backend Developer", exported.GetProperty("careerGoals")[0].GetProperty("targetRole").GetString());
+        Assert.Equal(5, exported.GetProperty("feedback")[0].GetProperty("rating").GetInt32());
+        Assert.DoesNotContain("moderationStatus", exported.GetProperty("feedback")[0].GetRawText(), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("storageKey", exported.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        using (var publicFeedback = await client.GetAsync("/api/v1/feedback/public"))
+            Assert.Single((await DataAsync(publicFeedback)).EnumerateArray());
 
         using var deletionRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/me/deletion-requests");
         deletionRequest.Headers.Add("Idempotency-Key", "privacy-delete-one");
@@ -86,6 +102,7 @@ public sealed class PrivacyApiTests
             Assert.Equal(0, await db.UserProfiles.CountAsync(item => item.UserId == account.UserId));
             Assert.Equal(0, await db.RefreshTokens.CountAsync(item => item.UserId == account.UserId));
             Assert.Equal(0, await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId));
+            Assert.Equal(0, await db.ProductFeedbacks.CountAsync(item => item.UserId == account.UserId));
             Assert.Equal(0, (await db.Entitlements.SingleAsync(item => item.UserId == account.UserId)).Reserved);
             Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Void));
             var user = await db.Users.SingleAsync(item => item.Id == account.UserId);
@@ -93,6 +110,9 @@ public sealed class PrivacyApiTests
             Assert.EndsWith("@invalid.local", user.Email, StringComparison.Ordinal);
             Assert.Equal(PrivacyValues.Completed, (await db.DataPrivacyRequests.SingleAsync()).Status);
         }
+
+        using var publicAfterDeletion = await client.GetAsync("/api/v1/feedback/public");
+        Assert.Empty((await DataAsync(publicAfterDeletion)).EnumerateArray());
     }
 
     [Fact]
