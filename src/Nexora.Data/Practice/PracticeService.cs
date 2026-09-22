@@ -852,6 +852,15 @@ public sealed partial class PracticeService(
         prior = await FindIdempotentAsync(userId, "interview.answer", key, fingerprint, cancellationToken);
         if (prior is not null) return await MapExistingAnswerAsync(userId, interviewId, prior.ResourceId, cancellationToken);
         var session = await FindInterviewForUpdateAsync(userId, interviewId, cancellationToken) ?? throw NotFound();
+        // A concurrent replay can wait on the session lock after its initial
+        // idempotency read. Re-check after the lock so it replays the committed
+        // answer instead of colliding with the official-answer unique key.
+        prior = await FindIdempotentAsync(userId, "interview.answer", key, fingerprint, cancellationToken);
+        if (prior is not null)
+        {
+            await CommitAsync(transaction, cancellationToken);
+            return await MapExistingAnswerAsync(userId, interviewId, prior.ResourceId, cancellationToken);
+        }
         await dbContext.Entry(session).Collection(item => item.Questions).LoadAsync(cancellationToken);
         await dbContext.Entry(session).Collection(item => item.Answers).LoadAsync(cancellationToken);
         ValidateQuestionContracts(session.Questions);
