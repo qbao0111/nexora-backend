@@ -19,7 +19,8 @@ namespace Nexora.IntegrationTests;
 public sealed class NexoraApiFactory : WebApplicationFactory<Program>
 {
     private readonly string _connectionString = $"Data Source=nexora-{Guid.NewGuid():N};Mode=Memory;Cache=Shared;Default Timeout=5";
-    private readonly SqliteConnection _connection;
+    private readonly SqliteConnection? _connection;
+    private readonly string? _postgresConnectionString;
     private readonly object _databaseLock = new();
     private readonly IAiProvider _aiProvider;
     private readonly IReadOnlyDictionary<string, string?>? _configurationOverrides;
@@ -35,6 +36,9 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
     internal NexoraApiFactory(IReadOnlyDictionary<string, string?> configurationOverrides, Action<IServiceCollection> configureServices) : this((IAiProvider?)null, configurationOverrides, configureServices) { }
 
     internal NexoraApiFactory(IInterceptor dbInterceptor) : this((IAiProvider?)null, null, null, [dbInterceptor]) { }
+
+    internal static NexoraApiFactory CreatePostgres(string connectionString) =>
+        new((IAiProvider?)null, null, postgresConnectionString: connectionString);
 
     internal NexoraApiFactory(string environment) : this(environment, new Dictionary<string, string?>())
     { }
@@ -80,14 +84,19 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
         IAiProvider? aiProvider,
         IReadOnlyDictionary<string, string?>? configurationOverrides,
         Action<IServiceCollection>? configureServices = null,
-        IReadOnlyCollection<IInterceptor>? dbInterceptors = null)
+        IReadOnlyCollection<IInterceptor>? dbInterceptors = null,
+        string? postgresConnectionString = null)
     {
         _aiProvider = aiProvider ?? new TestAiProvider();
         _configurationOverrides = configurationOverrides;
         _configureServices = configureServices;
         _dbInterceptors = dbInterceptors ?? [];
-        _connection = new SqliteConnection(_connectionString);
-        _connection.Open();
+        _postgresConnectionString = postgresConnectionString;
+        if (_postgresConnectionString is null)
+        {
+            _connection = new SqliteConnection(_connectionString);
+            _connection.Open();
+        }
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -102,7 +111,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
         {
             var values = new Dictionary<string, string?>
             {
-                ["ConnectionStrings:Postgres"] = "Host=localhost;Database=nexora_tests",
+                ["ConnectionStrings:Postgres"] = _postgresConnectionString ?? "Host=localhost;Database=nexora_tests",
                 ["Authentication:Jwt:SigningKey"] = "integration-test-signing-key-32-characters-minimum",
                 ["Authentication:Jwt:Issuer"] = "Nexora.Tests",
                 ["Authentication:Jwt:Audience"] = "Nexora.Tests.Client",
@@ -131,7 +140,10 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
             services.RemoveAll<IDbContextOptionsConfiguration<NexoraDbContext>>();
             services.AddDbContext<NexoraDbContext>(options =>
             {
-                options.UseSqlite(_connectionString);
+                if (_postgresConnectionString is null)
+                    options.UseSqlite(_connectionString);
+                else
+                    options.UseNpgsql(_postgresConnectionString);
                 options.AddInterceptors(_dbInterceptors);
             });
             services.RemoveAll<IAiProvider>();
@@ -149,7 +161,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
                 new Dictionary<string, string?>(_configurationOverrides!)
                 {
                     // Supply startup configuration before Program reads it; never use a live dev database/provider.
-                    ["ConnectionStrings:Postgres"] = "Host=localhost;Database=nexora_tests"
+                    ["ConnectionStrings:Postgres"] = _postgresConnectionString ?? "Host=localhost;Database=nexora_tests"
                 }));
         return base.CreateHost(builder);
     }
@@ -166,13 +178,20 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
         lock (_databaseLock)
         {
             using var scope = Services.CreateScope();
-            scope.ServiceProvider.GetRequiredService<NexoraDbContext>().Database.EnsureCreated();
+            var database = scope.ServiceProvider.GetRequiredService<NexoraDbContext>().Database;
+            if (_postgresConnectionString is null)
+                database.EnsureCreated();
+            else
+            {
+                database.EnsureDeleted();
+                database.Migrate();
+            }
         }
     }
 
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
-        if (disposing) _connection.Dispose();
+        if (disposing) _connection?.Dispose();
     }
 }

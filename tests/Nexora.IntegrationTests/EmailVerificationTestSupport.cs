@@ -23,16 +23,22 @@ internal sealed class RecordingEmailSender : IEmailSender
 
 internal static class TestEmailInbox
 {
-    private static readonly ConcurrentDictionary<string, Uri> VerificationLinks = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, ConcurrentQueue<Uri>> VerificationLinks = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, Uri> PasswordResetLinks = new(StringComparer.OrdinalIgnoreCase);
 
-    public static void Record(string email, Uri verificationLink) => VerificationLinks[email] = verificationLink;
+    public static void Record(string email, Uri verificationLink) =>
+        VerificationLinks.GetOrAdd(email, static _ => new ConcurrentQueue<Uri>()).Enqueue(verificationLink);
     public static void RecordPasswordReset(string email, Uri resetLink) => PasswordResetLinks[email] = resetLink;
 
     public static Uri GetVerificationLink(string email) =>
-        VerificationLinks.TryGetValue(email, out var link)
-            ? link
+        GetVerificationLinks(email) is { Count: > 0 } links
+            ? links[^1]
             : throw new InvalidOperationException($"No verification email was recorded for {email}.");
+
+    public static IReadOnlyList<Uri> GetVerificationLinks(string email) =>
+        VerificationLinks.TryGetValue(email, out var links)
+            ? links.ToArray()
+            : [];
 
     public static Uri GetPasswordResetLink(string email) =>
         PasswordResetLinks.TryGetValue(email, out var link)

@@ -2,10 +2,15 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Nexora.Business.Billing;
 using Nexora.Data.Persistence;
 using Nexora.Data.Persistence.Migrations;
@@ -63,6 +68,167 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
     }
 
     [Fact]
+    public async Task ResendVerificationKeepsEarlierUnexpiredTokenValidAndDoesNotRotateSecurityStamp()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"resend-preserves-token-{Guid.NewGuid():N}@example.test";
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email,
+            password = "Strong!Pass123",
+            displayName = "Verification Candidate"
+        });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+
+        var tokenA = ReadVerificationToken(TestEmailInbox.GetVerificationLink(email));
+        string securityStampBefore;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<Nexora.Data.Identity.ApplicationUser>>();
+            var user = await userManager.FindByEmailAsync(email);
+            Assert.NotNull(user);
+            securityStampBefore = user.SecurityStamp!;
+        }
+
+        using var resend = await client.PostAsJsonAsync("/api/v1/auth/resend-verification", new { email });
+        Assert.Equal(HttpStatusCode.OK, resend.StatusCode);
+        var links = TestEmailInbox.GetVerificationLinks(email);
+        Assert.Equal(2, links.Count);
+        var tokenB = ReadVerificationToken(links[1]);
+        Assert.False(string.Equals(tokenA.Token, tokenB.Token, StringComparison.Ordinal));
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<Nexora.Data.Identity.ApplicationUser>>();
+            var user = await userManager.FindByEmailAsync(email);
+            Assert.NotNull(user);
+            Assert.Equal(securityStampBefore, user.SecurityStamp);
+        }
+
+        using var verifyA = await client.PostAsJsonAsync("/api/v1/auth/verify-email", new
+        {
+            userId = tokenA.UserId,
+            token = tokenA.Token
+        });
+        Assert.Equal(HttpStatusCode.OK, verifyA.StatusCode);
+    }
+
+    [Fact]
+    public async Task ResentVerificationTokenCanBeUsedBeforeTheRegistrationToken()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"resend-token-b-first-{Guid.NewGuid():N}@example.test";
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email,
+            password = "Strong!Pass123"
+        });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+
+        using var resend = await client.PostAsJsonAsync("/api/v1/auth/resend-verification", new { email });
+        Assert.Equal(HttpStatusCode.OK, resend.StatusCode);
+        var tokenB = ReadVerificationToken(TestEmailInbox.GetVerificationLinks(email)[1]);
+
+        using var verifyB = await client.PostAsJsonAsync("/api/v1/auth/verify-email", new
+        {
+            userId = tokenB.UserId,
+            token = tokenB.Token
+        });
+        Assert.Equal(HttpStatusCode.OK, verifyB.StatusCode);
+    }
+
+    [Fact]
+    public async Task MultipleVerificationResendsDoNotInvalidateEarlierUnexpiredToken()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"resend-multiple-{Guid.NewGuid():N}@example.test";
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email,
+            password = "Strong!Pass123"
+        });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+        var tokenA = ReadVerificationToken(TestEmailInbox.GetVerificationLink(email));
+
+        using var firstResend = await client.PostAsJsonAsync("/api/v1/auth/resend-verification", new { email });
+        using var secondResend = await client.PostAsJsonAsync("/api/v1/auth/resend-verification", new { email });
+        Assert.Equal(HttpStatusCode.OK, firstResend.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, secondResend.StatusCode);
+        Assert.Equal(3, TestEmailInbox.GetVerificationLinks(email).Count);
+
+        using var verifyA = await client.PostAsJsonAsync("/api/v1/auth/verify-email", new
+        {
+            userId = tokenA.UserId,
+            token = tokenA.Token
+        });
+        Assert.Equal(HttpStatusCode.OK, verifyA.StatusCode);
+    }
+
+    [Fact]
+    public async Task VerificationRejectsExpiredMalformedAndWrongUserTokens()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var emailA = $"verification-invalid-a-{Guid.NewGuid():N}@example.test";
+        var emailB = $"verification-invalid-b-{Guid.NewGuid():N}@example.test";
+        using var registerA = await client.PostAsJsonAsync("/api/v1/auth/register", new { email = emailA, password = "Strong!Pass123" });
+        using var registerB = await client.PostAsJsonAsync("/api/v1/auth/register", new { email = emailB, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.Created, registerA.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, registerB.StatusCode);
+
+        var tokenA = ReadVerificationToken(TestEmailInbox.GetVerificationLink(emailA));
+        var userB = await FindUserAsync(emailB);
+        string expiredToken;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<Nexora.Data.Identity.ApplicationUser>>();
+            var userA = await userManager.FindByEmailAsync(emailA);
+            Assert.NotNull(userA);
+            expiredToken = CreateExpiredEmailVerificationToken(
+                userA,
+                scope.ServiceProvider.GetRequiredService<IDataProtectionProvider>(),
+                scope.ServiceProvider.GetRequiredService<IOptions<DataProtectionTokenProviderOptions>>().Value);
+        }
+
+        using var expired = await client.PostAsJsonAsync("/api/v1/auth/verify-email", new
+        {
+            userId = tokenA.UserId,
+            token = expiredToken
+        });
+        using var malformed = await client.PostAsJsonAsync("/api/v1/auth/verify-email", new
+        {
+            userId = tokenA.UserId,
+            token = "malformed-verification-token"
+        });
+        using var wrongUser = await client.PostAsJsonAsync("/api/v1/auth/verify-email", new
+        {
+            userId = userB.Id,
+            token = tokenA.Token
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, expired.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, malformed.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, wrongUser.StatusCode);
+        Assert.Equal("EMAIL_VERIFICATION_INVALID", await ReadErrorCodeAsync(expired));
+        Assert.Equal("EMAIL_VERIFICATION_INVALID", await ReadErrorCodeAsync(malformed));
+        Assert.Equal("EMAIL_VERIFICATION_INVALID", await ReadErrorCodeAsync(wrongUser));
+    }
+
+    [Fact]
+    public async Task ResendVerificationForAlreadyConfirmedUserIsSafeAndDoesNotSendAnotherEmail()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var email = $"resend-confirmed-{Guid.NewGuid():N}@example.test";
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+        await TestEmailInbox.VerifyAsync(client, email);
+        var sentCount = TestEmailInbox.GetVerificationLinks(email).Count;
+
+        using var resend = await client.PostAsJsonAsync("/api/v1/auth/resend-verification", new { email });
+        Assert.Equal(HttpStatusCode.OK, resend.StatusCode);
+        Assert.Equal(sentCount, TestEmailInbox.GetVerificationLinks(email).Count);
+    }
+
+    [Fact]
     public async Task RefreshRotatesTokenAndRejectsPreviousToken()
     {
         using var client = _factory.CreateHttpsClient();
@@ -102,6 +268,138 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
         Assert.Equal(HttpStatusCode.Unauthorized, me.StatusCode);
         using var refresh = await client.PostAsync("/api/v1/auth/refresh", null);
         Assert.Equal(HttpStatusCode.Unauthorized, refresh.StatusCode);
+    }
+
+    [Fact]
+    public async Task LogoutThenLoginAsDifferentUserUsesOnlyTheNewCookieSession()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var emailA = $"session-switch-a-{Guid.NewGuid():N}@example.test";
+        var emailB = $"session-switch-b-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, emailA);
+        await RegisterAndVerifyAsync(client, emailB);
+
+        using var loginA = await client.PostAsJsonAsync("/api/v1/auth/login", new { email = emailA, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, loginA.StatusCode);
+        var accessTokenA = await ReadAccessTokenAsync(loginA);
+        var refreshTokenA = ReadRefreshCookie(loginA);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessTokenA);
+
+        using var meA = await client.GetAsync("/api/v1/me");
+        Assert.Equal(HttpStatusCode.OK, meA.StatusCode);
+        Assert.Equal(emailA, await ReadSessionEmailAsync(meA));
+
+        using var logout = await client.PostAsync("/api/v1/auth/logout", null);
+        Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+        var clearCookie = ReadRefreshSetCookie(logout);
+        Assert.Contains("nexora.refresh=", clearCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("expires=Thu, 01 Jan 1970 00:00:00 GMT", clearCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("path=/api/v1/auth", clearCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("secure", clearCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("httponly", clearCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("samesite=strict", clearCookie, StringComparison.OrdinalIgnoreCase);
+
+        using var replayClient = _factory.CreateHttpsClient(handleCookies: false);
+        using var replayRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/refresh");
+        replayRequest.Headers.Add("Cookie", $"nexora.refresh={refreshTokenA}");
+        using var replay = await replayClient.SendAsync(replayRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
+
+        using var refreshAfterLogout = await client.PostAsync("/api/v1/auth/refresh", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, refreshAfterLogout.StatusCode);
+
+        client.DefaultRequestHeaders.Authorization = null;
+        using var loginB = await client.PostAsJsonAsync("/api/v1/auth/login", new { email = emailB, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, loginB.StatusCode);
+        var accessTokenB = await ReadAccessTokenAsync(loginB);
+        var refreshTokenB = ReadRefreshCookie(loginB);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessTokenB);
+
+        using var meB = await client.GetAsync("/api/v1/me");
+        Assert.Equal(HttpStatusCode.OK, meB.StatusCode);
+        Assert.Equal(emailB, await ReadSessionEmailAsync(meB));
+
+        using var refreshB = await client.PostAsync("/api/v1/auth/refresh", null);
+        Assert.Equal(HttpStatusCode.OK, refreshB.StatusCode);
+        Assert.Equal(emailB, await ReadSessionEmailAsync(refreshB));
+        var refreshedAccessTokenB = await ReadAccessTokenAsync(refreshB);
+        var refreshedRefreshTokenB = ReadRefreshCookie(refreshB);
+        Assert.False(string.Equals(refreshTokenA, refreshedRefreshTokenB, StringComparison.Ordinal));
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", refreshedAccessTokenB);
+
+        using var meAfterRefresh = await client.GetAsync("/api/v1/me");
+        Assert.Equal(HttpStatusCode.OK, meAfterRefresh.StatusCode);
+        Assert.Equal(emailB, await ReadSessionEmailAsync(meAfterRefresh));
+
+        using var scope = _factory.Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<Nexora.Data.Identity.ApplicationUser>>();
+        var userA = await userManager.FindByEmailAsync(emailA);
+        var userB = await userManager.FindByEmailAsync(emailB);
+        Assert.NotNull(userA);
+        Assert.NotNull(userB);
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var tokenA = await db.RefreshTokens.SingleAsync(token => token.TokenHash == HashForTest(refreshTokenA));
+        var tokenB = await db.RefreshTokens.SingleAsync(token => token.TokenHash == HashForTest(refreshedRefreshTokenB));
+        Assert.Equal(userA!.Id, tokenA.UserId);
+        Assert.Equal(userB!.Id, tokenB.UserId);
+        Assert.NotNull(tokenA.RevokedAt);
+        Assert.Null(tokenB.RevokedAt);
+    }
+
+    [Fact]
+    public async Task LogoutAllOnlyRevokesCurrentUsersSessions()
+    {
+        using var clientA = _factory.CreateHttpsClient();
+        using var secondClientA = _factory.CreateHttpsClient();
+        using var clientB = _factory.CreateHttpsClient();
+        var emailA = $"logout-all-a-{Guid.NewGuid():N}@example.test";
+        var emailB = $"logout-all-b-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(clientA, emailA);
+        await RegisterAndVerifyAsync(clientB, emailB);
+
+        using var loginA1 = await clientA.PostAsJsonAsync("/api/v1/auth/login", new { email = emailA, password = "Strong!Pass123" });
+        using var loginA2 = await secondClientA.PostAsJsonAsync("/api/v1/auth/login", new { email = emailA, password = "Strong!Pass123" });
+        using var loginB = await clientB.PostAsJsonAsync("/api/v1/auth/login", new { email = emailB, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, loginA1.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, loginA2.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, loginB.StatusCode);
+
+        var accessTokenA = await ReadAccessTokenAsync(loginA1);
+        var refreshTokenA1 = ReadRefreshCookie(loginA1);
+        var refreshTokenA2 = ReadRefreshCookie(loginA2);
+        var refreshTokenB = ReadRefreshCookie(loginB);
+        clientA.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessTokenA);
+
+        using var logoutAll = await clientA.PostAsync("/api/v1/auth/logout-all", null);
+        Assert.Equal(HttpStatusCode.NoContent, logoutAll.StatusCode);
+
+        using var replayClient = _factory.CreateHttpsClient(handleCookies: false);
+        using var replayA1Request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/refresh");
+        replayA1Request.Headers.Add("Cookie", $"nexora.refresh={refreshTokenA1}");
+        using var replayA1 = await replayClient.SendAsync(replayA1Request);
+        using var replayA2Request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/refresh");
+        replayA2Request.Headers.Add("Cookie", $"nexora.refresh={refreshTokenA2}");
+        using var replayA2 = await replayClient.SendAsync(replayA2Request);
+        Assert.Equal(HttpStatusCode.Unauthorized, replayA1.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, replayA2.StatusCode);
+
+        using var refreshB = await clientB.PostAsync("/api/v1/auth/refresh", null);
+        Assert.Equal(HttpStatusCode.OK, refreshB.StatusCode);
+        Assert.Equal(emailB, await ReadSessionEmailAsync(refreshB));
+        var refreshedRefreshTokenB = ReadRefreshCookie(refreshB);
+
+        using var scope = _factory.Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<Nexora.Data.Identity.ApplicationUser>>();
+        var userA = await userManager.FindByEmailAsync(emailA);
+        var userB = await userManager.FindByEmailAsync(emailB);
+        Assert.NotNull(userA);
+        Assert.NotNull(userB);
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.All(await db.RefreshTokens.Where(token => token.UserId == userA!.Id).ToListAsync(), token => Assert.NotNull(token.RevokedAt));
+        var activeB = await db.RefreshTokens.SingleAsync(token => token.TokenHash == HashForTest(refreshedRefreshTokenB));
+        Assert.Equal(userB!.Id, activeB.UserId);
+        Assert.Null(activeB.RevokedAt);
+        Assert.NotEqual(HashForTest(refreshTokenB), activeB.TokenHash);
     }
 
     [Fact]
@@ -876,8 +1174,73 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
         return json.RootElement.GetProperty("data").GetProperty("accessToken").GetString()!;
     }
 
+    private static async Task<string> ReadSessionEmailAsync(HttpResponseMessage response)
+    {
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var data = json.RootElement.GetProperty("data");
+        return data.TryGetProperty("user", out var sessionUser)
+            ? sessionUser.GetProperty("email").GetString()!
+            : data.GetProperty("email").GetString()!;
+    }
+
+    private static (Guid UserId, string Token) ReadVerificationToken(Uri link)
+    {
+        var query = link.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Split('=', 2))
+            .ToDictionary(
+                part => WebUtility.UrlDecode(part[0]),
+                part => WebUtility.UrlDecode(part.ElementAtOrDefault(1) ?? string.Empty),
+                StringComparer.Ordinal);
+        return (Guid.Parse(query["userId"]), query["token"]);
+    }
+
+    private async Task<Nexora.Data.Identity.ApplicationUser> FindUserAsync(string email)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<Nexora.Data.Identity.ApplicationUser>>();
+        var user = await userManager.FindByEmailAsync(email);
+        Assert.NotNull(user);
+        return user!;
+    }
+
+    private static string CreateExpiredEmailVerificationToken(
+        Nexora.Data.Identity.ApplicationUser user,
+        IDataProtectionProvider dataProtectionProvider,
+        DataProtectionTokenProviderOptions options)
+    {
+        using var payload = new MemoryStream();
+        using (var writer = new BinaryWriter(payload, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true), leaveOpen: true))
+        {
+            writer.Write((DateTimeOffset.UtcNow - options.TokenLifespan - TimeSpan.FromMinutes(1)).UtcTicks);
+            writer.Write(user.Id.ToString());
+            writer.Write("EmailConfirmation");
+            writer.Write(user.SecurityStamp ?? string.Empty);
+        }
+
+        var protector = dataProtectionProvider.CreateProtector(options.Name ?? "DataProtectorTokenProvider");
+        return Convert.ToBase64String(protector.Protect(payload.ToArray()));
+    }
+
+    private static string ReadRefreshCookie(HttpResponseMessage response)
+    {
+        var cookie = ReadRefreshSetCookie(response);
+        return ExtractRefreshToken(cookie);
+    }
+
+    private static string ReadRefreshSetCookie(HttpResponseMessage response)
+    {
+        var cookie = response.Headers.TryGetValues("Set-Cookie", out var values)
+            ? values.FirstOrDefault(value => value.StartsWith("nexora.refresh=", StringComparison.Ordinal))
+            : null;
+        Assert.NotNull(cookie);
+        return cookie!;
+    }
+
     private static string ExtractRefreshToken(string cookie) =>
         cookie.Split(';', 2)[0].Split('=', 2)[1];
+
+    private static string HashForTest(string token) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 
     private static async Task<string> ReadErrorCodeAsync(HttpResponseMessage response)
     {
