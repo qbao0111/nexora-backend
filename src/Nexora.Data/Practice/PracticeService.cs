@@ -942,6 +942,16 @@ public sealed partial class PracticeService(
         if (prior is not null) return await GetInterviewAsync(userId, prior.ResourceId, cancellationToken);
 
         var session = await FindInterviewForUpdateAsync(userId, interviewId, cancellationToken) ?? throw NotFound();
+        // A concurrent replay can wait on the interview row lock after its
+        // initial idempotency reads. Re-check after acquiring the lock so it
+        // replays the committed continuation instead of creating another
+        // idempotency record or question-plan job.
+        prior = await FindIdempotentAsync(userId, "interview.continue", key, fingerprint, cancellationToken);
+        if (prior is not null)
+        {
+            await CommitAsync(transaction, cancellationToken);
+            return await GetInterviewAsync(userId, prior.ResourceId, cancellationToken);
+        }
         await dbContext.Entry(session).Collection(item => item.Questions).LoadAsync(cancellationToken);
         await dbContext.Entry(session).Collection(item => item.Answers).LoadAsync(cancellationToken);
         ValidateQuestionContracts(session.Questions);
@@ -970,6 +980,14 @@ public sealed partial class PracticeService(
             if (questionLimit <= InterviewQuestionValues.FreeQuestionLimit)
                 throw InterviewUpgradeRequired();
             throw InterviewLimitReached();
+        }
+        if (await HasPendingQuestionPlanJobAsync(session.Id, cancellationToken))
+        {
+            var pendingAt = timeProvider.GetUtcNow();
+            dbContext.Add(Idempotency(userId, "interview.continue", key, fingerprint, session.Id, pendingAt));
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(transaction, cancellationToken);
+            return await GetInterviewAsync(userId, interviewId, cancellationToken);
         }
         var now = timeProvider.GetUtcNow();
         session.Version++;
