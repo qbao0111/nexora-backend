@@ -65,6 +65,7 @@ public static class DependencyInjection
             .ValidateOnStart();
         services.AddScoped<IAuthService, IdentityAuthService>();
         services.AddScoped<IAdminService, AdminService>();
+        services.AddScoped<IAdminDashboardService, AdminDashboardService>();
         return services;
     }
 

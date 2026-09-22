@@ -991,3 +991,10 @@ This log records completed implementation milestones and verification evidence. 
 - Actual local rerun: the direct SQLite probe completed the corrected dashboard weekly path successfully. The six named integration tests and the full integration suite could not start the test host because Windows Application Control blocked `Sentry.dll` (`0x800711C7`); full local integration result was 10 passed and 240 environment-blocked failures. Full unit execution was 374 passed with 4 Sentry tests blocked by the same policy. These local blocked results are environmental, not product assertion failures; hosted CI is required for the six integration assertions.
 - Deterministic validation: Release solution build passed with 0 warnings/errors using a temporary untracked removal of the host-blocked Sentry analyzer, which was deleted before commit; EF reported `No changes have been made to the model since the last migration.`; changed-file style and analyzer verification passed; NuGet vulnerability audit returned no vulnerable entries; `git diff --check` and CRLF-aware diff check passed.
 - Scope: No migration, ModelSnapshot, `PracticeService.cs`, authentication behavior or B14+ change was made. PR #64 remains unmerged with auto-merge disabled; B14 was not started. Hosted CI rerun is required after pushing this corrective commit.
+
+## 2026-09-22 — Admin analytics and transaction reporting
+
+- Added Admin-only dashboard and transaction read models through a focused `IAdminDashboardService`; existing admin mutation/business services remain unchanged.
+- Revenue is derived only from fulfilled Orders at `Order.UpdatedAt`, grouped with `Asia/Ho_Chi_Minh` calendar boundaries and never combined across currencies.
+- Added zero-filled revenue/user-growth series, current-plan/status distributions, revenue-by-plan, recent transactions and stable `(CreatedAt, Id)` keyset pagination with allow-listed fields.
+- Added focused integration coverage for Admin authorization, GMT+7 midnight boundaries, fulfilled-only/currency-separated revenue and tied-timestamp cursor behavior. No entity or migration change was required.

@@ -85,6 +85,21 @@ Tất cả route dưới đây yêu cầu policy `Admin`, reason code đối v�
 | POST | `/admin/users/:id/entitlement-adjustments` | Cấp/thu quota hoặc access với reason, expiry và ticket reference. |
 | GET | `/admin/audit-logs` | Xem audit metadata theo actor/action/resource/time. |
 | GET | `/admin/operations/jobs` | Xem trạng thái job lỗi để retry có kiểm soát. |
+| GET | `/admin/dashboard` | Tổng quan người dùng, doanh thu và phân bổ vận hành theo kỳ. |
+| GET | `/admin/transactions` | Danh sách giao dịch toàn hệ thống với bộ lọc và keyset cursor. |
+
+`GET /api/v1/admin/dashboard` nhận `granularity=day|month|year`, `from`, `to`
+(ISO date) và `currency`. Mặc định lần lượt là 30 ngày, 12 tháng hoặc 5 năm;
+response luôn trả khoảng hiệu lực và timezone `Asia/Ho_Chi_Minh`. Revenue chỉ lấy
+Order `fulfilled`, dùng `Order.UpdatedAt` làm thời điểm fulfillment và luôn tách
+theo currency; không cộng chéo currency. Biểu đồ có zero bucket và user-growth
+lũy kế bao gồm base trước khoảng báo cáo. Plan distribution chọn tối đa một
+entitlement hiện hành cho mỗi user và dùng bucket `none` khi chưa có gói.
+
+`GET /api/v1/admin/transactions` nhận `search`, `status`, `planCode`, `currency`,
+`from`, `to`, `cursor`, `pageSize` (mặc định 25, tối đa 100). Thứ tự ổn định là
+`CreatedAt DESC, Id DESC`; cursor opaque chứa cả hai thành phần. DTO allow-list
+không trả checkout URL, snapshot hay provider payload.
 
 ## Request and response contracts quan trọng
 
