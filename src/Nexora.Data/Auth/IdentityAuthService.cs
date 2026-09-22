@@ -97,7 +97,7 @@ public sealed partial class IdentityAuthService(
         if (user is null || !user.IsActive || user.EmailConfirmed || user.DeletionRequestedAt is not null || user.DeletedAt is not null)
             return;
 
-        await SendVerificationEmailAsync(user, cancellationToken, invalidatePreviousTokens: true);
+        await SendVerificationEmailAsync(user, cancellationToken);
     }
 
     public async Task ForgotPasswordAsync(ForgotPasswordCommand command, CancellationToken cancellationToken)
@@ -280,14 +280,8 @@ public sealed partial class IdentityAuthService(
             throw new BusinessException("SESSION_REVOCATION_FAILED", "Không thể cập nhật bảo mật sau khi đổi mật khẩu.", BusinessErrorKind.ExternalFailure);
     }
 
-    private async Task SendVerificationEmailAsync(ApplicationUser user, CancellationToken cancellationToken, bool invalidatePreviousTokens = false)
+    private async Task SendVerificationEmailAsync(ApplicationUser user, CancellationToken cancellationToken)
     {
-        if (invalidatePreviousTokens)
-        {
-            var stampResult = await userManager.UpdateSecurityStampAsync(user);
-            if (!stampResult.Succeeded)
-                throw new BusinessException("EMAIL_VERIFICATION_FAILED", "Không thể tạo lại liên kết xác minh email.", BusinessErrorKind.ExternalFailure);
-        }
         var token = await userManager.GenerateEmailConfirmationTokenAsync(user);
         var baseUrl = _emailVerificationOptions.PublicUrl.TrimEnd('/');
         var link = new Uri($"{baseUrl}/verify-email?userId={user.Id:D}&token={Uri.EscapeDataString(token)}", UriKind.Absolute);

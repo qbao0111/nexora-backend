@@ -161,7 +161,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
                 new Dictionary<string, string?>(_configurationOverrides!)
                 {
                     // Supply startup configuration before Program reads it; never use a live dev database/provider.
-                    ["ConnectionStrings:Postgres"] = "Host=localhost;Database=nexora_tests"
+                    ["ConnectionStrings:Postgres"] = _postgresConnectionString ?? "Host=localhost;Database=nexora_tests"
                 }));
         return base.CreateHost(builder);
     }
