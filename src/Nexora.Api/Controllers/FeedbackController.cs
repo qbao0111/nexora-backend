@@ -37,13 +37,15 @@ public sealed class FeedbackController(IProductFeedbackService feedbackService) 
     }
 
     [HttpGet("feedback/public"), AllowAnonymous]
-    public async Task<ActionResult<ApiResponse<IReadOnlyCollection<PublicFeedbackResponse>>>> GetPublic(
+    public async Task<ActionResult<ApiResponse<PublicFeedbackPageResponse>>> GetPublic(
         [FromQuery] int limit = FeedbackRules.DefaultPublicLimit,
         CancellationToken cancellationToken = default)
     {
         var feedback = await feedbackService.GetPublicAsync(limit, cancellationToken);
-        return Ok(new ApiResponse<IReadOnlyCollection<PublicFeedbackResponse>>(
-            feedback.Select(item => new PublicFeedbackResponse(item.Id, item.DisplayName, item.Rating, item.Comment, item.PublishedAt)).ToArray()));
+        return Ok(new ApiResponse<PublicFeedbackPageResponse>(new PublicFeedbackPageResponse(
+            feedback.AverageRating,
+            feedback.RatingCount,
+            feedback.Items.Select(item => new PublicFeedbackResponse(item.Id, item.DisplayName, item.Rating, item.Comment, item.PublishedAt)).ToArray())));
     }
 
     [HttpGet("admin/feedback"), Authorize(Policy = "Admin")]

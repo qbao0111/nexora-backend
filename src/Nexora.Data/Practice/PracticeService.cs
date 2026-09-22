@@ -834,8 +834,9 @@ public sealed partial class PracticeService(
         var continuation = await BuildContinuationAsync(userId, session, cancellationToken);
         var reportState = await GetReportStateAsync(session.Id, session.Status, cancellationToken);
         var progress = BuildEvaluationProgress(session.Answers);
+        var questionPreparationState = await GetQuestionPreparationStateAsync(userId, session, cancellationToken);
         return MapInterview(session, session.Questions, session.Answers, continuation, reportState,
-            GetResultState(session.Status, reportState, progress), progress);
+            GetResultState(session.Status, reportState, progress), progress, questionPreparationState);
     }
 
     public async Task<AnswerResult> SubmitAnswerAsync(
@@ -961,7 +962,7 @@ public sealed partial class PracticeService(
             dbContext.Add(Idempotency(userId, "interview.continue", key, fingerprint, session.Id, replayAt));
             await dbContext.SaveChangesAsync(cancellationToken);
             await CommitAsync(transaction, cancellationToken);
-            return MapInterview(session, session.Questions, session.Answers, BuildContinuation(session, questionLimit));
+            return await GetInterviewAsync(userId, interviewId, cancellationToken);
         }
 
         if (session.Questions.Count >= questionLimit)
@@ -975,6 +976,69 @@ public sealed partial class PracticeService(
         session.UpdatedAt = now;
         dbContext.AddRange(
             Idempotency(userId, "interview.continue", key, fingerprint, session.Id, now),
+            Outbox("InterviewQuestionPlanRequested", "interview", session.Id, now));
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
+        return await GetInterviewAsync(userId, interviewId, cancellationToken);
+    }
+
+    public async Task<InterviewView> RetryQuestionPreparationAsync(
+        Guid userId,
+        Guid interviewId,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        var key = RequireKey(idempotencyKey);
+        var fingerprint = Fingerprint(interviewId);
+        var prior = await FindIdempotentAsync(userId, "interview.questions.retry", key, fingerprint, cancellationToken);
+        if (prior is not null)
+            return await GetInterviewAsync(userId, prior.ResourceId, cancellationToken);
+
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        prior = await FindIdempotentAsync(userId, "interview.questions.retry", key, fingerprint, cancellationToken);
+        if (prior is not null)
+        {
+            await CommitAsync(transaction, cancellationToken);
+            return await GetInterviewAsync(userId, prior.ResourceId, cancellationToken);
+        }
+
+        var session = await FindInterviewForUpdateAsync(userId, interviewId, cancellationToken) ?? throw NotFound();
+        await dbContext.Entry(session).Collection(item => item.Questions).LoadAsync(cancellationToken);
+        await dbContext.Entry(session).Collection(item => item.Answers).LoadAsync(cancellationToken);
+        ValidateQuestionContracts(session.Questions);
+        if (session.Status != PracticeValues.Active)
+            throw InvalidState();
+
+        var questionLimit = await GetQuestionLimitAsync(userId, cancellationToken);
+        if (questionLimit <= InterviewQuestionValues.FreeQuestionLimit)
+            throw InterviewUpgradeRequired();
+
+        var released = session.Questions.Where(item => item.ReleasedAt is not null).ToArray();
+        if (released.Any(item => session.Answers.All(answer => answer.QuestionId != item.Id)))
+            throw new BusinessException(
+                "INTERVIEW_QUESTION_ALREADY_READY",
+                "Câu hỏi tiếp theo đã sẵn sàng.",
+                BusinessErrorKind.Conflict);
+        if (session.Questions.Count >= questionLimit)
+            throw InterviewLimitReached();
+        if (await HasPendingQuestionPlanJobAsync(session.Id, cancellationToken))
+            throw new BusinessException(
+                "INTERVIEW_QUESTION_PREPARATION_IN_PROGRESS",
+                "Câu hỏi tiếp theo đang được chuẩn bị.",
+                BusinessErrorKind.Conflict);
+
+        var latestPlan = await GetLatestQuestionPlanJobAsync(session.Id, cancellationToken);
+        if (latestPlan?.Status != BillingValues.Failed)
+            throw new BusinessException(
+                "INTERVIEW_QUESTION_PREPARATION_NOT_FAILED",
+                "Chưa có lỗi chuẩn bị câu hỏi cần thử lại.",
+                BusinessErrorKind.Conflict);
+
+        var now = timeProvider.GetUtcNow();
+        session.Version++;
+        session.UpdatedAt = now;
+        dbContext.AddRange(
+            Idempotency(userId, "interview.questions.retry", key, fingerprint, session.Id, now),
             Outbox("InterviewQuestionPlanRequested", "interview", session.Id, now));
         await dbContext.SaveChangesAsync(cancellationToken);
         await CommitAsync(transaction, cancellationToken);
@@ -1234,7 +1298,7 @@ public sealed partial class PracticeService(
             }
             catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
             {
-                await FailJobAsync(job, cancellationToken);
+                await FailJobAsync(job, exception, cancellationToken);
                 JobFailed(logger, job.Id, job.Type, job.AggregateId, exception.GetType().Name,
                     queueLagSeconds, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
@@ -2081,7 +2145,7 @@ public sealed partial class PracticeService(
         await CommitAsync(transaction, cancellationToken);
     }
 
-    private async Task FailJobAsync(OutboxEvent job, CancellationToken cancellationToken)
+    private async Task FailJobAsync(OutboxEvent job, Exception exception, CancellationToken cancellationToken)
     {
         dbContext.ChangeTracker.Clear();
         await using var transaction = await BeginTransactionAsync(cancellationToken);
@@ -2159,7 +2223,7 @@ public sealed partial class PracticeService(
             {
                 answer.EvaluationStatus = InterviewAnswerEvaluationStates.Failed;
                 answer.Evaluation = null;
-                answer.EvaluationErrorCode = "AI_OUTPUT_INVALID";
+                answer.EvaluationErrorCode = EvaluationErrorCode(exception);
                 answer.EvaluationCompletedAt = current.ProcessedAt;
                 EnqueueResourceChanged(answer.UserId, "interview", answer.InterviewSessionId, answer.EvaluationStatus, current.ProcessedAt.Value);
             }
@@ -2243,6 +2307,45 @@ public sealed partial class PracticeService(
             item.Type == "InterviewQuestionPlanRequested" &&
             (item.Status == BillingValues.Pending || item.Status == BillingValues.Processing), cancellationToken);
 
+    private async Task<(Guid Id, string Status, DateTimeOffset CreatedAt)?> GetLatestQuestionPlanJobAsync(
+        Guid interviewId,
+        CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.OutboxEvents.AsNoTracking()
+            .Where(item => item.AggregateId == interviewId && item.Type == "InterviewQuestionPlanRequested")
+            .Select(item => new { item.Id, item.Status, item.CreatedAt })
+            .ToArrayAsync(cancellationToken);
+        var latest = rows
+            .OrderByDescending(item => item.CreatedAt)
+            .ThenByDescending(item => item.Id)
+            .FirstOrDefault();
+        return latest is null ? null : (latest.Id, latest.Status, latest.CreatedAt);
+    }
+
+    private async Task<string> GetQuestionPreparationStateAsync(
+        Guid userId,
+        InterviewSession session,
+        CancellationToken cancellationToken)
+    {
+        if (session.Status != PracticeValues.Active)
+            return InterviewQuestionPreparationStates.Processing;
+
+        var questionLimit = await GetQuestionLimitAsync(userId, cancellationToken);
+        var released = session.Questions.Where(item => item.ReleasedAt is not null).ToArray();
+        var hasUnansweredReleasedQuestion = released.Any(item =>
+            session.Answers.All(answer => answer.QuestionId != item.Id));
+        if (hasUnansweredReleasedQuestion || session.Questions.Count >= questionLimit)
+            return InterviewQuestionPreparationStates.Ready;
+
+        if (await HasPendingQuestionPlanJobAsync(session.Id, cancellationToken))
+            return InterviewQuestionPreparationStates.Processing;
+
+        var latestPlan = await GetLatestQuestionPlanJobAsync(session.Id, cancellationToken);
+        return latestPlan?.Status == BillingValues.Failed
+            ? InterviewQuestionPreparationStates.Failed
+            : InterviewQuestionPreparationStates.Processing;
+    }
+
     private async Task TryQueueReportIfReadyAsync(
         Guid interviewId,
         DateTimeOffset now,
@@ -2298,7 +2401,7 @@ public sealed partial class PracticeService(
         AiProviderException { Kind: AiProviderFailureKind.Configuration } => "AI_PROVIDER_CONFIGURATION_INVALID",
         AiProviderException { Kind: AiProviderFailureKind.RateLimited } => "AI_RATE_LIMITED",
         AiProviderException { Kind: AiProviderFailureKind.Timeout or AiProviderFailureKind.Unavailable } => "AI_PROVIDER_UNAVAILABLE",
-        _ => "AI_OUTPUT_INVALID"
+        _ => "INTERNAL_PROCESSING_FAILED"
     };
 
     private static int PreparationLimit(int questionLimit, int startSequence = 1) =>
@@ -2897,12 +3000,13 @@ public sealed partial class PracticeService(
         InterviewContinuationView? continuation = null,
         string reportState = InterviewReportStates.None,
         string resultState = InterviewResultStates.Collecting,
-        InterviewEvaluationProgress? evaluationProgress = null) =>
+        InterviewEvaluationProgress? evaluationProgress = null,
+        string questionPreparationState = InterviewQuestionPreparationStates.Processing) =>
         new(session.Id, session.Status, session.Role, session.Seniority, session.InterviewType, session.Difficulty, session.Version,
             questions.Where(item => item.ReleasedAt is not null).OrderBy(item => item.Sequence).Select(MapQuestion).ToArray(),
             answers.OrderBy(item => item.CreatedAt).Select(answer => MapAnswer(answer, session.Status)).ToArray(),
             session.CreatedAt, session.UpdatedAt, continuation, reportState, resultState,
-            evaluationProgress ?? BuildEvaluationProgress(answers));
+            evaluationProgress ?? BuildEvaluationProgress(answers), questionPreparationState);
 
     private static InterviewEvaluationProgress BuildEvaluationProgress(IEnumerable<InterviewAnswer> answers)
     {
@@ -2919,10 +3023,10 @@ public sealed partial class PracticeService(
         string status,
         string reportState,
         InterviewEvaluationProgress progress) =>
-        progress.Failed > 0 || reportState == InterviewReportStates.Failed
-                ? InterviewResultStates.Failed
-                : status == PracticeValues.Active
-                    ? InterviewResultStates.Collecting
+        status == PracticeValues.Active
+                ? InterviewResultStates.Collecting
+                : progress.Failed > 0 || reportState == InterviewReportStates.Failed
+                    ? InterviewResultStates.Failed
                 : status == PracticeValues.Completed && reportState == InterviewReportStates.Ready
                     ? InterviewResultStates.Ready
                     : InterviewResultStates.Processing;

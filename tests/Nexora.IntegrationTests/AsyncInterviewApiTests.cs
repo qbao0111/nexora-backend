@@ -5,7 +5,9 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Nexora.Business.Ai;
+using Nexora.Business.Billing;
 using Nexora.Business.Practice;
+using Nexora.Data.Billing;
 using Nexora.Data.Persistence;
 
 namespace Nexora.IntegrationTests;
@@ -59,6 +61,66 @@ public sealed class AsyncInterviewApiTests
         Assert.Equal(2, await verifyDb.InterviewQuestions.CountAsync(item =>
             item.InterviewSessionId == interviewId && item.ReleasedAt != null));
         Assert.Equal(2, (await GetInterviewAsync(client, interviewId)).GetProperty("questions").GetArrayLength());
+    }
+
+    [PostgresFact]
+    public async Task FailedQuestionPlanCanBeRetriedOnPostgres()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = NexoraApiFactory.CreatePostgres(
+            Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!, aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "async-plan-postgres@example.test");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "async-plan-postgres-start");
+        await ProcessJobsAsync(factory);
+
+        var active = await GetInterviewAsync(client, interviewId);
+        var q1 = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        using (var firstAnswer = await SubmitAnswerAsync(client, interviewId, q1, "Primary answer one.", "async-plan-postgres-a1"))
+        {
+            var q2 = (await DataAsync(firstAnswer)).GetProperty("nextQuestion").GetProperty("id").GetGuid();
+            using var secondAnswer = await SubmitAnswerAsync(client, interviewId, q2, "Primary answer two.", "async-plan-postgres-a2");
+            var q3 = (await DataAsync(secondAnswer)).GetProperty("nextQuestion").GetProperty("id").GetGuid();
+            using var thirdAnswer = await SubmitAnswerAsync(client, interviewId, q3, "Primary answer three.", "async-plan-postgres-a3");
+            Assert.Equal(JsonValueKind.Null, (await DataAsync(thirdAnswer)).GetProperty("nextQuestion").ValueKind);
+        }
+        await SeedQuestionEntitlementAsync(factory, account.UserId, questionLimit: 6);
+
+        using (var continueRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/continue"))
+        {
+            continueRequest.Headers.Add("Idempotency-Key", "async-plan-postgres-continue");
+            using var continueResponse = await client.SendAsync(continueRequest);
+            Assert.Equal(HttpStatusCode.OK, continueResponse.StatusCode);
+        }
+
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
+            new AiProviderException(AiProviderFailureKind.Unavailable, "postgres question plan failure"));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
+            new AiProviderException(AiProviderFailureKind.Unavailable, "postgres question plan failure retry"));
+        await ProcessJobsAsync(factory);
+        Assert.Equal(InterviewQuestionPreparationStates.Failed,
+            (await GetInterviewAsync(client, interviewId)).GetProperty("questionPreparationState").GetString());
+
+        using (var retryRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/questions/retry"))
+        {
+            retryRequest.Headers.Add("Idempotency-Key", "async-plan-postgres-retry");
+            using var retryResponse = await client.SendAsync(retryRequest);
+            Assert.Equal(HttpStatusCode.Accepted, retryResponse.StatusCode);
+        }
+        await ProcessJobsAsync(factory);
+
+        var recovered = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(InterviewQuestionPreparationStates.Ready,
+            recovered.GetProperty("questionPreparationState").GetString());
+        Assert.Contains(recovered.GetProperty("questions").EnumerateArray(),
+            item => item.GetProperty("sequence").GetInt32() == 4);
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(6, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(2, await db.OutboxEvents.CountAsync(item =>
+            item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
     }
 
     [Fact]
@@ -164,7 +226,9 @@ public sealed class AsyncInterviewApiTests
         }
 
         var failedView = await GetInterviewAsync(client, interviewId);
-        Assert.Equal(InterviewResultStates.Failed, failedView.GetProperty("resultState").GetString());
+        Assert.Equal(PracticeValues.Active, failedView.GetProperty("status").GetString());
+        Assert.Equal(InterviewResultStates.Collecting, failedView.GetProperty("resultState").GetString());
+        Assert.Equal(JsonValueKind.Null, failedView.GetProperty("answers")[0].GetProperty("evaluation").ValueKind);
 
         using var secondAnswer = await SubmitAnswerAsync(
             client,
@@ -181,6 +245,10 @@ public sealed class AsyncInterviewApiTests
             Assert.Equal(HttpStatusCode.Accepted, completeResponse.StatusCode);
         }
 
+        var completingFailed = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(PracticeValues.Completing, completingFailed.GetProperty("status").GetString());
+        Assert.Equal(InterviewResultStates.Failed, completingFailed.GetProperty("resultState").GetString());
+
         var callsBeforeRetry = aiProvider.GetCallCount(AiOperations.InterviewEvaluate.Purpose);
         using var retry = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/results/retry");
         retry.Headers.Add("Idempotency-Key", "async-failure-retry");
@@ -193,6 +261,38 @@ public sealed class AsyncInterviewApiTests
         var dbAfterRetry = scopeAfterRetry.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Equal(InterviewAnswerEvaluationStates.Ready,
             (await dbAfterRetry.InterviewAnswers.SingleAsync(item => item.QuestionId == questionId)).EvaluationStatus);
+    }
+
+    [Fact]
+    public async Task UnexpectedAnswerEvaluationFailureUsesInternalProvenanceCode()
+    {
+        var aiProvider = new TestAiProvider();
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, new InvalidOperationException("unexpected processing failure"));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, new InvalidOperationException("unexpected processing failure retry"));
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "async-internal-failure@example.test");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "async-internal-failure-start");
+        await ProcessJobsAsync(factory);
+        var questionId = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+
+        using var answer = await SubmitAnswerAsync(
+            client,
+            interviewId,
+            questionId,
+            "Tôi phân tích nguyên nhân và theo dõi kết quả.",
+            "async-internal-failure-answer");
+        Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
+        await ProcessJobsAsync(factory);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var persisted = await db.InterviewAnswers.SingleAsync(item => item.QuestionId == questionId);
+        Assert.Equal(InterviewAnswerEvaluationStates.Failed, persisted.EvaluationStatus);
+        Assert.Equal("INTERNAL_PROCESSING_FAILED", persisted.EvaluationErrorCode);
+        Assert.Null(persisted.Evaluation);
     }
 
     private static async Task<HttpResponseMessage> SubmitAnswerAsync(
@@ -229,6 +329,92 @@ public sealed class AsyncInterviewApiTests
     {
         using var scope = factory.Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(CancellationToken.None);
+    }
+
+    private static async Task SeedQuestionEntitlementAsync(
+        NexoraApiFactory factory,
+        Guid userId,
+        int questionLimit)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var plan = new Plan
+        {
+            Id = Guid.NewGuid(),
+            Code = $"postgres-plan-{Guid.NewGuid():N}",
+            Name = "PostgreSQL question retry plan",
+            IsActive = true,
+            CreatedAt = now
+        };
+        var price = new PlanPrice
+        {
+            Id = Guid.NewGuid(),
+            PlanId = plan.Id,
+            AmountMinor = 1,
+            Currency = "VND",
+            DurationDays = 30,
+            InterviewQuota = 1,
+            IsActive = true,
+            CreatedAt = now
+        };
+        var order = new Order
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            PlanPriceId = price.Id,
+            PlanCodeSnapshot = plan.Code,
+            AmountMinor = 1,
+            Currency = "VND",
+            DurationDays = 30,
+            InterviewQuota = 1,
+            Status = BillingValues.Fulfilled,
+            PaymentProvider = "test",
+            ProviderTransactionId = Guid.NewGuid().ToString("N"),
+            CheckoutUrl = "https://example.test",
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        var subscription = new Subscription
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            OrderId = order.Id,
+            Status = BillingValues.Active,
+            StartsAt = now.AddMinutes(-1),
+            EndsAt = now.AddDays(30),
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        var entitlement = new Entitlement
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            SubscriptionId = subscription.Id,
+            PlanCodeSnapshot = plan.Code,
+            Status = BillingValues.Active,
+            InterviewLimit = 1,
+            StartsAt = subscription.StartsAt,
+            EndsAt = subscription.EndsAt,
+            CreatedAt = now,
+            UpdatedAt = now,
+            ConcurrencyToken = Guid.NewGuid()
+        };
+        db.AddRange(plan, price, order, subscription, entitlement);
+        var definition = await db.FeatureDefinitions.SingleAsync(item => item.Code == FeatureValues.InterviewQuestionLimit);
+        db.EntitlementFeatures.Add(new EntitlementFeature
+        {
+            Id = Guid.NewGuid(),
+            EntitlementId = entitlement.Id,
+            FeatureDefinitionId = definition.Id,
+            FeatureCode = definition.Code,
+            IsEnabled = true,
+            Limit = questionLimit,
+            CreatedAt = now,
+            UpdatedAt = now,
+            ConcurrencyToken = Guid.NewGuid()
+        });
+        await db.SaveChangesAsync();
     }
 
     private static async Task<Account> RegisterAsync(HttpClient client, string email)

@@ -80,7 +80,11 @@ public sealed class PrivacyApiTests
         Assert.DoesNotContain("moderationStatus", exported.GetProperty("feedback")[0].GetRawText(), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("storageKey", exported.GetRawText(), StringComparison.OrdinalIgnoreCase);
         using (var publicFeedback = await client.GetAsync("/api/v1/feedback/public"))
-            Assert.Single((await DataAsync(publicFeedback)).EnumerateArray());
+        {
+            var publicData = await DataAsync(publicFeedback);
+            Assert.Equal(1, publicData.GetProperty("ratingCount").GetInt32());
+            Assert.Single(publicData.GetProperty("items").EnumerateArray());
+        }
 
         using var deletionRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/me/deletion-requests");
         deletionRequest.Headers.Add("Idempotency-Key", "privacy-delete-one");
@@ -112,7 +116,9 @@ public sealed class PrivacyApiTests
         }
 
         using var publicAfterDeletion = await client.GetAsync("/api/v1/feedback/public");
-        Assert.Empty((await DataAsync(publicAfterDeletion)).EnumerateArray());
+        var publicAfterDeletionData = await DataAsync(publicAfterDeletion);
+        Assert.Equal(0, publicAfterDeletionData.GetProperty("ratingCount").GetInt32());
+        Assert.Empty(publicAfterDeletionData.GetProperty("items").EnumerateArray());
     }
 
     [Fact]

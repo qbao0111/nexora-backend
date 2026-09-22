@@ -42,6 +42,11 @@ public sealed record PublicFeedbackResponse(
     string Comment,
     DateTimeOffset PublishedAt);
 
+public sealed record PublicFeedbackPageResponse(
+    double? AverageRating,
+    int RatingCount,
+    IReadOnlyCollection<PublicFeedbackResponse> Items);
+
 public sealed record AdminFeedbackResponse(
     Guid Id,
     Guid UserId,

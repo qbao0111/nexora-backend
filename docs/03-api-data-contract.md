@@ -68,6 +68,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/interviews/:id/practice-again` | Tạo session luyện lại mới từ interview/report đã hoàn thành; yêu cầu idempotency. |
 | POST | `/interviews/:id/answers` | Lưu câu trả lời, enqueue đánh giá và mở câu hỏi đã chuẩn bị tiếp theo. |
 | POST | `/interviews/:id/continue` | Sau khi đạt giới hạn Free, kiểm tra entitlement hiện tại và idempotently tạo câu hỏi trả phí tiếp theo trong cùng session. |
+| POST | `/interviews/:id/questions/retry` | Retry chuẩn bị câu hỏi bị lỗi cho paid/unlimited interview; yêu cầu `Idempotency-Key`, không charge thêm quota. |
 | POST | `/interviews/:id/complete` | Kết thúc, tạo report. |
 | POST | `/interviews/:id/report/retry` | Retry report đang `completing`, không charge thêm interview quota. |
 | POST | `/interviews/:id/results/retry` | Retry answer evaluation lỗi và tiếp tục report coordinator; không charge thêm quota. |
@@ -465,9 +466,17 @@ refresh/retry không làm lộ câu sau hoặc tạo sequence trùng. Paid/unlim
 Worker xử lý `InterviewAnswerEvaluationRequested` độc lập, cập nhật
 `evaluationState` theo `queued → processing → ready|failed`, rồi điều phối report
 khi session đang `completing` và mọi answer đã `ready`. `GET /interviews/{id}`
-trả `evaluationProgress`, `resultState` (`collecting|processing|ready|failed`) và
-`reportState`. Khi session còn `active`, evaluation payload luôn là `null` dù
-worker đã lưu kết quả; chỉ state/progress được công khai.
+trả `evaluationProgress`, `resultState` (`collecting|processing|ready|failed`),
+`reportState` và `questionPreparationState` (`ready|processing|failed`). Khi
+session còn `active`, `resultState` luôn là `collecting` và evaluation payload
+luôn là `null` dù worker đã lưu kết quả; chỉ state/progress được công khai.
+
+Nếu `questionPreparationState=failed`, client có thể gọi
+`POST /interviews/{id}/questions/retry` với một `Idempotency-Key` mới. Endpoint
+này chỉ áp dụng cho interview còn `active` có entitlement paid/unlimited; free
+user vẫn nhận lỗi `403` yêu cầu upgrade. Retry cùng key là idempotent và
+không tạo duplicate job hoặc quota event. Khi retry được nhận, state trở lại
+`processing`; sau khi worker phát hành câu hỏi tiếp theo, state là `ready`.
 
 **Per-answer AI feedback is intentionally withheld until the answering phase ends.**
 
@@ -634,9 +643,12 @@ dung/rating/consent reset feedback về `pending`, bỏ `featured`, moderator v�
 publication metadata. `DELETE` soft-delete và thu hồi consent. Privacy export
 chỉ gồm nội dung do user cung cấp cùng timestamps, không gồm moderation internals.
 
-Public read chỉ trả DTO allow-list `{ id, displayName, rating, comment,
-publishedAt }` cho row chưa xóa, user còn active, `approved`, có consent và
-comment không rỗng. Không trả user ID/email/moderator metadata. Admin list hỗ
+Public read trả envelope `{ averageRating, ratingCount, items }`. `items` (tối
+đa 20 phần tử, dù query `limit` lớn hơn) chỉ chứa DTO allow-list
+`{ id, displayName, rating, comment, publishedAt }` cho row chưa xóa, user còn
+active, `approved`, có consent và comment không rỗng. `averageRating` và
+`ratingCount` tính trên toàn bộ population đủ điều kiện, không chỉ trên `items`.
+Không trả user ID/email/moderator metadata. Admin list hỗ
 trợ status/search/featured/consent/rating/time filters, keyset cursor và
 `pageSize` tối đa 100. Approve/reject/feature/unfeature là các action riêng;
 feature chỉ hợp lệ khi feedback đã approved, còn consent và có comment. Mọi

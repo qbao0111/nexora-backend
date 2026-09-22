@@ -6,7 +6,10 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Nexora.Business.Authorization;
+using Nexora.Business.Feedback;
+using Nexora.Data.Feedback;
 using Nexora.Data.Identity;
+using Nexora.Data.Persistence;
 
 namespace Nexora.IntegrationTests;
 
@@ -34,7 +37,9 @@ public sealed class FeedbackApiTests
         using var anonymous = factory.CreateHttpsClient();
         using var hidden = await anonymous.GetAsync("/api/v1/feedback/public");
         Assert.Equal(HttpStatusCode.OK, hidden.StatusCode);
-        Assert.Empty((await DataAsync(hidden)).EnumerateArray());
+        var hiddenData = await DataAsync(hidden);
+        Assert.Equal(0, hiddenData.GetProperty("ratingCount").GetInt32());
+        Assert.Empty(hiddenData.GetProperty("items").EnumerateArray());
 
         var adminToken = await MakeAdminAsync(factory, user.UserId, "feedback-user@example.test");
         anonymous.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
@@ -48,7 +53,10 @@ public sealed class FeedbackApiTests
         Assert.Equal(HttpStatusCode.OK, featured.StatusCode);
 
         using var publicResponse = await anonymous.GetAsync("/api/v1/feedback/public?limit=20");
-        var publicItem = (await DataAsync(publicResponse)).EnumerateArray().Single();
+        var publicData = await DataAsync(publicResponse);
+        Assert.Equal(1, publicData.GetProperty("ratingCount").GetInt32());
+        Assert.Equal(5, publicData.GetProperty("averageRating").GetDouble());
+        var publicItem = publicData.GetProperty("items").EnumerateArray().Single();
         Assert.Equal(feedbackId, publicItem.GetProperty("id").GetGuid());
         Assert.DoesNotContain("userId", publicItem.EnumerateObject().Select(item => item.Name), StringComparer.OrdinalIgnoreCase);
         Assert.DoesNotContain("email", publicItem.EnumerateObject().Select(item => item.Name), StringComparer.OrdinalIgnoreCase);
@@ -62,7 +70,9 @@ public sealed class FeedbackApiTests
         });
         Assert.Equal(HttpStatusCode.OK, withdraw.StatusCode);
         using var hiddenAgain = await anonymous.GetAsync("/api/v1/feedback/public");
-        Assert.Empty((await DataAsync(hiddenAgain)).EnumerateArray());
+        var hiddenAgainData = await DataAsync(hiddenAgain);
+        Assert.Equal(0, hiddenAgainData.GetProperty("ratingCount").GetInt32());
+        Assert.Empty(hiddenAgainData.GetProperty("items").EnumerateArray());
     }
 
     [Fact]
@@ -163,7 +173,9 @@ public sealed class FeedbackApiTests
         using var current = await client.GetAsync("/api/v1/me/feedback");
         Assert.Equal(JsonValueKind.Null, (await DataAsync(current)).ValueKind);
         using var publicResponse = await admin.GetAsync("/api/v1/feedback/public");
-        Assert.Empty((await DataAsync(publicResponse)).EnumerateArray());
+        var publicData = await DataAsync(publicResponse);
+        Assert.Equal(0, publicData.GetProperty("ratingCount").GetInt32());
+        Assert.Empty(publicData.GetProperty("items").EnumerateArray());
 
         using var summaryResponse = await admin.GetAsync("/api/v1/admin/feedback/summary");
         var summary = await DataAsync(summaryResponse);
@@ -172,6 +184,61 @@ public sealed class FeedbackApiTests
         Assert.All(Enumerable.Range(1, 5), rating => Assert.Equal(
             0,
             distribution.GetProperty(rating.ToString(CultureInfo.InvariantCulture)).GetInt32()));
+    }
+
+    [Fact]
+    public async Task PublicFeedbackSummaryUsesCompleteEligiblePopulationWhenItemsAreLimited()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        var now = DateTimeOffset.UtcNow;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            for (var index = 0; index < 18; index++)
+            {
+                var email = $"public-summary-{index}@example.test";
+                var user = new ApplicationUser
+                {
+                    Id = Guid.NewGuid(),
+                    UserName = email,
+                    NormalizedUserName = email.ToUpperInvariant(),
+                    Email = email,
+                    NormalizedEmail = email.ToUpperInvariant(),
+                    EmailConfirmed = true,
+                    SecurityStamp = Guid.NewGuid().ToString("N"),
+                    ConcurrencyStamp = Guid.NewGuid().ToString("N"),
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    IsActive = index < 17
+                };
+                var eligible = index < 15;
+                db.ProductFeedbacks.Add(new ProductFeedback
+                {
+                    Id = Guid.NewGuid(),
+                    User = user,
+                    Rating = eligible ? (index % 5) + 1 : 5,
+                    Comment = eligible ? $"Public comment {index}" : "Hidden comment",
+                    Consent = eligible,
+                    Status = eligible ? FeedbackValues.Approved : index == 15 ? FeedbackValues.Pending : FeedbackValues.Approved,
+                    PublishedAt = eligible ? now : null,
+                    DeletedAt = index == 17 ? now : null,
+                    CreatedAt = now.AddMinutes(-index),
+                    UpdatedAt = now.AddMinutes(-index)
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+
+        using var client = factory.CreateHttpsClient();
+        using var response = await client.GetAsync("/api/v1/feedback/public?limit=3");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var data = await DataAsync(response);
+        Assert.Equal(15, data.GetProperty("ratingCount").GetInt32());
+        Assert.Equal(3.0, data.GetProperty("averageRating").GetDouble(), precision: 10);
+        Assert.Equal(3, data.GetProperty("items").GetArrayLength());
+        Assert.DoesNotContain("userId", data.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("email", data.GetRawText(), StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<Account> RegisterAsync(HttpClient client, string email, string displayName)

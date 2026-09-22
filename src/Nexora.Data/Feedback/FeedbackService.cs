@@ -88,12 +88,12 @@ public sealed class FeedbackService(
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlyCollection<PublicFeedbackView>> GetPublicAsync(
+    public async Task<PublicFeedbackPage> GetPublicAsync(
         int limit,
         CancellationToken cancellationToken)
     {
         limit = Math.Clamp(limit <= 0 ? FeedbackRules.DefaultPublicLimit : limit, 1, FeedbackRules.MaximumPublicLimit);
-        var query = dbContext.ProductFeedbacks.AsNoTracking()
+        var eligible = dbContext.ProductFeedbacks.AsNoTracking()
             .Where(item => item.DeletedAt == null &&
                           item.Status == FeedbackValues.Approved &&
                           item.Consent &&
@@ -101,7 +101,12 @@ public sealed class FeedbackService(
                           item.Comment.Trim() != string.Empty &&
                           item.User.IsActive &&
                           item.User.DeletionRequestedAt == null &&
-                          item.User.DeletedAt == null)
+                          item.User.DeletedAt == null);
+        var ratingCount = await eligible.CountAsync(cancellationToken);
+        double? averageRating = ratingCount == 0
+            ? null
+            : await eligible.Select(item => (double)item.Rating).AverageAsync(cancellationToken);
+        var query = eligible
             .Select(item => new PublicFeedbackRow(
                 item.Id,
                 item.User.Profile == null ? null : item.User.Profile.DisplayName,
@@ -126,12 +131,13 @@ public sealed class FeedbackService(
                 .Take(limit)
                 .ToArray();
 
-        return rows.Select(item => new PublicFeedbackView(
+        var items = rows.Select(item => new PublicFeedbackView(
             item.Id,
             string.IsNullOrWhiteSpace(item.DisplayName) ? PublicFallbackDisplayName : item.DisplayName.Trim(),
             item.Rating,
             item.Comment.Trim(),
             item.PublishedAt)).ToArray();
+        return new PublicFeedbackPage(averageRating, ratingCount, items);
     }
 
     public async Task<ProductFeedbackAdminPage> GetAdminPageAsync(

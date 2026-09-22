@@ -41,6 +41,13 @@ public static class InterviewResultStates
     public const string Failed = "failed";
 }
 
+public static class InterviewQuestionPreparationStates
+{
+    public const string Ready = "ready";
+    public const string Processing = "processing";
+    public const string Failed = "failed";
+}
+
 /// <summary>
 /// Server-owned semantics for interview questions. Sequence is ordering only;
 /// it never determines whether a question is a follow-up.
@@ -539,7 +546,8 @@ public sealed record InterviewView(
     InterviewContinuationView? Continuation = null,
     string ReportState = InterviewReportStates.None,
     string ResultState = InterviewResultStates.Collecting,
-    InterviewEvaluationProgress? EvaluationProgress = null);
+    InterviewEvaluationProgress? EvaluationProgress = null,
+    string QuestionPreparationState = InterviewQuestionPreparationStates.Processing);
 
 public sealed record AnswerResult(
     AnswerView Answer,
@@ -612,6 +620,7 @@ public interface IPracticeService
     Task<InterviewView> PracticeAgainAsync(Guid userId, Guid interviewId, PracticeAgainCommand command, string idempotencyKey, CancellationToken cancellationToken);
     Task<AnswerResult> SubmitAnswerAsync(Guid userId, Guid interviewId, Guid questionId, string content, int? durationSeconds, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> ContinueInterviewAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
+    Task<InterviewView> RetryQuestionPreparationAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> CompleteInterviewAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> RetryReportAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);
     Task<InterviewView> RetryResultsAsync(Guid userId, Guid interviewId, string idempotencyKey, CancellationToken cancellationToken);

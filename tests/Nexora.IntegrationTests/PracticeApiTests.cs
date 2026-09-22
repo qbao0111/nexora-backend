@@ -74,6 +74,15 @@ public sealed class PracticeApiTests
         using var continueResponse = await client.SendAsync(continueRequest);
         Assert.Equal(HttpStatusCode.Forbidden, continueResponse.StatusCode);
         Assert.Contains("INTERVIEW_UPGRADE_REQUIRED", await continueResponse.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        var freePaywallView = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(InterviewQuestionPreparationStates.Ready,
+            freePaywallView.GetProperty("questionPreparationState").GetString());
+
+        using var retryRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/questions/retry");
+        retryRequest.Headers.Add("Idempotency-Key", "a7-free-question-retry");
+        using var retryResponse = await client.SendAsync(retryRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, retryResponse.StatusCode);
+        Assert.Contains("INTERVIEW_UPGRADE_REQUIRED", await retryResponse.Content.ReadAsStringAsync(), StringComparison.Ordinal);
         Assert.Equal(0, aiProvider.GetCallCount(AiPurposes.InterviewFollowup));
     }
 
@@ -374,6 +383,170 @@ public sealed class PracticeApiTests
             Assert.Equal(AiOperations.InterviewFirstQuestion.PromptVersion, item.PromptVersion);
             Assert.Equal(aiProvider.ModelVersion, item.ModelVersion);
         });
+    }
+
+    [Fact]
+    public async Task FailedPaidContinuationQuestionPlanCanBeRetriedIdempotently()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var interviewId = await StartInterviewAsync(client, "a7-retry-plan-start", "technical");
+        await ProcessJobsAsync(factory);
+        var active = await GetInterviewAsync(client, interviewId);
+        var q1 = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        var q2 = (await AnswerAsync(client, interviewId, q1, "Primary answer one.", "a7-retry-plan-a1"))
+            .GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        var q3 = (await AnswerAsync(client, interviewId, q2, "Primary answer two.", "a7-retry-plan-a2"))
+            .GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        var freeResult = await AnswerAsync(client, interviewId, q3, "Primary answer three.", "a7-retry-plan-a3");
+        Assert.Equal(InterviewContinuationValues.UpgradeRequired,
+            freeResult.GetProperty("continuation").GetProperty("state").GetString());
+
+        await SeedEntitlementAsync(factory, account.UserId, 1, questionLimit: 6);
+        using (var continueRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/continue"))
+        {
+            continueRequest.Headers.Add("Idempotency-Key", "a7-retry-plan-continue");
+            using var continueResponse = await client.SendAsync(continueRequest);
+            Assert.Equal(HttpStatusCode.OK, continueResponse.StatusCode);
+            var queued = await DataAsync(continueResponse);
+            Assert.Equal(InterviewQuestionPreparationStates.Processing,
+                queued.GetProperty("questionPreparationState").GetString());
+        }
+
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
+            new AiProviderException(AiProviderFailureKind.Unavailable, "question plan failure"));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
+            new AiProviderException(AiProviderFailureKind.Unavailable, "question plan failure retry"));
+        await ProcessJobsAsync(factory);
+
+        var failed = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(PracticeValues.Active, failed.GetProperty("status").GetString());
+        Assert.Equal(InterviewResultStates.Collecting, failed.GetProperty("resultState").GetString());
+        Assert.Equal(InterviewQuestionPreparationStates.Failed,
+            failed.GetProperty("questionPreparationState").GetString());
+        Assert.Equal(3, failed.GetProperty("questions").GetArrayLength());
+
+        using (var retryRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/questions/retry"))
+        {
+            retryRequest.Headers.Add("Idempotency-Key", "a7-retry-plan-retry");
+            using var retryResponse = await client.SendAsync(retryRequest);
+            Assert.Equal(HttpStatusCode.Accepted, retryResponse.StatusCode);
+            var retryView = await DataAsync(retryResponse);
+            Assert.Equal(InterviewQuestionPreparationStates.Processing,
+                retryView.GetProperty("questionPreparationState").GetString());
+        }
+
+        using (var replayRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/questions/retry"))
+        {
+            replayRequest.Headers.Add("Idempotency-Key", "a7-retry-plan-retry");
+            using var replayResponse = await client.SendAsync(replayRequest);
+            Assert.Equal(HttpStatusCode.Accepted, replayResponse.StatusCode);
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(2, await db.OutboxEvents.CountAsync(item =>
+                item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
+            Assert.Equal(3, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        }
+
+        await ProcessJobsAsync(factory);
+        var recovered = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(InterviewQuestionPreparationStates.Ready,
+            recovered.GetProperty("questionPreparationState").GetString());
+        var q4 = recovered.GetProperty("questions").EnumerateArray().Single(item => item.GetProperty("sequence").GetInt32() == 4);
+        Assert.Equal(4, q4.GetProperty("sequence").GetInt32());
+        Assert.Equal(4, recovered.GetProperty("questions").GetArrayLength());
+
+        using var finalScope = factory.Services.CreateScope();
+        var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var sequences = await finalDb.InterviewQuestions
+            .Where(item => item.InterviewSessionId == interviewId)
+            .Select(item => item.Sequence)
+            .ToArrayAsync();
+        Assert.Equal(6, sequences.Length);
+        Assert.Equal(sequences.Length, sequences.Distinct().Count());
+        Assert.Equal(2, await finalDb.OutboxEvents.CountAsync(item =>
+            item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
+    }
+
+    [Fact]
+    public async Task UnlimitedBatchBoundaryQuestionPlanFailureCanBeRetriedWithoutDuplicateSequence()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 1, unlimitedQuestionLimit: true);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+
+        var interviewId = await StartInterviewAsync(client, "a7-unlimited-plan-start", "technical");
+        await ProcessJobsAsync(factory);
+        var current = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(1, current.GetProperty("questions").GetArrayLength());
+
+        for (var sequence = 1; sequence <= 20; sequence++)
+        {
+            var question = current.GetProperty("questions").EnumerateArray()
+                .Single(item => item.GetProperty("sequence").GetInt32() == sequence);
+            var answer = await AnswerAsync(
+                client,
+                interviewId,
+                question.GetProperty("id").GetGuid(),
+                $"Unlimited answer {sequence}.",
+                $"a7-unlimited-plan-answer-{sequence}");
+            if (sequence < 20)
+            {
+                Assert.Equal(sequence + 1, answer.GetProperty("nextQuestion").GetProperty("sequence").GetInt32());
+                current = await GetInterviewAsync(client, interviewId);
+            }
+            else
+            {
+                Assert.Equal(JsonValueKind.Null, answer.GetProperty("nextQuestion").ValueKind);
+            }
+        }
+
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
+            new AiProviderException(AiProviderFailureKind.Unavailable, "unlimited batch failure"));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
+            new AiProviderException(AiProviderFailureKind.Unavailable, "unlimited batch failure retry"));
+        await ProcessJobsAsync(factory);
+
+        var failed = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(InterviewQuestionPreparationStates.Failed,
+            failed.GetProperty("questionPreparationState").GetString());
+        Assert.Equal(20, failed.GetProperty("questions").GetArrayLength());
+        Assert.DoesNotContain(failed.GetProperty("questions").EnumerateArray(),
+            item => item.GetProperty("sequence").GetInt32() == 21);
+
+        using var retryRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/questions/retry");
+        retryRequest.Headers.Add("Idempotency-Key", "a7-unlimited-plan-retry");
+        using var retryResponse = await client.SendAsync(retryRequest);
+        Assert.Equal(HttpStatusCode.Accepted, retryResponse.StatusCode);
+        await ProcessJobsAsync(factory);
+
+        var recovered = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(InterviewQuestionPreparationStates.Ready,
+            recovered.GetProperty("questionPreparationState").GetString());
+        Assert.Contains(recovered.GetProperty("questions").EnumerateArray(),
+            item => item.GetProperty("sequence").GetInt32() == 21);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var sequences = await db.InterviewQuestions
+            .Where(item => item.InterviewSessionId == interviewId)
+            .Select(item => item.Sequence)
+            .ToArrayAsync();
+        Assert.Equal(sequences.Length, sequences.Distinct().Count());
+        Assert.Equal(2, await db.OutboxEvents.CountAsync(item =>
+            item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
     }
 
     [Fact]
@@ -1665,7 +1838,12 @@ public sealed class PracticeApiTests
         return new Webhook(body, timestamp, signature);
     }
 
-    private static async Task SeedEntitlementAsync(NexoraApiFactory factory, Guid userId, int quota, int? questionLimit = null)
+    private static async Task SeedEntitlementAsync(
+        NexoraApiFactory factory,
+        Guid userId,
+        int quota,
+        int? questionLimit = null,
+        bool unlimitedQuestionLimit = false)
     {
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
@@ -1705,7 +1883,7 @@ public sealed class PracticeApiTests
             ConcurrencyToken = Guid.NewGuid()
         };
         db.AddRange(plan, price, order, subscription, entitlement);
-        if (questionLimit is not null)
+        if (questionLimit is not null || unlimitedQuestionLimit)
         {
             var definition = await db.FeatureDefinitions.SingleAsync(item => item.Code == FeatureValues.InterviewQuestionLimit);
             db.EntitlementFeatures.Add(new EntitlementFeature
@@ -1715,7 +1893,7 @@ public sealed class PracticeApiTests
                 FeatureDefinitionId = definition.Id,
                 FeatureCode = definition.Code,
                 IsEnabled = true,
-                Limit = questionLimit,
+                Limit = unlimitedQuestionLimit ? null : questionLimit,
                 CreatedAt = now,
                 UpdatedAt = now,
                 ConcurrencyToken = Guid.NewGuid()

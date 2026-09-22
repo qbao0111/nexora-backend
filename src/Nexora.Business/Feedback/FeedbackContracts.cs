@@ -38,6 +38,11 @@ public sealed record PublicFeedbackView(
     string Comment,
     DateTimeOffset PublishedAt);
 
+public sealed record PublicFeedbackPage(
+    double? AverageRating,
+    int RatingCount,
+    IReadOnlyCollection<PublicFeedbackView> Items);
+
 public sealed record ProductFeedbackAdminView(
     Guid Id,
     Guid UserId,
@@ -87,7 +92,7 @@ public interface IProductFeedbackService
     Task<ProductFeedbackView?> GetCurrentAsync(Guid userId, CancellationToken cancellationToken);
     Task<ProductFeedbackView> UpsertAsync(Guid userId, FeedbackWriteCommand command, CancellationToken cancellationToken);
     Task DeleteCurrentAsync(Guid userId, CancellationToken cancellationToken);
-    Task<IReadOnlyCollection<PublicFeedbackView>> GetPublicAsync(int limit, CancellationToken cancellationToken);
+    Task<PublicFeedbackPage> GetPublicAsync(int limit, CancellationToken cancellationToken);
     Task<ProductFeedbackAdminPage> GetAdminPageAsync(ProductFeedbackAdminQuery query, CancellationToken cancellationToken);
     Task<ProductFeedbackSummary> GetSummaryAsync(CancellationToken cancellationToken);
     Task<ProductFeedbackAdminView> ApproveAsync(Guid adminUserId, Guid feedbackId, string? reason, CancellationToken cancellationToken);
