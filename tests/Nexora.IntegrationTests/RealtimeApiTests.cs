@@ -238,14 +238,20 @@ public sealed class RealtimeApiTests
         var completing = await PostAsync(client, $"/api/v1/interviews/{id}/complete", null);
         Assert.Equal("completing", completing.GetProperty("status").GetString());
         await ProcessJobsAsync(factory);
-        var completed = await socket.ReadEventAsync();
+        JsonElement completed = default;
+        for (var index = 0; index < 4; index++)
+        {
+            completed = await socket.ReadEventAsync();
+            if (completed.GetProperty("status").GetString() == PracticeValues.Completed)
+                break;
+        }
         Assert.Equal("completed", completed.GetProperty("status").GetString());
         Assert.Equal(id, completed.GetProperty("resourceId").GetGuid());
         using var report = await client.GetAsync($"/api/v1/interviews/{id}/report");
         Assert.Equal(HttpStatusCode.OK, report.StatusCode);
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        Assert.Equal(2, await db.RealtimeNotifications.CountAsync());
+        Assert.Equal(5, await db.RealtimeNotifications.CountAsync());
         Assert.Equal(3, await db.InterviewQuestions.CountAsync());
         Assert.Equal(1, await db.InterviewReports.CountAsync());
     }
@@ -309,8 +315,15 @@ public sealed class RealtimeApiTests
 
     internal static async Task ProcessJobsAsync(NexoraApiFactory factory)
     {
-        using var scope = factory.Services.CreateScope();
-        await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(CancellationToken.None);
+        for (var pass = 0; pass < 10; pass++)
+        {
+            using var scope = factory.Services.CreateScope();
+            if (await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>()
+                    .ProcessPendingAsync(CancellationToken.None) == 0)
+                return;
+        }
+
+        throw new InvalidOperationException("Practice jobs did not drain.");
     }
 
     internal static async Task<HubSocket> ConnectAsync(NexoraApiFactory factory, string token, bool queryToken = true)

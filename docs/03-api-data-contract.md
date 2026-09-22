@@ -1,7 +1,7 @@
 # API và mô hình dữ liệu
 
 **Status:** Approved implementation baseline  
-**Last updated:** 2026-09-18
+**Last updated:** 2026-09-22
 
 ## Quy ước API
 
@@ -32,6 +32,9 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | PATCH | `/me/profile` | Cập nhật một phần display name và số năm kinh nghiệm của owner. Email chỉ đọc từ Identity. |
 | PUT | `/me/primary-resume` | Chọn, thay thế hoặc bỏ chọn Primary Resume của owner. CV được chọn phải ở trạng thái `ready`. |
 | GET | `/me/career-profile` | Đọc aggregate Career Profile computed của owner. |
+| GET | `/me/feedback` | Đọc feedback hiện hành của owner. |
+| PUT | `/me/feedback` | Tạo/cập nhật một feedback hiện hành; edit reset moderation về `pending`. |
+| DELETE | `/me/feedback` | Soft-delete feedback hiện hành và thu hồi consent/publication. |
 | GET | `/me/export` | Export allowlisted core profile/billing/practice data của owner; không trả storage key, credential hoặc provider secret. |
 | POST | `/me/deletion-requests` | Yêu cầu xoá bất đồng bộ; bắt buộc `Idempotency-Key`, revoke session ngay và trả `202`. |
 | GET | `/plans` | Gói, giá, quyền lợi từ server. |
@@ -63,16 +66,18 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | GET | `/interviews` | Lịch sử interview owner-scoped, phân trang bounded, chỉ metadata an toàn. |
 | GET | `/interviews/:id` | Đọc session state/question hiện tại của owner. |
 | POST | `/interviews/:id/practice-again` | Tạo session luyện lại mới từ interview/report đã hoàn thành; yêu cầu idempotency. |
-| POST | `/interviews/:id/answers` | Lưu câu trả lời, đánh giá và mở câu hỏi tiếp theo theo policy server. |
+| POST | `/interviews/:id/answers` | Lưu câu trả lời, enqueue đánh giá và mở câu hỏi đã chuẩn bị tiếp theo. |
 | POST | `/interviews/:id/continue` | Sau khi đạt giới hạn Free, kiểm tra entitlement hiện tại và idempotently tạo câu hỏi trả phí tiếp theo trong cùng session. |
 | POST | `/interviews/:id/complete` | Kết thúc, tạo report. |
 | POST | `/interviews/:id/report/retry` | Retry report đang `completing`, không charge thêm interview quota. |
+| POST | `/interviews/:id/results/retry` | Retry answer evaluation lỗi và tiếp tục report coordinator; không charge thêm quota. |
 | GET | `/interviews/:id/report` | Đọc report immutable của owner khi completed. |
 | GET | `/job-descriptions` | Liệt kê Job Description của owner cho setup/history. |
 | GET | `/job-descriptions/:id` | Đọc Job Description của owner. |
 | GET | `/resume-analyses` | Lịch sử phân tích CV owner-scoped, phân trang bounded, không trả payload riêng tư. |
 | GET | `/dashboard` | Tiến độ, lịch sử và quota. |
 | GET | `/health/operations` | Vendor-neutral aggregate operational state (`Healthy`/`Degraded`), không trả count hay resource ID mặc định. |
+| GET | `/feedback/public` | Public testimonial allow-list: approved + consent + comment, không PII. |
 
 ### Admin API — tối thiểu cho vận hành
 
@@ -87,6 +92,12 @@ Tất cả route dưới đây yêu cầu policy `Admin`, reason code đối v�
 | GET | `/admin/operations/jobs` | Xem trạng thái job lỗi để retry có kiểm soát. |
 | GET | `/admin/dashboard` | Tổng quan người dùng, doanh thu và phân bổ vận hành theo kỳ. |
 | GET | `/admin/transactions` | Danh sách giao dịch toàn hệ thống với bộ lọc và keyset cursor. |
+| GET | `/admin/feedback` | Lọc/search feedback và phân trang keyset cho moderation. |
+| GET | `/admin/feedback/summary` | Tổng hợp count/rating distribution. |
+| POST | `/admin/feedback/:id/approve` | Approve feedback và audit action. |
+| POST | `/admin/feedback/:id/reject` | Reject feedback và audit action. |
+| POST | `/admin/feedback/:id/feature` | Feature feedback đã publishable và audit action. |
+| POST | `/admin/feedback/:id/unfeature` | Bỏ feature và audit action. |
 
 `GET /api/v1/admin/dashboard` nhận `granularity=day|month|year`, `from`, `to`
 (ISO date) và `currency`. Mặc định lần lượt là 30 ngày, 12 tháng hoặc 5 năm;
@@ -444,7 +455,21 @@ answer/session timing supplied by the client and is not proof of an audio
 recording. Evaluation, follow-up context, history, and reports use the
 persisted final `content` value.
 
-Response có answer đã lưu và question tiếp theo hoặc `isComplete: true`. Một question chỉ nhận một answer chính thức trừ khi endpoint revision được định nghĩa riêng.
+Response trả answer đã lưu với `evaluationState: "queued"`, `evaluation: null`,
+và câu hỏi đã chuẩn bị kế tiếp hoặc `isComplete: true`. Request path không gọi
+AI. Cùng `Idempotency-Key` trả lại answer cũ; một question chỉ nhận một answer
+chính thức. Câu hỏi chuẩn bị sẵn chỉ xuất hiện sau khi câu trước được persist;
+refresh/retry không làm lộ câu sau hoặc tạo sequence trùng. Paid/unlimited plan
+được chuẩn bị theo batch bounded và nối thêm khi cần.
+
+Worker xử lý `InterviewAnswerEvaluationRequested` độc lập, cập nhật
+`evaluationState` theo `queued → processing → ready|failed`, rồi điều phối report
+khi session đang `completing` và mọi answer đã `ready`. `GET /interviews/{id}`
+trả `evaluationProgress`, `resultState` (`collecting|processing|ready|failed`) và
+`reportState`. Khi session còn `active`, evaluation payload luôn là `null` dù
+worker đã lưu kết quả; chỉ state/progress được công khai.
+
+**Per-answer AI feedback is intentionally withheld until the answering phase ends.**
 
 Mỗi phần tử trong `interview.questions` là server-owned và có thêm metadata lineage:
 
@@ -463,17 +488,17 @@ Mỗi phần tử trong `interview.questions` là server-owned và có thêm met
 `kind` chỉ nhận `primary` hoặc `followup`; `topic` là semantic focus và
 `parentQuestionId` bắt buộc đối với follow-up, trỏ tới một câu hỏi trước trong
 cùng session. `sequence` chỉ dùng để sắp xếp, không được dùng để suy ra
-follow-up. A7 dành các topic primary miễn phí theo thứ tự
-`self_introduction`, `behavioral_star`, `motivation_role_fit`; sau Q3, response
+follow-up. A7 dùng deterministic free-topic policy theo `interviewType` và
+context CV/JD; Q1 luôn là `self_introduction`, còn Q2-Q3 cho user trải nghiệm
+mode đã chọn trước paywall. Sau Q3, response
 trả `nextQuestion: null` và continuation server-owned. `continuation.state` có
 thể là `in_progress`, `upgrade_required` hoặc `max_questions_reached`; chỉ
 `upgrade_required` cho phép gọi endpoint `/interviews/{id}/continue` sau khi
 entitlement đã được cập nhật. Endpoint này yêu cầu `Idempotency-Key`, không
 nhận `paid`, `plan` hay quota từ client, không tạo session mới và không gọi AI
-trước khi server re-check entitlement. Câu hỏi trả phí đầu tiên là một
-`primary` với topic được chọn từ session context; một `followup` chỉ được tạo
-khi evaluation STAR của câu hỏi behavioral trả phí cho thấy thiếu thành phần
-và luôn kế thừa topic/parent rõ ràng. Retry cùng key trả cùng session/question;
+trước khi server re-check entitlement. Normal progression dùng server-owned
+primary topic plan đã chuẩn bị, không phụ thuộc evaluation của câu trước;
+adaptive follow-up chỉ còn ở flow explicit hỗ trợ lineage. Retry cùng key trả cùng session/question;
 key khác payload trả `409 IDEMPOTENCY_CONFLICT`.
 
 `answer.evaluation` giữ các field generic hiện có và có thêm coaching theo từng câu trả lời. Các field `strengths`, `improvements`, `improvedAnswer` và nullable `sampleAnswer` được tạo trong cùng một `interview.evaluate` call với rubric/STAR; server chỉ lưu core evaluation sau khi schema và semantic validation thành công. `sampleAnswer` được kiểm tra độc lập: nội dung thiếu/sai schema, framework không hỗ trợ, hoặc thiếu phần bắt buộc được bỏ thành `null`/không có field, không làm hỏng core evaluation hợp lệ và không tạo thêm AI call.
@@ -585,6 +610,13 @@ Report đã tồn tại luôn thắng và cho `ready`; nếu chưa có report th
 mới nhất quyết định `failed` hoặc `processing`. Response retry report được chấp
 nhận trả `processing`; cùng `Idempotency-Key` không enqueue thêm job.
 
+`POST /interviews/{id}/complete` chuyển session sang `completing` và trả `202`
+ngay. Report chỉ được enqueue sau khi toàn bộ answer evaluation sẵn sàng. Nếu
+một evaluation thất bại, session giữ `completing`, `resultState=failed`, không
+fabricate report. `POST /interviews/{id}/results/retry` yêu cầu
+`Idempotency-Key`, enqueue lại đúng các evaluation lỗi rồi tiếp tục coordinator;
+replay không tạo job trùng và không reserve/consume quota mới.
+
 Nếu report AI hết đúng ngân sách hai provider call với `AI_OUTPUT_INVALID`,
 worker được phép tạo fallback deterministic chỉ từ các `AnswerEvaluation` đã
 persist và candidate answers tương ứng. Fallback tính trung bình bốn rubric,
@@ -593,6 +625,22 @@ toàn bộ canonical report validation. Thiếu strength/evidence an toàn thì 
 closed. Provider unavailable/rate-limit/auth/config không đi qua fallback này.
 Metadata fallback là `deterministic:validated-answer-aggregate-v1` và
 `interview-report-fallback-v1`; report/history cũ không bị sửa.
+
+### Product feedback
+
+Mỗi user có tối đa một feedback hiện hành (`rating` 1–5, `comment` tối đa
+1.000 ký tự, `allowPublicDisplay`). `PUT /me/feedback` là upsert; thay đổi nội
+dung/rating/consent reset feedback về `pending`, bỏ `featured`, moderator và
+publication metadata. `DELETE` soft-delete và thu hồi consent. Privacy export
+chỉ gồm nội dung do user cung cấp cùng timestamps, không gồm moderation internals.
+
+Public read chỉ trả DTO allow-list `{ id, displayName, rating, comment,
+publishedAt }` cho row chưa xóa, user còn active, `approved`, có consent và
+comment không rỗng. Không trả user ID/email/moderator metadata. Admin list hỗ
+trợ status/search/featured/consent/rating/time filters, keyset cursor và
+`pageSize` tối đa 100. Approve/reject/feature/unfeature là các action riêng;
+feature chỉ hợp lệ khi feedback đã approved, còn consent và có comment. Mọi
+action moderation ghi audit metadata, không đưa comment vào log.
 
 ### Scenario Practice v2
 
