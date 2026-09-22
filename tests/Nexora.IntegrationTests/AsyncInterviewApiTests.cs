@@ -342,7 +342,7 @@ public sealed class AsyncInterviewApiTests
         var plan = new Plan
         {
             Id = Guid.NewGuid(),
-            Code = $"postgres-plan-{Guid.NewGuid():N}",
+            Code = $"pg-{Guid.NewGuid():N}",
             Name = "PostgreSQL question retry plan",
             IsActive = true,
             CreatedAt = now
