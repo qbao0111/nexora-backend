@@ -1003,6 +1003,16 @@ public sealed partial class PracticeService(
         }
 
         var session = await FindInterviewForUpdateAsync(userId, interviewId, cancellationToken) ?? throw NotFound();
+        // A concurrent replay can wait on the interview row lock after its
+        // initial idempotency reads. Re-check after acquiring the lock so it
+        // replays the committed retry instead of reporting a transient state
+        // conflict.
+        prior = await FindIdempotentAsync(userId, "interview.questions.retry", key, fingerprint, cancellationToken);
+        if (prior is not null)
+        {
+            await CommitAsync(transaction, cancellationToken);
+            return await GetInterviewAsync(userId, prior.ResourceId, cancellationToken);
+        }
         await dbContext.Entry(session).Collection(item => item.Questions).LoadAsync(cancellationToken);
         await dbContext.Entry(session).Collection(item => item.Answers).LoadAsync(cancellationToken);
         ValidateQuestionContracts(session.Questions);

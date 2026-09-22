@@ -123,6 +123,104 @@ public sealed class AsyncInterviewApiTests
             item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
     }
 
+    [PostgresFact]
+    public async Task ConcurrentQuestionPreparationRetryWithSameIdempotencyKeyIsReplayedOnPostgres()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = NexoraApiFactory.CreatePostgres(
+            Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!, aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "async-plan-concurrent-postgres@example.test");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "async-plan-concurrent-postgres-start");
+        await ProcessJobsAsync(factory);
+
+        var active = await GetInterviewAsync(client, interviewId);
+        var q1 = active.GetProperty("questions")[0].GetProperty("id").GetGuid();
+        using (var firstAnswer = await SubmitAnswerAsync(client, interviewId, q1, "Primary answer one.", "async-plan-concurrent-postgres-a1"))
+        {
+            var q2 = (await DataAsync(firstAnswer)).GetProperty("nextQuestion").GetProperty("id").GetGuid();
+            using var secondAnswer = await SubmitAnswerAsync(client, interviewId, q2, "Primary answer two.", "async-plan-concurrent-postgres-a2");
+            var q3 = (await DataAsync(secondAnswer)).GetProperty("nextQuestion").GetProperty("id").GetGuid();
+            using var thirdAnswer = await SubmitAnswerAsync(client, interviewId, q3, "Primary answer three.", "async-plan-concurrent-postgres-a3");
+            Assert.Equal(JsonValueKind.Null, (await DataAsync(thirdAnswer)).GetProperty("nextQuestion").ValueKind);
+        }
+        await SeedQuestionEntitlementAsync(factory, account.UserId, questionLimit: 6);
+
+        using (var continueRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/continue"))
+        {
+            continueRequest.Headers.Add("Idempotency-Key", "async-plan-concurrent-postgres-continue");
+            using var continueResponse = await client.SendAsync(continueRequest);
+            Assert.Equal(HttpStatusCode.OK, continueResponse.StatusCode);
+        }
+
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
+            new AiProviderException(AiProviderFailureKind.Unavailable, "postgres concurrent question plan failure"));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
+            new AiProviderException(AiProviderFailureKind.Unavailable, "postgres concurrent question plan failure retry"));
+        await ProcessJobsAsync(factory);
+        var failed = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(PracticeValues.Active, failed.GetProperty("status").GetString());
+        Assert.Equal(InterviewQuestionPreparationStates.Failed,
+            failed.GetProperty("questionPreparationState").GetString());
+        Assert.Equal(3, failed.GetProperty("questions").GetArrayLength());
+        Assert.DoesNotContain(failed.GetProperty("questions").EnumerateArray(),
+            item => item.GetProperty("sequence").GetInt32() == 4);
+
+        using var beforeScope = factory.Services.CreateScope();
+        var beforeDb = beforeScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var usageBeforeRetry = await beforeDb.UsageEvents.CountAsync(item => item.UserId == account.UserId);
+
+        using var lockScope = factory.Services.CreateScope();
+        var lockDb = lockScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        await lockDb.Database.OpenConnectionAsync();
+        await using var lockTransaction = await lockDb.Database.BeginTransactionAsync();
+        await lockDb.InterviewSessions
+            .FromSqlInterpolated($"SELECT * FROM interview_sessions WHERE \"Id\" = {interviewId} FOR UPDATE")
+            .SingleAsync();
+
+        const string retryKey = "async-plan-concurrent-postgres-retry";
+        using var firstClient = factory.CreateHttpsClient();
+        using var secondClient = factory.CreateHttpsClient();
+        firstClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        secondClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var bothRetries = Task.WhenAll(
+            RetryQuestionAsync(firstClient, interviewId, retryKey),
+            RetryQuestionAsync(secondClient, interviewId, retryKey));
+        await Task.Delay(TimeSpan.FromMilliseconds(250));
+        Assert.False(bothRetries.IsCompleted);
+        await lockTransaction.CommitAsync();
+
+        var retryResponses = await bothRetries;
+        using var firstRetry = retryResponses[0];
+        using var secondRetry = retryResponses[1];
+        Assert.Equal(HttpStatusCode.Accepted, firstRetry.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, secondRetry.StatusCode);
+
+        using var afterScope = factory.Services.CreateScope();
+        var afterDb = afterScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(usageBeforeRetry, await afterDb.UsageEvents.CountAsync(item => item.UserId == account.UserId));
+        Assert.Equal(1, await afterDb.IdempotencyRecords.CountAsync(item =>
+            item.ActorId == account.UserId && item.Operation == "interview.questions.retry" && item.Key == retryKey));
+        Assert.Equal(2, await afterDb.OutboxEvents.CountAsync(item =>
+            item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
+
+        await ProcessJobsAsync(factory);
+        var recovered = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(InterviewQuestionPreparationStates.Ready,
+            recovered.GetProperty("questionPreparationState").GetString());
+        Assert.Contains(recovered.GetProperty("questions").EnumerateArray(),
+            item => item.GetProperty("sequence").GetInt32() == 4);
+        Assert.Equal(4, recovered.GetProperty("questions").GetArrayLength());
+        Assert.Equal(6, await afterDb.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(6, await afterDb.InterviewQuestions
+            .Where(item => item.InterviewSessionId == interviewId)
+            .Select(item => item.Sequence)
+            .Distinct()
+            .CountAsync());
+    }
+
     [Fact]
     public async Task AnswerPersistsAndReleasesPreparedQuestionWithoutCallingAiSynchronously()
     {
@@ -302,6 +400,13 @@ public sealed class AsyncInterviewApiTests
         {
             Content = JsonContent.Create(new { questionId, content, durationSeconds = 30 })
         };
+        request.Headers.Add("Idempotency-Key", key);
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> RetryQuestionAsync(HttpClient client, Guid interviewId, string key)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/questions/retry");
         request.Headers.Add("Idempotency-Key", key);
         return await client.SendAsync(request);
     }
