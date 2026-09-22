@@ -79,6 +79,29 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | GET | `/dashboard` | Tiến độ, lịch sử và quota. |
 | GET | `/health/operations` | Vendor-neutral aggregate operational state (`Healthy`/`Degraded`), không trả count hay resource ID mặc định. |
 | GET | `/feedback/public` | Public testimonial allow-list: approved + consent + comment, không PII. |
+| GET | `/public/platform-stats` | Aggregate công khai cho landing; chỉ trả count/rating, không PII. |
+
+### Public platform stats
+
+`GET /api/v1/public/platform-stats` không yêu cầu authentication và trả:
+
+```json
+{
+  "data": {
+    "userCount": 120,
+    "completedInterviewCount": 340,
+    "completedCvAnalysisCount": 210,
+    "averageRating": 4.8,
+    "ratingCount": 42
+  }
+}
+```
+
+- `userCount`: user có `IsActive=true`, `DeletedAt=null` và `DeletionRequestedAt=null`.
+- `completedInterviewCount`: interview session ở canonical status `completed` và có `CompletedAt`.
+- `completedCvAnalysisCount`: resume analysis ở canonical status `completed` và có `CompletedAt`.
+- `averageRating`/`ratingCount`: dùng đúng eligibility query của `GET /feedback/public` (approved, consented, non-empty comment, feedback chưa xoá và user còn active/chưa yêu cầu xoá/chưa xoá).
+- Response chỉ chứa aggregate allow-list ở trên; không trả user ID, email, breakdown theo user hay moderation state. Kết quả được cache in-memory 10 phút trên mỗi API instance.
 
 ### Admin API — tối thiểu cho vận hành
 
