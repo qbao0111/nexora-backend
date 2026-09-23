@@ -1545,7 +1545,10 @@ public sealed class PracticeApiTests
     }
 
     [Fact]
-    public async Task FiveAnswersRecoverWithoutUserRetryAndCompleteZeroStrengthReport()
+    public Task FiveAnswersRecoverWithoutUserRetryAndCompleteZeroStrengthReport() =>
+        RunFiveAnswerRecoveryScenarioAsync(aiProvider => new NexoraApiFactory(aiProvider));
+
+    internal static async Task RunFiveAnswerRecoveryScenarioAsync(Func<TestAiProvider, NexoraApiFactory> createFactory)
     {
         const string candidateAnswer = "Tôi chưa có ví dụ cụ thể.";
         var aiProvider = new TestAiProvider();
@@ -1571,7 +1574,7 @@ public sealed class PracticeApiTests
             new AiProviderException(AiProviderFailureKind.InvalidResponse, "Truncated report.",
                 retryHint: AiProviderRetryHint.OutputTruncated));
 
-        using var factory = new NexoraApiFactory(aiProvider);
+        await using var factory = createFactory(aiProvider);
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
         var account = await RegisterAsync(client);
@@ -1599,8 +1602,8 @@ public sealed class PracticeApiTests
         var report = await db.InterviewReports.SingleAsync(item => item.InterviewSessionId == interviewId);
         Assert.Equal("deterministic:validated-answer-aggregate-v2", report.ModelVersion);
         Assert.Empty(JsonSerializer.Deserialize<string[]>(report.Strengths, JsonOptions)!);
-        Assert.Empty(await db.OutboxEvents.Where(item => item.AggregateId == interviewId &&
-            item.Type == "InterviewReportRequested" && item.Status != BillingValues.Processed).ToArrayAsync());
+        Assert.Equal(BillingValues.Processed, (await db.OutboxEvents.SingleAsync(item =>
+            item.AggregateId == interviewId && item.Type == "InterviewReportRequested")).Status);
     }
 
     [Fact]
