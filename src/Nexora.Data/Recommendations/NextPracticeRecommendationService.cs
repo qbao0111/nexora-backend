@@ -17,6 +17,17 @@ public sealed class NextPracticeRecommendationService(
     {
         var learningPath = await learningPathService.GetAsync(userId, cancellationToken);
         var skillProfile = await skillProfileService.GetAsync(userId, cancellationToken);
+        return await SelectAsync(userId, learningPath, skillProfile, cancellationToken);
+    }
+
+    public async Task<NextPracticeRecommendationView?> GetAsync(Guid userId, SkillProfileView skillProfile, CancellationToken cancellationToken)
+    {
+        var learningPath = await learningPathService.GetAsync(userId, cancellationToken);
+        return await SelectAsync(userId, learningPath, skillProfile, cancellationToken);
+    }
+
+    private async Task<NextPracticeRecommendationView?> SelectAsync(Guid userId, LearningPathView learningPath, SkillProfileView skillProfile, CancellationToken cancellationToken)
+    {
         var recommendation = NextPracticeRecommendationPolicy.Select(learningPath, skillProfile);
         if (recommendation?.ActivityType != LearningPathValues.Interview || recommendation.Action is null)
             return recommendation;

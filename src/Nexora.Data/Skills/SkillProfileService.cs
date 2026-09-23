@@ -4,6 +4,7 @@ using Nexora.Business.Ai;
 using Nexora.Business.Practice;
 using Nexora.Business.Skills;
 using Nexora.Data.Persistence;
+using Nexora.Data.Progress;
 
 namespace Nexora.Data.Skills;
 
@@ -13,34 +14,50 @@ public sealed class SkillProfileService(NexoraDbContext dbContext) : ISkillProfi
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly ScenarioEvaluateOperation ScenarioOperation = new();
 
-    public async Task<SkillProfileView> GetAsync(Guid userId, CancellationToken cancellationToken)
+    public Task<SkillProfileView> GetAsync(Guid userId, CancellationToken cancellationToken) =>
+        GetCoreAsync(userId, snapshot: null, cancellationToken);
+
+    internal Task<SkillProfileView> GetFromSnapshotAsync(Guid userId, DashboardEvidenceSnapshot snapshot, CancellationToken cancellationToken) =>
+        GetCoreAsync(userId, snapshot, cancellationToken);
+
+    private async Task<SkillProfileView> GetCoreAsync(Guid userId, DashboardEvidenceSnapshot? snapshot, CancellationToken cancellationToken)
     {
         var resumeAnalyses = await dbContext.ResumeAnalyses.AsNoTracking()
             .Where(item => item.UserId == userId && item.Status == PracticeValues.Completed && item.Result != null && item.Resume.DeletedAt == null)
             .Select(item => new ResumeAnalysisRow(item.Id, item.Mode, item.Result, item.CompletedAt, item.UpdatedAt))
             .ToArrayAsync(cancellationToken);
 
-        var reports = await dbContext.InterviewReports.AsNoTracking()
-            .Where(item => item.UserId == userId && item.InterviewSession.UserId == userId)
-            .Select(item => new InterviewReportRow(item.Id, item.InterviewSessionId, item.Rubric, item.CreatedAt))
-            .ToArrayAsync(cancellationToken);
+        var reports = snapshot is null
+            ? await dbContext.InterviewReports.AsNoTracking()
+                .Where(item => item.UserId == userId && item.InterviewSession.UserId == userId)
+                .Select(item => new InterviewReportRow(item.Id, item.InterviewSessionId, item.Rubric, item.CreatedAt))
+                .ToArrayAsync(cancellationToken)
+            : snapshot.Reports.Select(item => new InterviewReportRow(item.Id, item.InterviewSessionId, item.Rubric, item.CreatedAt)).ToArray();
 
-        var answers = await dbContext.InterviewAnswers.AsNoTracking()
-            .Where(item => item.UserId == userId && item.InterviewSession.UserId == userId &&
-                           item.EvaluationStatus == InterviewAnswerEvaluationStates.Ready && item.Evaluation != null)
-            .Select(item => new InterviewAnswerRow(item.Id, item.InterviewSessionId, item.Evaluation!, item.CreatedAt))
-            .ToArrayAsync(cancellationToken);
+        var answers = snapshot is null
+            ? await dbContext.InterviewAnswers.AsNoTracking()
+                .Where(item => item.UserId == userId && item.InterviewSession.UserId == userId &&
+                               item.EvaluationStatus == InterviewAnswerEvaluationStates.Ready && item.Evaluation != null)
+                .Select(item => new InterviewAnswerRow(item.Id, item.InterviewSessionId, item.Evaluation!, item.CreatedAt))
+                .ToArrayAsync(cancellationToken)
+            : snapshot.Answers.Select(item => new InterviewAnswerRow(item.Id, item.InterviewSessionId, item.Evaluation, item.CreatedAt)).ToArray();
 
-        var starAttempts = await dbContext.StarAttempts.AsNoTracking()
-            .Where(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed && item.EvaluationJson != null)
-            .Select(item => new StarAttemptRow(item.Id, item.EvaluationJson, item.CompletedAt, item.UpdatedAt))
-            .ToArrayAsync(cancellationToken);
+        var starAttempts = snapshot is null
+            ? await dbContext.StarAttempts.AsNoTracking()
+                .Where(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed && item.EvaluationJson != null)
+                .Select(item => new StarAttemptRow(item.Id, item.EvaluationJson, item.CompletedAt, item.UpdatedAt))
+                .ToArrayAsync(cancellationToken)
+            : snapshot.Stars.Where(item => item.EvaluationJson != null)
+                .Select(item => new StarAttemptRow(item.Id, item.EvaluationJson, item.CompletedAt, item.UpdatedAt)).ToArray();
 
-        var scenarioAttempts = await dbContext.ScenarioAttempts.AsNoTracking()
-            .Where(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed &&
-                           item.EvaluationJson != null && item.Scenario.Competency != null && item.Scenario.Competency != string.Empty)
-            .Select(item => new ScenarioAttemptRow(item.Id, item.Scenario.Competency, item.EvaluationJson, item.CompletedAt, item.UpdatedAt))
-            .ToArrayAsync(cancellationToken);
+        var scenarioAttempts = snapshot is null
+            ? await dbContext.ScenarioAttempts.AsNoTracking()
+                .Where(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed &&
+                               item.EvaluationJson != null && item.Scenario.Competency != null && item.Scenario.Competency != string.Empty)
+                .Select(item => new ScenarioAttemptRow(item.Id, item.Scenario.Competency, item.EvaluationJson, item.CompletedAt, item.UpdatedAt))
+                .ToArrayAsync(cancellationToken)
+            : snapshot.Scenarios.Where(item => item.EvaluationJson != null && !string.IsNullOrEmpty(item.Competency))
+                .Select(item => new ScenarioAttemptRow(item.Id, item.Competency!, item.EvaluationJson, item.CompletedAt, item.UpdatedAt)).ToArray();
 
         var evidence = new List<SkillProfileEvidence>();
         ResumeAnalysisSelection? latestValidResumeAnalysis = null;

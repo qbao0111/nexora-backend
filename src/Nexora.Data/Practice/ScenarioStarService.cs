@@ -10,6 +10,7 @@ using Nexora.Business.Common;
 using Nexora.Business.Practice;
 using Nexora.Data.Billing;
 using Nexora.Data.Persistence;
+using Nexora.Data.Progress;
 
 namespace Nexora.Data.Practice;
 
@@ -548,10 +549,24 @@ public sealed partial class ScenarioStarService(
                 Parse(item.EvaluationJson), item.ErrorCode, item.CreatedAt, item.CompletedAt))
             .ToArrayAsync(cancellationToken);
 
-    public async Task<ProgressView> GetAsync(Guid userId, CancellationToken cancellationToken)
+    public async Task<ProgressView> GetAsync(Guid userId, CancellationToken cancellationToken) =>
+        (await GetProgressAsync(userId, includeSnapshot: false, cancellationToken)).View;
+
+    internal async Task<(ProgressView View, DashboardEvidenceSnapshot Snapshot)> GetDashboardAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var result = await GetProgressAsync(userId, includeSnapshot: true, cancellationToken);
+        return (result.View, result.Snapshot!);
+    }
+
+    private async Task<(ProgressView View, DashboardEvidenceSnapshot? Snapshot)> GetProgressAsync(
+        Guid userId, bool includeSnapshot, CancellationToken cancellationToken)
     {
         var access = await featureEntitlementService.GetAsync(userId, FeatureValues.ProgressAnalytics, cancellationToken);
         if (!access.Enabled) throw new BusinessException("FEATURE_NOT_AVAILABLE", "Tính năng này không có trong gói hiện tại.", BusinessErrorKind.Forbidden);
+
+        var snapshot = includeSnapshot
+            ? await DashboardEvidenceSnapshot.LoadAsync(dbContext, userId, cancellationToken)
+            : null;
 
         var isSqlite = string.Equals(
             dbContext.Database.ProviderName,
@@ -561,7 +576,10 @@ public sealed partial class ScenarioStarService(
             .CountAsync(item => item.UserId == userId && item.Status == PracticeValues.Completed, cancellationToken);
         var recentScoresQuery = dbContext.InterviewReports.AsNoTracking()
             .Where(item => item.UserId == userId);
-        var recentScores = isSqlite
+        var recentScores = snapshot is not null
+            ? snapshot.Reports.OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
+                .Take(10).Select(item => new RecentInterviewScore(item.InterviewSessionId, item.OverallScore, item.CreatedAt)).ToArray()
+            : isSqlite
             ? await dbContext.InterviewReports
                 .FromSqlInterpolated($"SELECT * FROM interview_reports WHERE \"UserId\" = {userId} ORDER BY \"CreatedAt\" DESC, \"Id\" DESC LIMIT 10")
                 .AsNoTracking()
@@ -575,10 +593,12 @@ public sealed partial class ScenarioStarService(
                 .ToArrayAsync(cancellationToken);
         var avgScore = recentScores.Length > 0 ? (double?)recentScores.Average(item => item.Score) : null;
 
-        var starAnswers = await dbContext.InterviewAnswers.AsNoTracking()
-            .Where(item => item.UserId == userId &&
-                           item.EvaluationStatus == InterviewAnswerEvaluationStates.Ready && item.Evaluation != null)
-            .Select(item => item.Evaluation!).ToArrayAsync(cancellationToken);
+        var starAnswers = snapshot is not null
+            ? snapshot.Answers.Select(item => item.Evaluation).ToArray()
+            : await dbContext.InterviewAnswers.AsNoTracking()
+                .Where(item => item.UserId == userId &&
+                               item.EvaluationStatus == InterviewAnswerEvaluationStates.Ready && item.Evaluation != null)
+                .Select(item => item.Evaluation!).ToArrayAsync(cancellationToken);
         ProgressStarAverages? starAverages = null;
         var starComponents = starAnswers.SelectMany(eval =>
         {
@@ -604,52 +624,67 @@ public sealed partial class ScenarioStarService(
                 (int)starComponents.Average(x => x.res));
         }
 
-        var completedScenarios = await dbContext.ScenarioAttempts.CountAsync(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed, cancellationToken);
-        var scenarioScores = await dbContext.ScenarioAttempts.AsNoTracking()
-            .Where(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed && item.EvaluationJson != null)
-            .ToArrayAsync(cancellationToken);
-        var avgScenarioScore = scenarioScores.Length > 0
-            ? (double?)scenarioScores.Select(item => ParseScenarioScore(item.EvaluationJson)).Where(s => s.HasValue).Average(s => s!.Value)
+        var scenarioScores = snapshot is not null
+            ? snapshot.Scenarios.Select(item => item.EvaluationJson).ToArray()
+            : await dbContext.ScenarioAttempts.AsNoTracking()
+                .Where(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed)
+                .Select(item => item.EvaluationJson)
+                .ToArrayAsync(cancellationToken);
+        var completedScenarios = scenarioScores.Length;
+        var scoredScenarios = scenarioScores.Select(ParseScenarioScore).Where(score => score.HasValue).ToArray();
+        var avgScenarioScore = scoredScenarios.Length > 0
+            ? (double?)scoredScenarios.Average(score => score!.Value)
             : null;
-        var completedStarAttempts = await dbContext.StarAttempts.CountAsync(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed, cancellationToken);
+        var completedStarAttempts = snapshot is not null
+            ? snapshot.Stars.Length
+            : await dbContext.StarAttempts.CountAsync(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed, cancellationToken);
 
-        var recentActivity = new List<RecentActivity>();
-        var recentInterviewsQuery = dbContext.InterviewSessions.AsNoTracking()
-            .Where(item => item.UserId == userId)
-            .Select(item => new { item.Id, item.UpdatedAt });
-        var recentInterviews = isSqlite
-            ? await dbContext.InterviewSessions
+        List<RecentActivity> recentActivity;
+        if (isSqlite)
+        {
+            var recentInterviews = await dbContext.InterviewSessions
                 .FromSqlInterpolated($"SELECT * FROM interview_sessions WHERE \"UserId\" = {userId} ORDER BY \"UpdatedAt\" DESC, \"Id\" DESC LIMIT 5")
                 .AsNoTracking()
                 .Select(item => new { item.Id, item.UpdatedAt })
-                .ToArrayAsync(cancellationToken)
-            : await recentInterviewsQuery.OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id).Take(5).ToArrayAsync(cancellationToken);
-        foreach (var i in recentInterviews) recentActivity.Add(new RecentActivity("interview", i.Id, i.UpdatedAt));
-        var recentScenarioAttemptsQuery = dbContext.ScenarioAttempts.AsNoTracking()
-            .Where(item => item.UserId == userId)
-            .Select(item => new { item.Id, item.UpdatedAt });
-        var recentScenarioAttempts = isSqlite
-            ? await dbContext.ScenarioAttempts
+                .ToArrayAsync(cancellationToken);
+            var recentScenarios = await dbContext.ScenarioAttempts
                 .FromSqlInterpolated($"SELECT * FROM scenario_attempts WHERE \"UserId\" = {userId} ORDER BY \"UpdatedAt\" DESC, \"Id\" DESC LIMIT 5")
                 .AsNoTracking()
                 .Select(item => new { item.Id, item.UpdatedAt })
-                .ToArrayAsync(cancellationToken)
-            : await recentScenarioAttemptsQuery.OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id).Take(5).ToArrayAsync(cancellationToken);
-        foreach (var s in recentScenarioAttempts) recentActivity.Add(new RecentActivity("scenario", s.Id, s.UpdatedAt));
-        var recentStarsQuery = dbContext.StarAttempts.AsNoTracking()
-            .Where(item => item.UserId == userId)
-            .Select(item => new { item.Id, item.UpdatedAt });
-        var recentStars = isSqlite
-            ? await dbContext.StarAttempts
+                .ToArrayAsync(cancellationToken);
+            var recentStars = await dbContext.StarAttempts
                 .FromSqlInterpolated($"SELECT * FROM star_attempts WHERE \"UserId\" = {userId} ORDER BY \"UpdatedAt\" DESC, \"Id\" DESC LIMIT 5")
                 .AsNoTracking()
                 .Select(item => new { item.Id, item.UpdatedAt })
-                .ToArrayAsync(cancellationToken)
-            : await recentStarsQuery.OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id).Take(5).ToArrayAsync(cancellationToken);
-        foreach (var st in recentStars) recentActivity.Add(new RecentActivity("star", st.Id, st.UpdatedAt));
-        recentActivity = recentActivity.OrderByDescending(item => item.At).Take(10).ToList();
+                .ToArrayAsync(cancellationToken);
+            recentActivity = recentInterviews.Select(item => new RecentActivity("interview", item.Id, item.UpdatedAt))
+                .Concat(recentScenarios.Select(item => new RecentActivity("scenario", item.Id, item.UpdatedAt)))
+                .Concat(recentStars.Select(item => new RecentActivity("star", item.Id, item.UpdatedAt)))
+                .OrderByDescending(item => item.At).Take(10).ToList();
+        }
+        else
+        {
+            var recentRows = await dbContext.InterviewSessions.AsNoTracking()
+                .Where(item => item.UserId == userId)
+                .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id).Take(5)
+                .Select(item => new { Kind = 0, item.Id, At = item.UpdatedAt })
+                .Concat(dbContext.ScenarioAttempts.AsNoTracking()
+                    .Where(item => item.UserId == userId)
+                    .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id).Take(5)
+                    .Select(item => new { Kind = 1, item.Id, At = item.UpdatedAt }))
+                .Concat(dbContext.StarAttempts.AsNoTracking()
+                    .Where(item => item.UserId == userId)
+                    .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id).Take(5)
+                    .Select(item => new { Kind = 2, item.Id, At = item.UpdatedAt }))
+                .ToArrayAsync(cancellationToken);
+            recentActivity = recentRows.OrderByDescending(item => item.At)
+                .ThenBy(item => item.Kind).ThenByDescending(item => item.Id)
+                .Take(10)
+                .Select(item => new RecentActivity(item.Kind switch { 0 => "interview", 1 => "scenario", _ => "star" }, item.Id, item.At))
+                .ToList();
+        }
 
-        return new ProgressView(completedInterviews, recentScores, avgScore, starAverages, completedScenarios, avgScenarioScore, completedStarAttempts, recentActivity);
+        return (new ProgressView(completedInterviews, recentScores, avgScore, starAverages, completedScenarios, avgScenarioScore, completedStarAttempts, recentActivity), snapshot);
     }
 
     public async Task<int> ProcessPendingAsync(CancellationToken cancellationToken)

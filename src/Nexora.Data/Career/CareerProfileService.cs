@@ -176,23 +176,13 @@ public sealed class CareerProfileService(
     {
         var path = await dbContext.LearningPaths.AsNoTracking()
             .Where(item => item.UserId == userId && item.CareerGoalId == careerGoalId)
-            .Select(item => new LearningPathRow(item.Id, item.Status))
+            .Select(item => new CareerProfileLearningPathSummary(
+                item.Id,
+                item.Status,
+                dbContext.LearningPathActivities.Count(activity => activity.LearningPathId == item.Id && activity.Status == LearningPathValues.Pending),
+                dbContext.LearningPathActivities.Count(activity => activity.LearningPathId == item.Id && activity.Status == LearningPathValues.Completed)))
             .SingleOrDefaultAsync(cancellationToken);
-        if (path is null) return null;
-
-        var counts = await dbContext.LearningPathActivities.AsNoTracking()
-            .Where(item => item.LearningPathId == path.Id)
-            .GroupBy(item => item.LearningPathId)
-            .Select(group => new LearningPathCounts(
-                group.Count(item => item.Status == LearningPathValues.Pending),
-                group.Count(item => item.Status == LearningPathValues.Completed)))
-            .SingleOrDefaultAsync(cancellationToken);
-
-        return new CareerProfileLearningPathSummary(
-            path.Id,
-            path.Status,
-            counts?.PendingActivityCount ?? 0,
-            counts?.CompletedActivityCount ?? 0);
+        return path;
     }
 
     private async Task LockUserAsync(Guid userId, CancellationToken cancellationToken)
@@ -209,6 +199,4 @@ public sealed class CareerProfileService(
 
     private sealed record AccountRow(Guid Id, string? Email, string? DisplayName, int? YearsOfExperience, Guid? PrimaryResumeId);
     private sealed record PrimaryResumeRow(Guid Id, string FileName, string Status, DateTimeOffset CreatedAt);
-    private sealed record LearningPathRow(Guid Id, string Status);
-    private sealed record LearningPathCounts(int PendingActivityCount, int CompletedActivityCount);
 }

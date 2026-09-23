@@ -17,9 +17,16 @@ public sealed class LearningPathService(
 {
     public async Task<LearningPathView> GetAsync(Guid userId, CancellationToken cancellationToken)
     {
-        var careerGoal = await GetActiveCareerGoalAsync(userId, cancellationToken);
-        var path = await LoadPathByGoalAsync(userId, careerGoal.Id, tracking: false, cancellationToken)
-            ?? throw PathNotFound();
+        var path = await dbContext.LearningPaths.AsNoTracking()
+            .Include(item => item.Milestones).ThenInclude(item => item.Activities)
+            .SingleOrDefaultAsync(item => item.UserId == userId && item.CareerGoal.UserId == userId &&
+                item.CareerGoal.Active && item.CareerGoal.DeletedAt == null, cancellationToken);
+        if (path is null)
+        {
+            if (!await dbContext.CareerGoals.AnyAsync(item => item.UserId == userId && item.Active && item.DeletedAt == null, cancellationToken))
+                throw ActiveCareerGoalRequired();
+            throw PathNotFound();
+        }
         return Map(path);
     }
 

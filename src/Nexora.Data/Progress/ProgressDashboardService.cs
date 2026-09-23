@@ -6,6 +6,8 @@ using Nexora.Business.Progress;
 using Nexora.Business.Recommendations;
 using Nexora.Business.Skills;
 using Nexora.Data.Persistence;
+using Nexora.Data.Practice;
+using Nexora.Data.Skills;
 
 namespace Nexora.Data.Progress;
 
@@ -18,12 +20,23 @@ public sealed class ProgressDashboardService(
 {
     public async Task<ProgressDashboardView> GetAsync(Guid userId, CancellationToken cancellationToken)
     {
-        var historicalStats = await progressService.GetAsync(userId, cancellationToken);
-        var profile = await skillProfileService.GetAsync(userId, cancellationToken);
+        ProgressView historicalStats;
+        SkillProfileView profile;
+        if (progressService is ScenarioStarService scenarioProgress && skillProfileService is SkillProfileService skillProfiles)
+        {
+            var snapshot = await scenarioProgress.GetDashboardAsync(userId, cancellationToken);
+            historicalStats = snapshot.View;
+            profile = await skillProfiles.GetFromSnapshotAsync(userId, snapshot.Snapshot, cancellationToken);
+        }
+        else
+        {
+            historicalStats = await progressService.GetAsync(userId, cancellationToken);
+            profile = await skillProfileService.GetAsync(userId, cancellationToken);
+        }
         var now = timeProvider.GetUtcNow().ToUniversalTime();
         var windowStart = ProgressDashboardPolicy.GetUtcWeekStart(now);
         var weekly = await GetWeeklyActivitiesAsync(userId, windowStart, now, cancellationToken);
-        var nextRecommendation = await GetNextRecommendationAsync(userId, cancellationToken);
+        var nextRecommendation = await GetNextRecommendationAsync(userId, profile, cancellationToken);
 
         return new ProgressDashboardView(
             ProgressDashboardPolicy.BuildReadiness(profile),
@@ -48,36 +61,33 @@ public sealed class ProgressDashboardService(
             return await GetWeeklyActivitiesFromSqliteAsync(userId, windowStart, windowEnd, cancellationToken);
         }
 
-        var resumeAnalyses = await dbContext.ResumeAnalyses.AsNoTracking()
-            .CountAsync(item => item.UserId == userId && item.Status == PracticeValues.Completed &&
-                                item.CompletedAt != null &&
-                                item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd, cancellationToken);
-        var interviews = await dbContext.InterviewSessions.AsNoTracking()
-            .CountAsync(item => item.UserId == userId && item.Status == PracticeValues.Completed &&
-                                item.CompletedAt != null &&
-                                item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd, cancellationToken);
-        var scenarios = await dbContext.ScenarioAttempts.AsNoTracking()
-            .CountAsync(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed &&
-                                item.CompletedAt != null &&
-                                item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd, cancellationToken);
-        var starAttempts = await dbContext.StarAttempts.AsNoTracking()
-            .CountAsync(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed &&
-                                item.CompletedAt != null &&
-                                item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd, cancellationToken);
-        var learningPathActivities = await dbContext.LearningPathActivities.AsNoTracking()
-            .CountAsync(item => item.LearningPath.UserId == userId && item.Status == LearningPathValues.Completed &&
-                                item.CompletedAt != null &&
-                                item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd, cancellationToken);
+        var counts = await dbContext.Users.AsNoTracking()
+            .Where(item => item.Id == userId)
+            .Select(_ => new
+            {
+                ResumeAnalyses = dbContext.ResumeAnalyses.Count(item => item.UserId == userId && item.Status == PracticeValues.Completed &&
+                    item.CompletedAt != null && item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd),
+                Interviews = dbContext.InterviewSessions.Count(item => item.UserId == userId && item.Status == PracticeValues.Completed &&
+                    item.CompletedAt != null && item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd),
+                Scenarios = dbContext.ScenarioAttempts.Count(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed &&
+                    item.CompletedAt != null && item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd),
+                StarAttempts = dbContext.StarAttempts.Count(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed &&
+                    item.CompletedAt != null && item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd),
+                LearningPathActivities = dbContext.LearningPathActivities.Count(item => item.LearningPath.UserId == userId &&
+                    item.Status == LearningPathValues.Completed && item.CompletedAt != null &&
+                    item.CompletedAt >= windowStart && item.CompletedAt <= windowEnd)
+            })
+            .SingleAsync(cancellationToken);
 
         return new ProgressDashboardWeeklyActivitiesView(
             windowStart,
             windowEnd,
-            resumeAnalyses + interviews + scenarios + starAttempts + learningPathActivities,
-            resumeAnalyses,
-            interviews,
-            scenarios,
-            starAttempts,
-            learningPathActivities);
+            counts.ResumeAnalyses + counts.Interviews + counts.Scenarios + counts.StarAttempts + counts.LearningPathActivities,
+            counts.ResumeAnalyses,
+            counts.Interviews,
+            counts.Scenarios,
+            counts.StarAttempts,
+            counts.LearningPathActivities);
     }
 
     private async Task<ProgressDashboardWeeklyActivitiesView> GetWeeklyActivitiesFromSqliteAsync(
@@ -146,11 +156,12 @@ public sealed class ProgressDashboardService(
 
     private async Task<NextPracticeRecommendationView?> GetNextRecommendationAsync(
         Guid userId,
+        SkillProfileView skillProfile,
         CancellationToken cancellationToken)
     {
         try
         {
-            return await nextPracticeRecommendationService.GetAsync(userId, cancellationToken);
+            return await nextPracticeRecommendationService.GetAsync(userId, skillProfile, cancellationToken);
         }
         catch (BusinessException exception) when (
             exception.Code is "ACTIVE_CAREER_GOAL_REQUIRED" or "LEARNING_PATH_NOT_FOUND")
