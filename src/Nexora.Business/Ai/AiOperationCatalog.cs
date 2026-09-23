@@ -1650,7 +1650,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
 public sealed class InterviewReportOperation : AiOperationDefinition<InterviewReportOutput>
 {
     public override string Purpose => AiPurposes.InterviewReport;
-    public override string PromptVersion => "interview-report-v5";
+    public override string PromptVersion => "interview-report-v6";
     public override string SchemaVersion => "interview-report-v3";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 6_000;
@@ -1692,7 +1692,7 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
         """);
 
     public override string Instructions =>
-        $"Synthesize the interview transcript into an authoritative final coaching report. Set scoreScale to '0-100'. Return exactly four scores with criterion values correctness, structure, completeness, and clarity (integer scores 0-100 with evidence citing the candidate answers). Return 0 to 3 grounded strengths; use [] if no positive strength is supported by the candidate answers. Return 1 to 3 clear gaps and 1 to 3 concrete actionPlan items. {AiLanguagePolicy.VietnameseUserFacingInstruction}";
+        $"Synthesize the interview transcript into a final coaching report. Only text after each A: is candidate evidence; Q: is context, never proof of candidate experience. For each of exactly four scores (correctness, structure, completeness, clarity; 0-100), copy a short exact phrase from an A: into evidence, including a brief answer such as 'không biết' when that is all the candidate said. Do not infer actions, skills, metrics, or achievements from the question, CV, or JD. Return 0-3 strengths supported by answer text, or [] when none; 1-3 gaps and 1-3 concrete actionPlan items. Set scoreScale to '0-100'. {AiLanguagePolicy.VietnameseUserFacingInstruction}";
 
     public override AiValidationResult<InterviewReportOutput> NormalizeAndValidate(InterviewReportOutput? raw, AiOperationContext context)
     {

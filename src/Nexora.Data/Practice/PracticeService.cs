@@ -2083,7 +2083,6 @@ public sealed partial class PracticeService(
     private async Task BuildReportAsync(OutboxEvent job, CancellationToken cancellationToken)
     {
         var snapshot = await dbContext.InterviewSessions.AsNoTracking().Include(item => item.Questions).ThenInclude(question => question.Answer)
-            .Include(item => item.Resume).Include(item => item.JobDescription)
             .SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
         if (await dbContext.InterviewReports.AsNoTracking().AnyAsync(item => item.InterviewSessionId == snapshot.Id, cancellationToken))
         {
@@ -2112,6 +2111,7 @@ public sealed partial class PracticeService(
             snapshot.UserId,
             GroundingTranscript: groundingTranscript);
         AiExecutionResult<InterviewReportOutput> execResult;
+        var fallbackUsed = false;
         try
         {
             execResult = await structuredAiExecutor.ExecuteAsync(
@@ -2126,6 +2126,7 @@ public sealed partial class PracticeService(
             if (fallback is null)
                 throw;
             execResult = fallback;
+            fallbackUsed = true;
         }
         var output = execResult.Value;
         ValidateScores(output.Scores);
@@ -2169,6 +2170,8 @@ public sealed partial class PracticeService(
         MarkProcessed(job);
         await dbContext.SaveChangesAsync(cancellationToken);
         await CommitAsync(transaction, cancellationToken);
+        if (fallbackUsed)
+            ReportFallbackPersisted(logger, AiOperations.InterviewReport.Purpose, aiProvider.ModelVersion, session.Id, reportOperationContext.CorrelationId);
     }
 
     private async Task FailJobAsync(OutboxEvent job, Exception exception, CancellationToken cancellationToken)
@@ -2996,6 +2999,11 @@ public sealed partial class PracticeService(
         "Interview evaluation failed. purpose={Purpose} model={ModelVersion} answerId={AnswerId} interviewId={InterviewId} failureKind={FailureKind} requestId={RequestId}")]
     private static partial void EvaluationFailed(
         ILogger logger, string purpose, string modelVersion, Guid answerId, Guid interviewId, string failureKind, string requestId);
+
+    [LoggerMessage(LogLevel.Warning,
+        "Interview report recovered with deterministic fallback. purpose={Purpose} model={ModelVersion} interviewId={InterviewId} outcome=persisted_fallback correlationId={CorrelationId}")]
+    private static partial void ReportFallbackPersisted(
+        ILogger logger, string purpose, string modelVersion, Guid interviewId, string correlationId);
 
     [LoggerMessage(LogLevel.Information,
         "Resume {ResumeId} extracted with {PageCount} pages, {CharacterCount} chars, {WordCount} words, method {ExtractionMethod}, quality {QualityScore}, OCR fallback {OcrFallbackUsed}, warnings {Warnings}")]
