@@ -1,3 +1,4 @@
+using System.Data;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -9,8 +10,39 @@ using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Practice;
 
-public sealed partial class ScenarioStarService
+public sealed partial class ScenarioStarJobProcessor(
+    NexoraDbContext dbContext,
+    IFeatureEntitlementService featureEntitlementService,
+    IStructuredAiExecutor structuredAiExecutor,
+    TimeProvider timeProvider,
+    ILogger<ScenarioStarJobProcessor> logger) : IScenarioStarJobProcessor
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static string Bound(string? value) => string.IsNullOrEmpty(value) ? string.Empty : value[..Math.Min(value.Length, 20_000)];
+    private static void MarkProcessed(OutboxEvent job, DateTimeOffset now) { job.Status = BillingValues.Processed; job.ProcessedAt = now; }
+
+    private void EnqueueResourceChanged(Guid userId, string resourceType, Guid resourceId, string status, DateTimeOffset occurredAt) =>
+        dbContext.RealtimeNotifications.Add(new Nexora.Data.Realtime.RealtimeNotification
+        {
+            UserId = userId,
+            ResourceType = resourceType,
+            ResourceId = resourceId,
+            Status = status,
+            CreatedAt = occurredAt
+        });
+
+    private async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is not null) return null;
+        return await dbContext.Database.BeginTransactionAsync(dbContext.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
+    }
+
+    private static async Task CommitAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction, CancellationToken cancellationToken)
+    {
+        if (transaction is null) return;
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public async Task<int> ProcessPendingAsync(CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();

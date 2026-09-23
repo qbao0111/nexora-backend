@@ -8,7 +8,7 @@ using Nexora.Data.Progress;
 
 namespace Nexora.Data.Skills;
 
-public sealed class SkillProfileService(NexoraDbContext dbContext) : ISkillProfileService
+public sealed class SkillProfileService(NexoraDbContext dbContext) : ISkillProfileService, IDashboardSkillProfileProvider
 {
     private const int MaximumQualitativeLabelLength = 1_000;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -17,7 +17,7 @@ public sealed class SkillProfileService(NexoraDbContext dbContext) : ISkillProfi
     public Task<SkillProfileView> GetAsync(Guid userId, CancellationToken cancellationToken) =>
         GetCoreAsync(userId, snapshot: null, cancellationToken);
 
-    internal Task<SkillProfileView> GetFromSnapshotAsync(Guid userId, DashboardEvidenceSnapshot snapshot, CancellationToken cancellationToken) =>
+    Task<SkillProfileView> IDashboardSkillProfileProvider.GetFromSnapshotAsync(Guid userId, DashboardEvidenceSnapshot snapshot, CancellationToken cancellationToken) =>
         GetCoreAsync(userId, snapshot, cancellationToken);
 
     private async Task<SkillProfileView> GetCoreAsync(Guid userId, DashboardEvidenceSnapshot? snapshot, CancellationToken cancellationToken)

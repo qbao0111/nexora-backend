@@ -4,16 +4,17 @@ using Nexora.Business.Billing;
 using Nexora.Business.Common;
 using Nexora.Business.Practice;
 using Nexora.Data.Persistence;
-using Nexora.Data.Progress;
 
-namespace Nexora.Data.Practice;
+namespace Nexora.Data.Progress;
 
-public sealed partial class ScenarioStarService
+public sealed class ProgressService(
+    NexoraDbContext dbContext,
+    IFeatureEntitlementService featureEntitlementService) : IProgressService, IDashboardProgressProvider
 {
     public async Task<ProgressView> GetAsync(Guid userId, CancellationToken cancellationToken) =>
         (await GetProgressAsync(userId, includeSnapshot: false, cancellationToken)).View;
 
-    internal async Task<(ProgressView View, DashboardEvidenceSnapshot Snapshot)> GetDashboardAsync(Guid userId, CancellationToken cancellationToken)
+    async Task<(ProgressView View, DashboardEvidenceSnapshot Snapshot)> IDashboardProgressProvider.GetDashboardAsync(Guid userId, CancellationToken cancellationToken)
     {
         var result = await GetProgressAsync(userId, includeSnapshot: true, cancellationToken);
         return (result.View, result.Snapshot!);
@@ -160,41 +161,4 @@ public sealed partial class ScenarioStarService
         }
         catch { return null; }
     }
-
-    private sealed record ScenarioProgressRow(
-        Guid Id,
-        string Status,
-        string? EvaluationJson,
-        string Difficulty,
-        string Competency,
-        string CategorySlug,
-        string CategoryName,
-        DateTimeOffset UpdatedAt,
-        DateTimeOffset? CompletedAt);
-
-    private sealed record ScenarioProgressAttempt(ScenarioProgressRow Attempt, int? Score);
-
-    private static string RecommendDifficulty(string? currentDifficulty, int? latestScore)
-    {
-        var currentLevel = DifficultyLevel(currentDifficulty);
-        if (latestScore is null) return currentLevel == 0 ? "easy" : NormalizeDifficulty(currentDifficulty);
-        return latestScore >= 80 ? DifficultyName(Math.Min(2, currentLevel + 1)) : DifficultyName(currentLevel);
-    }
-
-    private static string NormalizeDifficulty(string? difficulty) => DifficultyName(DifficultyLevel(difficulty));
-
-    private static int DifficultyLevel(string? difficulty) => difficulty?.Trim().ToLowerInvariant() switch
-    {
-        "medium" => 1,
-        "hard" => 2,
-        _ => 0
-    };
-
-    private static string DifficultyName(int level) => level switch
-    {
-        1 => "medium",
-        2 => "hard",
-        _ => "easy"
-    };
-
 }

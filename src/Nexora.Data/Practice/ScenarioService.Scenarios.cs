@@ -8,7 +8,7 @@ using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Practice;
 
-public sealed partial class ScenarioStarService
+public sealed partial class ScenarioService
 {
     public async Task<IReadOnlyCollection<ScenarioCategoryView>> GetCategoriesAsync(CancellationToken cancellationToken) =>
         await dbContext.ScenarioCategories.AsNoTracking().Where(item => item.IsActive).OrderBy(item => item.SortOrder)
