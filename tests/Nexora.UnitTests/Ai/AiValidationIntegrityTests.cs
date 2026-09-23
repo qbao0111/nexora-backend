@@ -93,7 +93,6 @@ public sealed class AiValidationIntegrityTests
     }
 
     [Theory]
-    [InlineData("strengths")]
     [InlineData("gaps")]
     [InlineData("actionPlan")]
     public void InterviewReportRejectsMissingGroundedCollection(string missing)
@@ -127,6 +126,17 @@ public sealed class AiValidationIntegrityTests
     public void InterviewReportUsesExecutorOwnedRetryBudget()
     {
         Assert.Equal(2, AiOperations.InterviewReport.MaxAttempts);
+    }
+
+    [Fact]
+    public void InterviewReportAllowsNoUnsupportedStrengths()
+    {
+        var result = AiOperations.InterviewReport.NormalizeAndValidate(
+            Report("I debugged the API.") with { Strengths = [] },
+            ReportContext("I debugged the API."));
+
+        Assert.True(result.IsValid, result.FailureReason);
+        Assert.Empty(result.NormalizedValue!.Strengths);
     }
 
     [Fact]

@@ -38,7 +38,8 @@ public enum AiProviderFailureKind
 
 public enum AiReasoningEffortOverride
 {
-    Low
+    Low,
+    Disabled
 }
 
 public enum AiProviderRetryHint

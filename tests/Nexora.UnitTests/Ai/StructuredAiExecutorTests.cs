@@ -128,7 +128,7 @@ public sealed class StructuredAiExecutorTests
         Assert.True(result.RepairUsed);
         Assert.Equal(2, result.Attempts);
         Assert.Equal(2, fakeProvider.CallCount);
-        Assert.Contains("report.strengths_invalid", fakeProvider.Requests[1].Instructions);
+        Assert.Contains("report.gaps_invalid", fakeProvider.Requests[1].Instructions);
     }
 
     [Fact]
@@ -185,6 +185,65 @@ public sealed class StructuredAiExecutorTests
         Assert.Equal(2, result.Attempts);
         Assert.Equal(2, fakeProvider.CallCount);
         Assert.Contains("report.rubric_evidence_ungrounded", fakeProvider.Requests[1].Instructions);
+    }
+
+    [Fact]
+    public async Task InterviewStrengthsGroundingFailureRecoversFromValidatedAnswerEvidenceAfterTwoCalls()
+    {
+        const string answer = "I debugged the API.";
+        var invalid = TechnicalEvaluation(AiOperations.ScoreScale) with
+        {
+            Scores = CanonicalRubricValidator.RequiredCriteria
+                .Select(criterion => new RubricScore(criterion, 80, answer)).ToArray(),
+            Strengths = ["I led a Kubernetes team."],
+            ImprovedAnswer = answer
+        };
+        var provider = new MockAiProvider();
+        provider.EnqueueResult(invalid);
+        provider.EnqueueResult(invalid);
+
+        var result = await new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance)
+            .ExecuteAsync(AiOperations.InterviewEvaluate, answer,
+                new AiOperationContext("strengths-recovery", ExpectedStar: false, CandidateAnswer: answer), CancellationToken.None);
+
+        Assert.Equal(2, provider.CallCount);
+        Assert.Equal([answer], result.Value.Strengths);
+        Assert.All(result.Value.Scores, score => Assert.Equal(80, score.Score));
+    }
+
+    [Fact]
+    public async Task ReportUngroundedStrengthsRecoverWhenRepairOutputTruncates()
+    {
+        var provider = new MockAiProvider();
+        provider.EnqueueResult(ValidInterviewReport() with { Strengths = ["I led a Kubernetes team."] });
+        provider.EnqueueException(new AiProviderException(AiProviderFailureKind.InvalidResponse,
+            "Truncated report.", retryHint: AiProviderRetryHint.OutputTruncated));
+
+        var result = await new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance)
+            .ExecuteAsync(AiOperations.InterviewReport, "official transcript",
+                InterviewReportContext("I debugged the API."), CancellationToken.None);
+
+        Assert.Equal(2, provider.CallCount);
+        Assert.Empty(result.Value.Strengths);
+        Assert.True(result.RepairUsed);
+    }
+
+    [Fact]
+    public async Task DeepSeekReportSemanticRepairDisablesReasoningWithoutIncreasingCallOrTokenBudget()
+    {
+        var provider = new MockAiProvider { ModelVersion = "deepseek:deepseek-v4-flash" };
+        provider.EnqueueResult(InvalidInterviewReport());
+        provider.EnqueueResult(ValidInterviewReport());
+
+        var result = await new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance)
+            .ExecuteAsync(AiOperations.InterviewReport, "official transcript",
+                InterviewReportContext("I debugged the API."), CancellationToken.None);
+
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, provider.CallCount);
+        Assert.Null(provider.Requests[0].ReasoningEffortOverride);
+        Assert.Equal(AiReasoningEffortOverride.Disabled, provider.Requests[1].ReasoningEffortOverride);
+        Assert.All(provider.Requests, request => Assert.Equal(6_000, request.MaxOutputTokens));
     }
 
     [Fact]
@@ -1051,8 +1110,8 @@ public sealed class StructuredAiExecutorTests
             new RubricScore("completeness", 80, "I debugged the API."),
             new RubricScore("clarity", 80, "I debugged the API.")
         ],
+        ["I debugged the API."],
         [],
-        ["Add concrete evidence if available."],
         ["Add concrete evidence if available."],
         AiOperations.ScoreScale);
 
@@ -1156,7 +1215,7 @@ public sealed class StructuredAiExecutorTests
 
     private sealed class MockAiProvider : IAiProvider
     {
-        public string ModelVersion => "mock-gemini";
+        public string ModelVersion { get; init; } = "mock-gemini";
         public List<AiRequest> Requests { get; } = [];
         public int CallCount => Requests.Count;
         public TimeSpan DelayPerCall { get; set; }

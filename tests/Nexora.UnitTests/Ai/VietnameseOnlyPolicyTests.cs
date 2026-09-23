@@ -51,7 +51,7 @@ public sealed class VietnameseOnlyPolicyTests
         Assert.Equal("interview-first-question-v5", AiOperations.InterviewFirstQuestion.PromptVersion);
         Assert.Equal("interview-followup-v4", AiOperations.InterviewFollowup.PromptVersion);
         Assert.Equal("interview-eval-v10", AiOperations.InterviewEvaluate.PromptVersion);
-        Assert.Equal("interview-report-v4", AiOperations.InterviewReport.PromptVersion);
+        Assert.Equal("interview-report-v5", AiOperations.InterviewReport.PromptVersion);
         Assert.Equal("scenario-eval-v3", AiOperations.ScenarioEvaluate.PromptVersion);
         Assert.Equal("star-eval-v4", AiOperations.StarEvaluate.PromptVersion);
 
@@ -67,7 +67,7 @@ public sealed class VietnameseOnlyPolicyTests
         Assert.Equal("rubric-v2", AiOperations.InterviewFollowup.RubricVersion);
         Assert.Equal("interview-eval-v6", AiOperations.InterviewEvaluate.SchemaVersion);
         Assert.Equal("rubric-v2", AiOperations.InterviewEvaluate.RubricVersion);
-        Assert.Equal("interview-report-v2", AiOperations.InterviewReport.SchemaVersion);
+        Assert.Equal("interview-report-v3", AiOperations.InterviewReport.SchemaVersion);
         Assert.Equal("rubric-v2", AiOperations.InterviewReport.RubricVersion);
         Assert.Equal("scenario-eval-v2", AiOperations.ScenarioEvaluate.SchemaVersion);
         Assert.Equal("scenario-rubric-v2", AiOperations.ScenarioEvaluate.RubricVersion);

@@ -42,7 +42,9 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                 : isMalformedOutputRepairAttempt
                     ? operation.BuildMalformedStructuredOutputRepairInstructions(instructions)
                     : instructions;
-            var currentReasoningOverride = reasoningOverride;
+            var currentReasoningOverride = isSemanticRepairAttempt
+                ? operation.GetSemanticRepairReasoningOverride(modelVersion)
+                : reasoningOverride;
             reasoningOverride = null;
             malformedStructuredOutputRetry = false;
 
@@ -62,12 +64,12 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
             if (currentReasoningOverride is not null)
             {
-                LogReasoningFallbackRetry(
-                    logger,
-                    operation.Purpose,
-                    currentReasoningOverride.Value.ToString().ToLowerInvariant(),
-                    attempt,
-                    correlationId);
+                if (isSemanticRepairAttempt)
+                    LogSemanticRepairReasoningOverride(logger, operation.Purpose,
+                        currentReasoningOverride.Value.ToString().ToLowerInvariant(), attempt, correlationId);
+                else
+                    LogReasoningFallbackRetry(logger, operation.Purpose,
+                        currentReasoningOverride.Value.ToString().ToLowerInvariant(), attempt, correlationId);
             }
 
             try
@@ -350,6 +352,9 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
     [LoggerMessage(LogLevel.Information, "AI structured retry using reasoning override: purpose={Purpose}, effectiveEffort={EffectiveEffort}, attempt={Attempt}, retryReason=reasoning_budget_exhausted, correlationId={CorrelationId}")]
     private static partial void LogReasoningFallbackRetry(ILogger logger, string purpose, string effectiveEffort, int attempt, string correlationId);
+
+    [LoggerMessage(LogLevel.Information, "AI semantic repair using reasoning override: purpose={Purpose}, effectiveEffort={EffectiveEffort}, attempt={Attempt}, retryReason=semantic_repair, correlationId={CorrelationId}")]
+    private static partial void LogSemanticRepairReasoningOverride(ILogger logger, string purpose, string effectiveEffort, int attempt, string correlationId);
 
     [LoggerMessage(LogLevel.Error, "AI provider request failed terminal: purpose={Purpose}, model={Model}, failureKind={FailureKind}, effectiveBudget={EffectiveBudget}, reasoningMode={ReasoningMode}, retryHint={RetryHint}, attempt={Attempt}, outcome=failed, correlationId={CorrelationId}")]
     private static partial void LogProviderTerminalFailure(ILogger logger, string purpose, string model, int effectiveBudget, string reasoningMode, string failureKind, string retryHint, int attempt, string correlationId);

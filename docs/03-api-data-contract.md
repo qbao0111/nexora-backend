@@ -656,11 +656,13 @@ replay không tạo job trùng và không reserve/consume quota mới.
 Nếu report AI hết đúng ngân sách hai provider call với `AI_OUTPUT_INVALID`,
 worker được phép tạo fallback deterministic chỉ từ các `AnswerEvaluation` đã
 persist và candidate answers tương ứng. Fallback tính trung bình bốn rubric,
-chọn evidence ổn định, tái dùng strength/improvement đã validate và chạy lại
-toàn bộ canonical report validation. Thiếu strength/evidence an toàn thì fail
-closed. Provider unavailable/rate-limit/auth/config không đi qua fallback này.
-Metadata fallback là `deterministic:validated-answer-aggregate-v1` và
-`interview-report-fallback-v1`; report/history cũ không bị sửa.
+chọn evidence ổn định từ câu trả lời, tái dùng strength/improvement đã validate
+và chạy lại toàn bộ canonical report validation. `strengths` có thể là mảng
+rỗng nếu không có điểm mạnh đủ bằng chứng; đây không phải một điểm mạnh giả.
+Thiếu rubric evidence an toàn thì fail closed. Provider
+unavailable/rate-limit/auth/config không đi qua fallback này.
+Metadata fallback là `deterministic:validated-answer-aggregate-v2` và
+`interview-report-fallback-v2`; report/history cũ không bị sửa.
 
 ### Product feedback
 

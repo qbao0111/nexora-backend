@@ -2129,7 +2129,7 @@ public sealed partial class PracticeService(
         }
         var output = execResult.Value;
         ValidateScores(output.Scores);
-        if (output.Strengths.Count == 0 || output.Gaps.Count == 0 || output.ActionPlan.Count == 0) throw InvalidAiOutput();
+        if (output.Gaps.Count == 0 || output.ActionPlan.Count == 0) throw InvalidAiOutput();
         var overall = WeightedScore(output.Scores);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
@@ -2839,6 +2839,9 @@ public sealed partial class PracticeService(
         InterviewQuestion[] answeredQuestions,
         AiOperationContext context)
     {
+        if (answeredQuestions.Any(question => question.Answer?.EvaluationStatus != InterviewAnswerEvaluationStates.Ready))
+            return null;
+
         var evaluations = answeredQuestions
             .Select(question => new
             {
@@ -2874,7 +2877,12 @@ public sealed partial class PracticeService(
                 .ThenBy(item => item.Sequence)
                 .ThenBy(item => item.Id)
                 .Select(item => item.Score!.Evidence.Trim())
-                .FirstOrDefault();
+                .FirstOrDefault(item => AnswerCoachingValidator.IsGroundedReportEvidence(item, context.GroundingTranscript!));
+            evidence ??= evaluations
+                .OrderBy(item => item.Question.Sequence)
+                .ThenBy(item => item.Answer.Id)
+                .Select(item => item.Answer.Content.Trim()[..Math.Min(item.Answer.Content.Trim().Length, 500)])
+                .FirstOrDefault(item => AnswerCoachingValidator.IsGroundedReportEvidence(item, context.GroundingTranscript!));
             if (string.IsNullOrWhiteSpace(evidence))
                 return null;
             scores.Add(new RubricScore(criterion, aggregate, evidence));
@@ -2885,12 +2893,11 @@ public sealed partial class PracticeService(
             .ThenBy(item => item.Answer.Id)
             .SelectMany(item => item.Evaluation!.Strengths ?? [])
             .Select(item => item?.Trim() ?? string.Empty)
-            .Where(item => item.Length is > 0 and <= 500)
+            .Where(item => item.Length is > 0 and <= 500 &&
+                AnswerCoachingValidator.IsGroundedReportStrength(item, context.GroundingTranscript!))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(3)
             .ToArray();
-        if (strengths.Length == 0)
-            return null;
 
         var improvements = evaluations
             .OrderBy(item => item.Question.Sequence)
@@ -2901,14 +2908,27 @@ public sealed partial class PracticeService(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(3)
             .ToArray();
-        if (improvements.Length == 0)
-            return null;
+        var weakestCriterion = scores.OrderBy(item => item.Score).First().Criterion;
+        var gap = weakestCriterion switch
+        {
+            "structure" => "Cần trình bày câu trả lời theo cấu trúc rõ ràng hơn.",
+            "completeness" => "Cần đề cập đầy đủ các ý của câu hỏi.",
+            "clarity" => "Cần diễn đạt lập luận rõ và ít mơ hồ hơn.",
+            _ => "Cần kiểm tra giả định và giải thích cơ sở của câu trả lời."
+        };
+        var action = weakestCriterion switch
+        {
+            "structure" => "Hãy sắp xếp câu trả lời theo mở đầu, lập luận và kết luận.",
+            "completeness" => "Hãy đối chiếu từng phần của câu hỏi và bổ sung phần còn thiếu.",
+            "clarity" => "Hãy nêu trực tiếp ý chính và giải thích từng bước lập luận.",
+            _ => "Hãy nêu rõ giả định và kiểm tra cơ sở kỹ thuật hoặc nghiệp vụ."
+        };
 
         var fallback = new InterviewReportOutput(
             scores,
             strengths,
-            improvements,
-            improvements,
+            improvements.Length > 0 ? improvements : [gap],
+            improvements.Length > 0 ? improvements : [action],
             AiOperations.ScoreScale);
         var validation = AiOperations.InterviewReport.NormalizeAndValidate(fallback, context);
         if (!validation.IsValid)
@@ -2916,8 +2936,8 @@ public sealed partial class PracticeService(
 
         return new AiExecutionResult<InterviewReportOutput>(
             validation.NormalizedValue!,
-            "deterministic:validated-answer-aggregate-v1",
-            "interview-report-fallback-v1",
+            "deterministic:validated-answer-aggregate-v2",
+            "interview-report-fallback-v2",
             AiOperations.InterviewReport.SchemaVersion,
             AiOperations.InterviewReport.RubricVersion,
             true,
