@@ -142,7 +142,14 @@ public sealed class ProgressDashboardApiTests
                 Competency("scenario.problem_solving", "Problem Solving", "scenario", 80, 2, At(4))
             ],
             [new SkillProfileWeaknessSignal("cv_analysis", "Missing SQL", At(5))]);
-        var recommendation = new NextPracticeRecommendationView("Practice Clarity next.", LearningPathValues.Interview, Id(9), 20, 1);
+        var recommendation = new NextPracticeRecommendationView(
+            "Practice Clarity next.",
+            LearningPathValues.Interview,
+            Id(9),
+            20,
+            1,
+            new NextPracticeActionView("practice_again", InterviewPracticeValues.Recommendation, Id(9), null, "clarity", null),
+            new NextPracticeRecommendationRationaleView("interview.clarity", "Clarity", 4, false));
 
         using var factory = NewFakeFactory(profile, historical, new FixedRecommendationService(recommendation));
         factory.InitializeDatabase();
@@ -163,7 +170,11 @@ public sealed class ProgressDashboardApiTests
         var improvement = Assert.Single(data.GetProperty("recentImprovements").EnumerateArray());
         Assert.Equal(15, improvement.GetProperty("delta").GetInt32());
         Assert.Equal("interview", improvement.GetProperty("kind").GetString());
-        Assert.Equal(20, data.GetProperty("nextRecommendedPractice").GetProperty("estimatedMinutes").GetInt32());
+        var nextPractice = data.GetProperty("nextRecommendedPractice");
+        Assert.Equal(20, nextPractice.GetProperty("estimatedMinutes").GetInt32());
+        Assert.Equal("practice_again", nextPractice.GetProperty("action").GetProperty("type").GetString());
+        Assert.Equal("interview.clarity", nextPractice.GetProperty("rationale").GetProperty("competencyCode").GetString());
+        Assert.Equal("Clarity", nextPractice.GetProperty("rationale").GetProperty("competencyName").GetString());
         Assert.Equal(2, data.GetProperty("historicalStats").GetProperty("completedInterviews").GetInt32());
     }
 
