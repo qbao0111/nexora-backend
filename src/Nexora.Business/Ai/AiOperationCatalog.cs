@@ -50,6 +50,8 @@ public abstract class AiOperationDefinition<T>
 
     public virtual bool SupportsOutputTruncationRetry => false;
 
+    public virtual AiReasoningEffortOverride? GetSemanticRepairReasoningOverride(string modelVersion) => null;
+
     protected static int ValidateEffectiveMaxOutputTokens(int value) =>
         value is < 1 or > MaximumEffectiveOutputTokens
             ? throw new InvalidOperationException("AI output token budget is outside the supported bounds.")
@@ -293,18 +295,20 @@ public static class AnswerCoachingValidator
         return AiValidationResult<AnswerCoachingOutput>.Success(new AnswerCoachingOutput(strengths, improvements, improvedAnswer));
     }
 
-    internal static bool IsGroundedReportEvidence(string output, string groundingTranscript) =>
+    public static bool IsGroundedReportEvidence(string output, string groundingTranscript) =>
         HasGroundingOverlap(output, groundingTranscript) &&
         !ContainsUnsupportedFact(output, groundingTranscript) &&
         !ContainsNovelCandidateFact(output, groundingTranscript);
 
-    internal static bool IsGroundedReportStrength(string output, string groundingTranscript) =>
+    public static bool IsGroundedReportStrength(string output, string groundingTranscript) =>
         HasGroundingOverlap(output, groundingTranscript) &&
         !ContainsUnsupportedFact(output, groundingTranscript) &&
         !ContainsNovelStrengthClaim(output, groundingTranscript);
 
     private static bool HasGroundingOverlap(string output, string groundingTranscript) =>
-        !string.IsNullOrWhiteSpace(groundingTranscript) && HasMeaningfulOverlap(output, groundingTranscript);
+        !string.IsNullOrWhiteSpace(groundingTranscript) &&
+        (!string.IsNullOrWhiteSpace(output) && groundingTranscript.Contains(output.Trim(), StringComparison.OrdinalIgnoreCase) ||
+         HasMeaningfulOverlap(output, groundingTranscript));
 
     private static string[]? NormalizeList(
         IReadOnlyCollection<string>? values,
@@ -1591,9 +1595,31 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         AiOperationContext context,
         AiValidationResult<AnswerEvaluation> terminalResult)
     {
-        if (raw is null ||
-            terminalResult.FailureReason is not ("interview.improved_answer_ungrounded" or "interview.improved_answer_fabricated") ||
-            string.IsNullOrWhiteSpace(context.CandidateAnswer))
+        if (raw is null || string.IsNullOrWhiteSpace(context.CandidateAnswer))
+            return null;
+
+        if (terminalResult.FailureReason is "interview.strengths_ungrounded")
+        {
+            var answer = context.CandidateAnswer;
+            var strengths = (raw.Strengths ?? [])
+                .Where(item => !string.IsNullOrWhiteSpace(item) &&
+                    AnswerCoachingValidator.IsGroundedReportStrength(item, answer))
+                .ToArray();
+            if (strengths.Length == 0 && raw.Scores is not null && raw.Scores.Any(score => score is not null && score.Score >= 60))
+            {
+                strengths = raw.Scores
+                    .Where(score => score is not null && score.Score >= 60 &&
+                        AnswerCoachingValidator.IsGroundedReportStrength(score.Evidence, answer))
+                    .Select(score => score.Evidence.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(3)
+                    .ToArray();
+            }
+
+            return NormalizeAndValidate(raw with { Strengths = strengths }, context);
+        }
+
+        if (terminalResult.FailureReason is not ("interview.improved_answer_ungrounded" or "interview.improved_answer_fabricated"))
             return null;
 
         var candidateAnswer = context.CandidateAnswer.Trim();
@@ -1609,10 +1635,14 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
 public sealed class InterviewReportOperation : AiOperationDefinition<InterviewReportOutput>
 {
     public override string Purpose => AiPurposes.InterviewReport;
-    public override string PromptVersion => "interview-report-v4";
-    public override string SchemaVersion => "interview-report-v2";
+    public override string PromptVersion => "interview-report-v5";
+    public override string SchemaVersion => "interview-report-v3";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 6_000;
+    public override AiReasoningEffortOverride? GetSemanticRepairReasoningOverride(string modelVersion) =>
+        modelVersion.StartsWith("deepseek:", StringComparison.OrdinalIgnoreCase)
+            ? AiReasoningEffortOverride.Disabled
+            : null;
 
     public override JsonDocument OutputSchema { get; } = JsonDocument.Parse("""
         {
@@ -1635,7 +1665,7 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
                 "required": ["criterion", "score", "evidence"]
               }
             },
-            "strengths": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+            "strengths": { "type": "array", "minItems": 0, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
             "gaps": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
             "actionPlan": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } }
           },
@@ -1644,7 +1674,7 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
         """);
 
     public override string Instructions =>
-        $"Synthesize the interview transcript into an authoritative final coaching report. Set scoreScale to '0-100'. Return exactly four scores with criterion values correctness, structure, completeness, and clarity (integer scores 0-100 with evidence citing the transcript). Return 1 to 3 grounded strengths, 1 to 3 clear gaps, and 1 to 3 concrete actionPlan items. Do not leave any array empty. {AiLanguagePolicy.VietnameseUserFacingInstruction}";
+        $"Synthesize the interview transcript into an authoritative final coaching report. Set scoreScale to '0-100'. Return exactly four scores with criterion values correctness, structure, completeness, and clarity (integer scores 0-100 with evidence citing the candidate answers). Return 0 to 3 grounded strengths; use [] if no positive strength is supported by the candidate answers. Return 1 to 3 clear gaps and 1 to 3 concrete actionPlan items. {AiLanguagePolicy.VietnameseUserFacingInstruction}";
 
     public override AiValidationResult<InterviewReportOutput> NormalizeAndValidate(InterviewReportOutput? raw, AiOperationContext context)
     {
@@ -1657,7 +1687,7 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
         if (!rubricResult.IsValid)
             return AiValidationResult<InterviewReportOutput>.Failure(rubricResult.FailureReason!, rubricResult.ValidationStage!, rubricResult.Repairable);
 
-        var strengths = NormalizeReportCollection(raw.Strengths);
+        var strengths = NormalizeReportCollection(raw.Strengths, allowEmpty: true);
         if (strengths is null)
             return AiValidationResult<InterviewReportOutput>.Failure("report.strengths_invalid", "semantic", repairable: true);
         var gaps = NormalizeReportCollection(raw.Gaps);
@@ -1702,9 +1732,25 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
         return base.BuildRepairInstructions(priorResult, originalInstructions);
     }
 
-    private static string[]? NormalizeReportCollection(IReadOnlyCollection<string>? values)
+    public override AiValidationResult<InterviewReportOutput>? TryRecoverTerminalValidation(
+        InterviewReportOutput? raw,
+        AiOperationContext context,
+        AiValidationResult<InterviewReportOutput> terminalResult)
     {
-        if (values is null or { Count: < 1 or > 3 }) return null;
+        if (raw is null || terminalResult.FailureReason is not "report.strengths_ungrounded" ||
+            string.IsNullOrWhiteSpace(context.GroundingTranscript))
+            return null;
+
+        var strengths = (raw.Strengths ?? [])
+            .Where(item => !string.IsNullOrWhiteSpace(item) &&
+                AnswerCoachingValidator.IsGroundedReportStrength(item, context.GroundingTranscript))
+            .ToArray();
+        return NormalizeAndValidate(raw with { Strengths = strengths }, context);
+    }
+
+    private static string[]? NormalizeReportCollection(IReadOnlyCollection<string>? values, bool allowEmpty = false)
+    {
+        if (values is null || values.Count > 3 || (!allowEmpty && values.Count == 0)) return null;
         var normalized = values.Select(value => value?.Trim() ?? string.Empty).ToArray();
         return normalized.Any(value => value.Length is 0 or > 500 || string.IsNullOrWhiteSpace(value))
             ? null

@@ -195,6 +195,14 @@ public sealed partial class DeepSeekAiProvider(
         var effort = thinking ? policy.Effort!.Trim().ToLowerInvariant() : null;
         if (reasoningOverride is not null)
         {
+            if (reasoningOverride is AiReasoningEffortOverride.Disabled)
+            {
+                if (purpose != AiPurposes.InterviewReport)
+                    throw new AiProviderException(AiProviderFailureKind.Configuration,
+                        "AI provider reasoning override is unsupported for this operation.");
+                return new DeepSeekReasoningSelection(false, null);
+            }
+
             if (!thinking || reasoningOverride is not AiReasoningEffortOverride.Low)
                 throw new AiProviderException(AiProviderFailureKind.Configuration,
                     "AI provider reasoning override is unsupported for this operation.");

@@ -1529,8 +1529,8 @@ public sealed class PracticeApiTests
         Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewReport));
         Assert.Equal(PracticeValues.Completed, (await db.InterviewSessions.SingleAsync(item => item.Id == interviewId)).Status);
         var report = await db.InterviewReports.SingleAsync(item => item.InterviewSessionId == interviewId);
-        Assert.Equal("deterministic:validated-answer-aggregate-v1", report.ModelVersion);
-        Assert.Equal("interview-report-fallback-v1", report.PromptVersion);
+        Assert.Equal("deterministic:validated-answer-aggregate-v2", report.ModelVersion);
+        Assert.Equal("interview-report-fallback-v2", report.PromptVersion);
         var rubric = JsonSerializer.Deserialize<RubricScore[]>(report.Rubric, JsonOptions)!;
         Assert.Equal([75, 70, 65, 80], rubric.Select(item => item.Score));
         Assert.All(rubric, item => Assert.False(string.IsNullOrWhiteSpace(item.Evidence)));
@@ -1542,6 +1542,100 @@ public sealed class PracticeApiTests
                 .OrderByDescending(item => item.CreatedAt)
                 .ThenByDescending(item => item.Id)
                 .First().Status);
+    }
+
+    [Fact]
+    public Task FiveAnswersRecoverWithoutUserRetryAndCompleteZeroStrengthReport() =>
+        RunFiveAnswerRecoveryScenarioAsync(aiProvider => new NexoraApiFactory(aiProvider));
+
+    internal static async Task RunFiveAnswerRecoveryScenarioAsync(Func<TestAiProvider, NexoraApiFactory> createFactory)
+    {
+        const string candidateAnswer = "Tôi chưa có ví dụ cụ thể.";
+        var aiProvider = new TestAiProvider();
+        var lowEvidence = new AnswerEvaluation(
+            CanonicalRubricValidator.RequiredCriteria
+                .Select(criterion => new RubricScore(criterion, 25, candidateAnswer)).ToArray(),
+            "Cần bổ sung ví dụ cụ thể.",
+            ScoreScale: AiOperations.ScoreScale,
+            Strengths: [],
+            Improvements: ["Bổ sung một ví dụ cụ thể từ trải nghiệm thực tế nếu có."],
+            ImprovedAnswer: candidateAnswer);
+        for (var attempt = 0; attempt < 2; attempt++)
+            aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate,
+                lowEvidence with { Strengths = ["Tôi đã dẫn dắt đội Kubernetes."] });
+        for (var answer = 0; answer < 4; answer++)
+            aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, lowEvidence);
+
+        aiProvider.EnqueueResponse(AiPurposes.InterviewReport, new InterviewReportOutput(
+            CanonicalRubricValidator.RequiredCriteria
+                .Select(criterion => new RubricScore(criterion, 25, "Tôi triển khai Kubernetes.")).ToArray(),
+            [], ["Cần bổ sung ví dụ cụ thể."], ["Hãy nêu một ví dụ thực tế nếu có."], AiOperations.ScoreScale));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewReport,
+            new AiProviderException(AiProviderFailureKind.InvalidResponse, "Truncated report.",
+                retryHint: AiProviderRetryHint.OutputTruncated));
+
+        await using var factory = createFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 1, questionLimit: 5);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "recovered-five-start", "technical");
+        await ProcessJobsAsync(factory);
+        var current = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+        for (var sequence = 1; sequence <= 5; sequence++)
+        {
+            var result = await AnswerAsync(client, interviewId, current, candidateAnswer, $"recovered-five-answer-{sequence}");
+            if (sequence < 5)
+                current = result.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        }
+        await CompleteAsync(client, interviewId, "recovered-five-complete");
+        await ProcessJobsAsync(factory);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(6, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+        Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewReport));
+        Assert.Equal(5, await db.InterviewAnswers.CountAsync(item =>
+            item.InterviewSessionId == interviewId && item.EvaluationStatus == InterviewAnswerEvaluationStates.Ready));
+        Assert.Equal(PracticeValues.Completed, (await db.InterviewSessions.SingleAsync(item => item.Id == interviewId)).Status);
+        var report = await db.InterviewReports.SingleAsync(item => item.InterviewSessionId == interviewId);
+        Assert.Equal("deterministic:validated-answer-aggregate-v2", report.ModelVersion);
+        Assert.Empty(JsonSerializer.Deserialize<string[]>(report.Strengths, JsonOptions)!);
+        Assert.Equal(BillingValues.Processed, (await db.OutboxEvents.SingleAsync(item =>
+            item.AggregateId == interviewId && item.Type == "InterviewReportRequested")).Status);
+    }
+
+    [Fact]
+    public async Task ProgrammingFailureDuringReportNeverUsesAiOutputFallback()
+    {
+        var aiProvider = new TestAiProvider();
+        aiProvider.EnqueueResponse(AiPurposes.InterviewReport,
+            new InvalidOperationException("Synthetic programming failure."));
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        await SeedEntitlementAsync(factory, account.UserId, 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "programming-report-start", "technical");
+        await ProcessJobsAsync(factory);
+        var current = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+        for (var sequence = 1; sequence <= 3; sequence++)
+        {
+            var result = await AnswerAsync(client, interviewId, current,
+                "Tôi phân tích nguyên nhân và kiểm tra dữ liệu.", $"programming-report-answer-{sequence}");
+            if (sequence < 3)
+                current = result.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        }
+        await CompleteAsync(client, interviewId, "programming-report-complete");
+        await ProcessJobsAsync(factory);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(PracticeValues.Completing, (await db.InterviewSessions.SingleAsync(item => item.Id == interviewId)).Status);
+        Assert.Empty(await db.InterviewReports.Where(item => item.InterviewSessionId == interviewId).ToArrayAsync());
+        Assert.Equal(1, aiProvider.GetCallCount(AiPurposes.InterviewReport));
     }
 
     [Fact]
@@ -1578,8 +1672,8 @@ public sealed class PracticeApiTests
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Equal(2, aiProvider.GetCallCount(AiPurposes.InterviewReport));
         var report = await db.InterviewReports.SingleAsync(item => item.InterviewSessionId == interviewId);
-        Assert.Equal("deterministic:validated-answer-aggregate-v1", report.ModelVersion);
-        Assert.Equal("interview-report-fallback-v1", report.PromptVersion);
+        Assert.Equal("deterministic:validated-answer-aggregate-v2", report.ModelVersion);
+        Assert.Equal("interview-report-fallback-v2", report.PromptVersion);
     }
 
     [Theory]
@@ -1838,7 +1932,7 @@ public sealed class PracticeApiTests
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         var now = DateTimeOffset.UtcNow;
-        var plan = new Plan { Id = Guid.NewGuid(), Code = $"practice-{Guid.NewGuid():N}", Name = "Practice test", IsActive = true, CreatedAt = now };
+        var plan = new Plan { Id = Guid.NewGuid(), Code = $"practice{Guid.NewGuid():N}", Name = "Practice test", IsActive = true, CreatedAt = now };
         var price = new PlanPrice { Id = Guid.NewGuid(), PlanId = plan.Id, AmountMinor = 1, Currency = "VND", DurationDays = 30, InterviewQuota = quota, IsActive = true, CreatedAt = now };
         var order = new Order
         {

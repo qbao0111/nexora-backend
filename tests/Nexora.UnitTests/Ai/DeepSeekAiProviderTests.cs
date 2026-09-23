@@ -388,6 +388,39 @@ public sealed class DeepSeekAiProviderTests
     }
 
     [Fact]
+    public async Task ReportRepairCanDisableThinkingForOneRequest()
+    {
+        var handler = new RecordingHandler(_ => SuccessResponse("{\"content\":\"ok\"}"));
+        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
+        var provider = CreateProvider(handler);
+
+        await provider.GenerateStructuredAsync<GeneratedQuestion>(Request(
+            AiPurposes.InterviewReport, schema,
+            reasoningEffortOverride: AiReasoningEffortOverride.Disabled), CancellationToken.None);
+
+        using var body = RequestBody(handler, 0);
+        Assert.Equal("disabled", body.RootElement.GetProperty("thinking").GetProperty("type").GetString());
+        Assert.False(body.RootElement.TryGetProperty("reasoning_effort", out _));
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task DisabledThinkingOverrideIsRestrictedToReport()
+    {
+        var handler = new RecordingHandler(_ => SuccessResponse("{\"content\":\"unexpected\"}"));
+        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
+        var provider = CreateProvider(handler);
+
+        var exception = await Assert.ThrowsAsync<AiProviderException>(() =>
+            provider.GenerateStructuredAsync<GeneratedQuestion>(Request(
+                AiPurposes.InterviewEvaluate, schema,
+                reasoningEffortOverride: AiReasoningEffortOverride.Disabled), CancellationToken.None));
+
+        Assert.Equal(AiProviderFailureKind.Configuration, exception.Kind);
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
     public async Task UnknownPurposeFailsClosedWithoutHttpCall()
     {
         var handler = new RecordingHandler(_ => SuccessResponse("{\"content\":\"unexpected\"}"));
