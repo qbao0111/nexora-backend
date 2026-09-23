@@ -365,19 +365,19 @@ public sealed class PracticeApiTests
 
         var q5 = q4Answer.GetProperty("nextQuestion");
         Assert.Equal(InterviewQuestionValues.Primary, q5.GetProperty("kind").GetString());
-        Assert.Equal(InterviewQuestionValues.Technical, q5.GetProperty("topic").GetString());
-        Assert.Contains("[technical]", q5.GetProperty("content").GetString(), StringComparison.Ordinal);
+        Assert.Equal(InterviewQuestionValues.Scenario, q5.GetProperty("topic").GetString());
+        Assert.Contains("[scenario]", q5.GetProperty("content").GetString(), StringComparison.Ordinal);
 
         var q5Answer = await AnswerAsync(client, interviewId, q5.GetProperty("id").GetGuid(), "Another measurable technical result.", "a7-paid-a5");
-        Assert.False(q5Answer.GetProperty("isComplete").GetBoolean());
-        Assert.Equal(InterviewContinuationValues.InProgress, q5Answer.GetProperty("continuation").GetProperty("state").GetString());
+        Assert.True(q5Answer.GetProperty("isComplete").GetBoolean());
+        Assert.Equal(InterviewContinuationValues.MaxQuestionsReached, q5Answer.GetProperty("continuation").GetProperty("state").GetString());
         Assert.True(q5Answer.GetProperty("continuation").GetProperty("canFinishNow").GetBoolean());
         Assert.Equal(0, aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion) - firstQuestionCallsBeforeContinuation);
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         var persistedQuestions = await db.InterviewQuestions.Where(item => item.InterviewSessionId == interviewId).ToListAsync();
-        Assert.Equal(6, persistedQuestions.Count);
+        Assert.Equal(5, persistedQuestions.Count);
         Assert.All(persistedQuestions, item =>
         {
             Assert.Equal(AiOperations.InterviewFirstQuestion.PromptVersion, item.PromptVersion);
@@ -470,14 +470,14 @@ public sealed class PracticeApiTests
             .Where(item => item.InterviewSessionId == interviewId)
             .Select(item => item.Sequence)
             .ToArrayAsync();
-        Assert.Equal(6, sequences.Length);
+        Assert.Equal(5, sequences.Length);
         Assert.Equal(sequences.Length, sequences.Distinct().Count());
         Assert.Equal(2, await finalDb.OutboxEvents.CountAsync(item =>
             item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
     }
 
     [Fact]
-    public async Task UnlimitedBatchBoundaryQuestionPlanFailureCanBeRetriedWithoutDuplicateSequence()
+    public async Task UnlimitedEntitlementStopsAtFiveQuestions()
     {
         var aiProvider = new TestAiProvider();
         using var factory = new NexoraApiFactory(aiProvider);
@@ -492,7 +492,7 @@ public sealed class PracticeApiTests
         var current = await GetInterviewAsync(client, interviewId);
         Assert.Equal(1, current.GetProperty("questions").GetArrayLength());
 
-        for (var sequence = 1; sequence <= 20; sequence++)
+        for (var sequence = 1; sequence <= 5; sequence++)
         {
             var question = current.GetProperty("questions").EnumerateArray()
                 .Single(item => item.GetProperty("sequence").GetInt32() == sequence);
@@ -502,7 +502,7 @@ public sealed class PracticeApiTests
                 question.GetProperty("id").GetGuid(),
                 $"Unlimited answer {sequence}.",
                 $"a7-unlimited-plan-answer-{sequence}");
-            if (sequence < 20)
+            if (sequence < 5)
             {
                 Assert.Equal(sequence + 1, answer.GetProperty("nextQuestion").GetProperty("sequence").GetInt32());
                 current = await GetInterviewAsync(client, interviewId);
@@ -510,33 +510,22 @@ public sealed class PracticeApiTests
             else
             {
                 Assert.Equal(JsonValueKind.Null, answer.GetProperty("nextQuestion").ValueKind);
+                Assert.Equal(InterviewContinuationValues.MaxQuestionsReached,
+                    answer.GetProperty("continuation").GetProperty("state").GetString());
             }
         }
 
-        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
-            new AiProviderException(AiProviderFailureKind.Unavailable, "unlimited batch failure"));
-        aiProvider.EnqueueResponse(AiPurposes.InterviewFirstQuestion,
-            new AiProviderException(AiProviderFailureKind.Unavailable, "unlimited batch failure retry"));
-        await ProcessJobsAsync(factory);
-
-        var failed = await GetInterviewAsync(client, interviewId);
-        Assert.Equal(InterviewQuestionPreparationStates.Failed,
-            failed.GetProperty("questionPreparationState").GetString());
-        Assert.Equal(20, failed.GetProperty("questions").GetArrayLength());
-        Assert.DoesNotContain(failed.GetProperty("questions").EnumerateArray(),
-            item => item.GetProperty("sequence").GetInt32() == 21);
+        var callsAtCap = aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion);
 
         using var retryRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/questions/retry");
         retryRequest.Headers.Add("Idempotency-Key", "a7-unlimited-plan-retry");
         using var retryResponse = await client.SendAsync(retryRequest);
-        Assert.Equal(HttpStatusCode.Accepted, retryResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, retryResponse.StatusCode);
         await ProcessJobsAsync(factory);
 
-        var recovered = await GetInterviewAsync(client, interviewId);
-        Assert.Equal(InterviewQuestionPreparationStates.Ready,
-            recovered.GetProperty("questionPreparationState").GetString());
-        Assert.Contains(recovered.GetProperty("questions").EnumerateArray(),
-            item => item.GetProperty("sequence").GetInt32() == 21);
+        var capped = await GetInterviewAsync(client, interviewId);
+        Assert.Equal(5, capped.GetProperty("questions").GetArrayLength());
+        Assert.Equal(callsAtCap, aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion));
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
@@ -544,8 +533,9 @@ public sealed class PracticeApiTests
             .Where(item => item.InterviewSessionId == interviewId)
             .Select(item => item.Sequence)
             .ToArrayAsync();
+        Assert.Equal(5, sequences.Length);
         Assert.Equal(sequences.Length, sequences.Distinct().Count());
-        Assert.Equal(2, await db.OutboxEvents.CountAsync(item =>
+        Assert.Equal(0, await db.OutboxEvents.CountAsync(item =>
             item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
     }
 
@@ -599,7 +589,7 @@ public sealed class PracticeApiTests
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         var session = await db.InterviewSessions.SingleAsync(item => item.Id == interviewId);
-        Assert.Equal(6, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(5, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
         Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Reserve));
         Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Consume));
         var originalReservation = await db.UsageEvents.SingleAsync(item => item.Id == session.ReservationEventId);
@@ -718,8 +708,8 @@ public sealed class PracticeApiTests
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        Assert.Equal(6, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
-        Assert.Equal(3, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId && item.Sequence > InterviewQuestionValues.FreeQuestionLimit));
+        Assert.Equal(5, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(2, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId && item.Sequence > InterviewQuestionValues.FreeQuestionLimit));
         Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Reserve));
         Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Consume));
     }
@@ -752,7 +742,7 @@ public sealed class PracticeApiTests
         var fourthAnswer = await AnswerAsync(client, interviewId, q4Id, "Tôi đã phối hợp với nhóm để xử lý sự cố.", "a7-paid-behavioral-a4");
         var q5 = fourthAnswer.GetProperty("nextQuestion");
         Assert.Equal(InterviewQuestionValues.Primary, q5.GetProperty("kind").GetString());
-        Assert.Equal(InterviewQuestionValues.Behavioral, q5.GetProperty("topic").GetString());
+        Assert.Equal(InterviewQuestionValues.Scenario, q5.GetProperty("topic").GetString());
         Assert.Equal(JsonValueKind.Null, q5.GetProperty("parentQuestionId").ValueKind);
         Assert.Equal(0, aiProvider.GetCallCount(AiPurposes.InterviewFollowup));
 

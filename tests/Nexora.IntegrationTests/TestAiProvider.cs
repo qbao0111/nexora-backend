@@ -14,7 +14,7 @@ internal sealed class TestAiProvider : IAiProvider
 
     private readonly ConcurrentQueue<AiRequest> _invocations = new();
     private readonly ConcurrentDictionary<string, int> _callCounts = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, Queue<Func<AiRequest, object>>> _scriptedResponses = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Queue<Func<AiRequest, CancellationToken, Task<object>>>> _scriptedResponses = new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyCollection<AiRequest> Invocations => _invocations.ToArray();
 
@@ -23,20 +23,26 @@ internal sealed class TestAiProvider : IAiProvider
 
     public void EnqueueResponse(string purpose, object responseOrException)
     {
-        var queue = _scriptedResponses.GetOrAdd(purpose, _ => new Queue<Func<AiRequest, object>>());
+        var queue = _scriptedResponses.GetOrAdd(purpose, _ => new Queue<Func<AiRequest, CancellationToken, Task<object>>>());
         lock (queue)
         {
-            queue.Enqueue(_ => responseOrException);
+            queue.Enqueue((_, _) => Task.FromResult(responseOrException));
         }
     }
 
     public void EnqueueHandler(string purpose, Func<AiRequest, object> handler)
     {
-        var queue = _scriptedResponses.GetOrAdd(purpose, _ => new Queue<Func<AiRequest, object>>());
+        var queue = _scriptedResponses.GetOrAdd(purpose, _ => new Queue<Func<AiRequest, CancellationToken, Task<object>>>());
         lock (queue)
         {
-            queue.Enqueue(handler);
+            queue.Enqueue((request, _) => Task.FromResult(handler(request)));
         }
+    }
+
+    public void EnqueueAsyncHandler(string purpose, Func<AiRequest, CancellationToken, Task<object>> handler)
+    {
+        var queue = _scriptedResponses.GetOrAdd(purpose, _ => new Queue<Func<AiRequest, CancellationToken, Task<object>>>());
+        lock (queue) queue.Enqueue(handler);
     }
 
     public void Reset()
@@ -46,7 +52,7 @@ internal sealed class TestAiProvider : IAiProvider
         _scriptedResponses.Clear();
     }
 
-    public Task<T> GenerateStructuredAsync<T>(AiRequest request, CancellationToken cancellationToken)
+    public async Task<T> GenerateStructuredAsync<T>(AiRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         _invocations.Enqueue(request);
@@ -54,7 +60,7 @@ internal sealed class TestAiProvider : IAiProvider
 
         if (_scriptedResponses.TryGetValue(request.Purpose, out var queue))
         {
-            Func<AiRequest, object>? handler = null;
+            Func<AiRequest, CancellationToken, Task<object>>? handler = null;
             lock (queue)
             {
                 if (queue.Count > 0)
@@ -65,12 +71,12 @@ internal sealed class TestAiProvider : IAiProvider
 
             if (handler is not null)
             {
-                var outcome = handler(request);
+                var outcome = await handler(request, cancellationToken);
                 if (outcome is Exception exception)
                 {
-                    return Task.FromException<T>(exception);
+                    throw exception;
                 }
-                return Task.FromResult((T)outcome);
+                return (T)outcome;
             }
         }
 
@@ -95,7 +101,7 @@ internal sealed class TestAiProvider : IAiProvider
                     ["structure"] = 80
                 },
                 Mode: ResumeAnalysisModes.JobTargeted);
-            return Task.FromResult((T)strictJobAnalysis);
+            return (T)strictJobAnalysis;
         }
 
         if (typeof(T) == typeof(ResumeAnalysisOutput) &&
@@ -118,7 +124,7 @@ internal sealed class TestAiProvider : IAiProvider
                     ["roleAlignment"] = 76
                 },
                 Mode: ResumeAnalysisModes.FieldBenchmark);
-            return Task.FromResult((T)strictFieldAnalysis);
+            return (T)strictFieldAnalysis;
         }
 
         var questionTopic = GetQuestionTopic(request.UntrustedInput);
@@ -136,6 +142,14 @@ internal sealed class TestAiProvider : IAiProvider
                 _ when behavioral => "Hãy kể về một tình huống bạn giải quyết vấn đề khó trong vai trò này.",
                 _ => "Explain dependency injection."
             };
+        var sequence = GetLabeledValue(request.UntrustedInput, "question-sequence:");
+        generatedQuestion = sequence switch
+        {
+            "3" => "Hãy đưa một ví dụ cụ thể cho năng lực này và giải thích kết quả đạt được.",
+            "4" => "Bạn sẽ chọn cách xử lý nào khi gặp một ràng buộc mới trong công việc?",
+            "5" => "Bạn cân nhắc những đánh đổi nào trước khi đưa ra quyết định cuối cùng?",
+            _ => generatedQuestion
+        };
         if (questionTopic is not null)
             generatedQuestion = $"[{questionTopic}] {generatedQuestion}";
         var candidateAnswer = GetLabeledValue(request.UntrustedInput, "answer:");
@@ -218,7 +232,7 @@ internal sealed class TestAiProvider : IAiProvider
                 [], [], [], [], []),
             _ => throw new InvalidOperationException($"Test provider does not support {typeof(T).Name}.")
         };
-        return Task.FromResult((T)result);
+        return (T)result;
     }
 
     private static string? GetQuestionTopic(string input) => input

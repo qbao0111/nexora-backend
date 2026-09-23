@@ -1093,7 +1093,26 @@ public sealed class InterviewFirstQuestionOperation : AiOperationDefinition<Gene
         if (trimmed.Length > 2_000)
             return AiValidationResult<GeneratedQuestion>.Failure("question.too_long", "semantic", repairable: true);
 
+        if (context.PreviousQuestions?.Any(previous => IsObviousDuplicate(trimmed, previous)) == true)
+            return AiValidationResult<GeneratedQuestion>.Failure("question.duplicate", "semantic", repairable: true);
+
         return AiValidationResult<GeneratedQuestion>.Success(new GeneratedQuestion(trimmed));
+    }
+
+    private static bool IsObviousDuplicate(string candidate, string previous)
+    {
+        static HashSet<string> Words(string value) =>
+            new string(value.ToLowerInvariant().Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ').ToArray())
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Where(word => word is not ("hãy" or "bạn" or "vui" or "lòng" or "cho" or "biết" or "trình" or "bày" or "về"))
+                .ToHashSet(StringComparer.Ordinal);
+
+        var left = Words(candidate);
+        var right = Words(previous);
+        if (left.Count == 0 || right.Count == 0) return false;
+        var overlap = left.Intersect(right).Count();
+        return overlap >= Math.Min(left.Count, right.Count) * 0.8 &&
+            Math.Max(left.Count, right.Count) <= Math.Min(left.Count, right.Count) + 3;
     }
 }
 

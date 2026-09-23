@@ -78,4 +78,28 @@ public sealed class InterviewQuestionContractTests
     {
         Assert.Equal(expectedTopic, InterviewQuestionValues.PaidTopicForContext(interviewType, hasResume, hasJobDescription));
     }
+
+    [Theory]
+    [InlineData("technical", InterviewQuestionValues.Technical, InterviewQuestionValues.Scenario)]
+    [InlineData("behavioral", InterviewQuestionValues.Behavioral, InterviewQuestionValues.Scenario)]
+    [InlineData("scenario", InterviewQuestionValues.Technical, InterviewQuestionValues.Behavioral)]
+    public void FiveQuestionBlueprintUsesDifferentPaidSlots(
+        string interviewType, string expectedFourth, string expectedFifth)
+    {
+        Assert.Equal(expectedFourth, InterviewQuestionValues.TopicForSequence(interviewType, 4, false, false));
+        Assert.Equal(expectedFifth, InterviewQuestionValues.TopicForSequence(interviewType, 5, false, false));
+        Assert.Equal(5, InterviewQuestionValues.MaxQuestionsPerSession);
+    }
+
+    [Theory]
+    [InlineData("Hãy trình bày cách bạn phân tích yêu cầu API.", "BẠN phân tích yêu cầu API như thế nào?")]
+    [InlineData("Hãy trình bày cách bạn phân tích yêu cầu API.", "Hãy trình bày cách bạn phân tích yêu cầu API!")]
+    public void ObviousRepeatedQuestionIsRejectedWithinStructuredExecutorValidation(string previous, string candidate)
+    {
+        var context = new AiOperationContext("test", PreviousQuestions: [previous]);
+        var result = AiOperations.InterviewFirstQuestion.NormalizeAndValidate(new GeneratedQuestion(candidate), context);
+        Assert.False(result.IsValid);
+        Assert.Equal("question.duplicate", result.FailureReason);
+        Assert.True(result.Repairable);
+    }
 }

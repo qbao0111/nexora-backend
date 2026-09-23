@@ -8,6 +8,43 @@ namespace Nexora.UnitTests.Ai;
 public sealed class StructuredAiExecutorTests
 {
     [Fact]
+    public async Task RepeatedQuestionRepairsWithinTwoProviderCalls()
+    {
+        var provider = new MockAiProvider();
+        provider.EnqueueResult(new GeneratedQuestion("Hãy trình bày cách bạn phân tích yêu cầu API."));
+        provider.EnqueueResult(new GeneratedQuestion("Bạn sẽ xử lý xung đột ưu tiên giữa hai nhóm như thế nào?"));
+        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewFirstQuestion,
+            "question-topic: technical",
+            new AiOperationContext("question-duplicate", PreviousQuestions: ["Bạn phân tích yêu cầu API như thế nào?"]),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, provider.CallCount);
+        Assert.Contains("question.duplicate", provider.Requests[1].Instructions);
+    }
+
+    [Fact]
+    public async Task RepeatedQuestionTwiceFailsWithoutThirdProviderCall()
+    {
+        var provider = new MockAiProvider();
+        provider.EnqueueResult(new GeneratedQuestion("Hãy trình bày cách bạn phân tích yêu cầu API."));
+        provider.EnqueueResult(new GeneratedQuestion("Hãy trình bày cách bạn phân tích yêu cầu API!"));
+        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var error = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.InterviewFirstQuestion,
+            "question-topic: technical",
+            new AiOperationContext("question-duplicate-terminal", PreviousQuestions: ["Bạn phân tích yêu cầu API như thế nào?"]),
+            CancellationToken.None));
+
+        Assert.Equal("AI_OUTPUT_INVALID", error.Code);
+        Assert.Equal(2, provider.CallCount);
+    }
+
+    [Fact]
     public async Task ExecuteAsyncSucceedsOnFirstAttemptWithoutRepair()
     {
         var fakeProvider = new MockAiProvider();
