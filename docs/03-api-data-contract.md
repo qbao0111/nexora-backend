@@ -305,7 +305,7 @@ PATCH /api/v1/learning-path/activities/{activityId} nhận { "status": "complete
 
 ### Next Practice Recommendation
 
-`GET /api/v1/recommendations/next` yêu cầu Bearer authentication và chỉ đọc Learning Path cùng Skill Profile của authenticated user. Endpoint là computed read model: không gọi AI, không tạo hoặc cập nhật Learning Path, không thêm entity/table/DbSet/migration và không nhận `userId` từ client.
+`GET /api/v1/recommendations/next` yêu cầu Bearer authentication và chỉ đọc Learning Path cùng Skill Profile của authenticated user. Endpoint là computed read model: không gọi AI, không tạo hoặc cập nhật Learning Path, không thêm entity/table/DbSet/migration và không nhận `userId` từ client. Evidence-backed recommendations may include nullable `rationale` with `competencyCode`, `competencyName`, `evidenceCount` and `hasMoreRecentlyPracticedPeer`; clients use `competencyCode` as the stable localization key and treat `competencyName` as display/fallback text.
 
 Response thành công dùng envelope chuẩn và trả `data` là `null` khi path hợp lệ nhưng không còn activity `pending`; trạng thái rỗng này là `200`, không phải lỗi. Nếu user chưa có active Career Goal hoặc active goal chưa có Learning Path, endpoint giữ nguyên lỗi B11 tương ứng `ACTIVE_CAREER_GOAL_REQUIRED` hoặc `LEARNING_PATH_NOT_FOUND`.
 

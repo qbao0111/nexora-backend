@@ -71,8 +71,15 @@ public sealed class ProgressController(
                     dashboard.NextRecommendedPractice.ResourceId,
                     dashboard.NextRecommendedPractice.EstimatedMinutes,
                     dashboard.NextRecommendedPractice.Priority,
-                    null,
+                    dashboard.NextRecommendedPractice.Action is null ? null : new NextPracticeActionResponse(
+                        dashboard.NextRecommendedPractice.Action.Type,
+                        dashboard.NextRecommendedPractice.Action.Reason,
+                        dashboard.NextRecommendedPractice.Action.SourceInterviewId,
+                        dashboard.NextRecommendedPractice.Action.SourceQuestionId,
+                        dashboard.NextRecommendedPractice.Action.FocusTopic,
+                        dashboard.NextRecommendedPractice.Action.SuggestedInterviewType),
                     dashboard.NextRecommendedPractice.Rationale is null ? null : new NextPracticeRecommendationRationaleResponse(
+                        dashboard.NextRecommendedPractice.Rationale.CompetencyCode,
                         dashboard.NextRecommendedPractice.Rationale.CompetencyName,
                         dashboard.NextRecommendedPractice.Rationale.EvidenceCount,
                         dashboard.NextRecommendedPractice.Rationale.HasMoreRecentlyPracticedPeer)),

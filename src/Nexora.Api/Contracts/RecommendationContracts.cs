@@ -9,6 +9,7 @@ public sealed record NextPracticeActionResponse(
     string? SuggestedInterviewType);
 
 public sealed record NextPracticeRecommendationRationaleResponse(
+    string CompetencyCode,
     string CompetencyName,
     int EvidenceCount,
     bool HasMoreRecentlyPracticedPeer);

@@ -34,6 +34,11 @@ public sealed class NextPracticeRecommendationPolicyTests
 
         Assert.Contains("Structure", result!.Reason, StringComparison.Ordinal);
         Assert.Contains("3 evidence items", result.Reason, StringComparison.Ordinal);
+        Assert.NotNull(result.Rationale);
+        Assert.Equal("resume.structure", result.Rationale!.CompetencyCode);
+        Assert.Equal("Structure", result.Rationale.CompetencyName);
+        Assert.Equal(3, result.Rationale.EvidenceCount);
+        Assert.False(result.Rationale.HasMoreRecentlyPracticedPeer);
     }
 
     [Fact]
@@ -46,6 +51,7 @@ public sealed class NextPracticeRecommendationPolicyTests
             Competency("resume.structure", "Structure", 40, 2, OldEvidence));
 
         Assert.Contains("Structure", result!.Reason, StringComparison.Ordinal);
+        Assert.True(result.Rationale!.HasMoreRecentlyPracticedPeer);
     }
 
     [Fact]
@@ -122,6 +128,7 @@ public sealed class NextPracticeRecommendationPolicyTests
         Assert.Equal(
             "Address this resume improvement next because no higher-priority evidence-backed practice activity is currently pending.",
             result.Reason);
+        Assert.Null(result.Rationale);
     }
 
     [Fact]
@@ -144,6 +151,7 @@ public sealed class NextPracticeRecommendationPolicyTests
         Assert.Equal(InterviewPracticeValues.Recommendation, result.Action.Reason);
         Assert.Equal(sourceInterviewId, result.Action.SourceInterviewId);
         Assert.Equal("correctness", result.Action.FocusTopic);
+        Assert.Equal("interview.correctness", result.Rationale!.CompetencyCode);
     }
 
     [Theory]

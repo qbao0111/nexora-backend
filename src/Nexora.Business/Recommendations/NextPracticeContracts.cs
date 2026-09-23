@@ -13,6 +13,7 @@ public sealed record NextPracticeActionView(
     string? SuggestedInterviewType);
 
 public sealed record NextPracticeRecommendationRationaleView(
+    string CompetencyCode,
     string CompetencyName,
     int EvidenceCount,
     bool HasMoreRecentlyPracticedPeer);
@@ -141,6 +142,7 @@ public static class NextPracticeRecommendationPolicy
                 : null,
             selected.IsScored
                 ? new NextPracticeRecommendationRationaleView(
+                    selected.CompetencyCode!,
                     selected.CompetencyName ?? selected.Activity.Title,
                     selected.EvidenceCount,
                     hasMoreRecentlyPracticedPeer)
