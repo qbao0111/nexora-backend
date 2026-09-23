@@ -1074,6 +1074,7 @@ public sealed class PracticeApiTests
         var reportInvocation = aiProvider.Invocations.Single(item => item.Purpose == AiPurposes.InterviewReport);
         Assert.DoesNotContain("A: \n", reportInvocation.UntrustedInput, StringComparison.Ordinal);
         Assert.Contains($"A: {candidateAnswer}", reportInvocation.UntrustedInput, StringComparison.Ordinal);
+        Assert.Contains("Only text after each A: is candidate evidence", reportInvocation.Instructions, StringComparison.Ordinal);
         Assert.DoesNotContain(illustrativeText, reportInvocation.UntrustedInput, StringComparison.Ordinal);
     }
 
