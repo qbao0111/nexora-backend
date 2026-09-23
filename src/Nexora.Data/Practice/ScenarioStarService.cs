@@ -604,12 +604,14 @@ public sealed partial class ScenarioStarService(
                 (int)starComponents.Average(x => x.res));
         }
 
-        var completedScenarios = await dbContext.ScenarioAttempts.CountAsync(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed, cancellationToken);
         var scenarioScores = await dbContext.ScenarioAttempts.AsNoTracking()
-            .Where(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed && item.EvaluationJson != null)
+            .Where(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed)
+            .Select(item => item.EvaluationJson)
             .ToArrayAsync(cancellationToken);
-        var avgScenarioScore = scenarioScores.Length > 0
-            ? (double?)scenarioScores.Select(item => ParseScenarioScore(item.EvaluationJson)).Where(s => s.HasValue).Average(s => s!.Value)
+        var completedScenarios = scenarioScores.Length;
+        var scoredScenarios = scenarioScores.Select(ParseScenarioScore).Where(score => score.HasValue).ToArray();
+        var avgScenarioScore = scoredScenarios.Length > 0
+            ? (double?)scoredScenarios.Average(score => score!.Value)
             : null;
         var completedStarAttempts = await dbContext.StarAttempts.CountAsync(item => item.UserId == userId && item.Status == PracticeFeatureValues.Completed, cancellationToken);
 

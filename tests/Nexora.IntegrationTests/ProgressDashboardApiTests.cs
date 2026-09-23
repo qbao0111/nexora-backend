@@ -56,7 +56,12 @@ public sealed class ProgressDashboardApiTests(ITestOutputHelper output)
         await SeedInterviewWithReportAsync(factory, account.UserId, 65, DateTimeOffset.UtcNow);
         await SeedLearningPathActivityAsync(factory, account.UserId, LearningPathValues.Pending, DateTimeOffset.UtcNow);
 
-        foreach (var route in new[] { "/api/v1/progress/dashboard", "/api/v1/me/career-profile", "/api/v1/recommendations/next" })
+        foreach (var (route, maxCommands) in new[]
+        {
+            ("/api/v1/progress/dashboard", 23),
+            ("/api/v1/me/career-profile", 9),
+            ("/api/v1/recommendations/next", 8)
+        })
         {
             using (var warm = await client.GetAsync(route)) Assert.Equal(HttpStatusCode.OK, warm.StatusCode);
             var counts = new List<int>();
@@ -75,7 +80,7 @@ public sealed class ProgressDashboardApiTests(ITestOutputHelper output)
             }
 
             output.WriteLine($"{route}: commands={string.Join(',', counts)}; warmMs={string.Join(',', elapsed.Select(value => value.ToString("F1", CultureInfo.InvariantCulture)))}; dbMs={string.Join(',', dbElapsed.Select(value => value.ToString("F1", CultureInfo.InvariantCulture)))}");
-            Assert.All(counts, count => Assert.InRange(count, 1, 100));
+            Assert.All(counts, count => Assert.InRange(count, 1, maxCommands));
         }
     }
 

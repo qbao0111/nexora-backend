@@ -30,6 +30,8 @@ public sealed record NextPracticeRecommendationView(
 public interface INextPracticeRecommendationService
 {
     Task<NextPracticeRecommendationView?> GetAsync(Guid userId, CancellationToken cancellationToken);
+    Task<NextPracticeRecommendationView?> GetAsync(Guid userId, SkillProfileView skillProfile, CancellationToken cancellationToken) =>
+        GetAsync(userId, cancellationToken);
 }
 
 public static class NextPracticeDurationPolicy
