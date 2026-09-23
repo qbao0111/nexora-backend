@@ -615,7 +615,7 @@ public sealed class ProgressDashboardApiTests(ITestOutputHelper output)
         db.LearningPathActivities.Add(new LearningPathActivity
         {
             Id = Guid.NewGuid(), LearningPathId = path.Id, LearningPathMilestoneId = milestone.Id,
-            ActivityKey = $"dashboard:{Guid.NewGuid():N}", Type = LearningPathValues.Interview, Title = "Dashboard activity",
+            ActivityKey = $"db:{Guid.NewGuid():N}", Type = LearningPathValues.Interview, Title = "Dashboard activity",
             Description = "Dashboard test activity", Priority = 1, SortOrder = 0, Status = status,
             CreatedAt = completedAt, UpdatedAt = completedAt, CompletedAt = status == LearningPathValues.Completed ? completedAt : null
         });
