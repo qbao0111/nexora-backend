@@ -16,6 +16,143 @@ namespace Nexora.IntegrationTests;
 public sealed class AsyncInterviewApiTests
 {
     [PostgresFact]
+    public async Task CompletingDuringFinalEvaluationQueuesOneReportOnPostgres()
+    {
+        const string finalContent = "Tôi phân tích nguyên nhân và theo dõi kết quả.";
+        var aiProvider = new TestAiProvider();
+        using var factory = NexoraApiFactory.CreatePostgres(
+            Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!, aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "async-report-race-postgres@example.test");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "async-report-race-start");
+        await ProcessJobsAsync(factory);
+
+        var q1 = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+        using var first = await SubmitAnswerAsync(client, interviewId, q1, "Tôi đã cải thiện hệ thống.", "async-report-race-a1");
+        var q2 = (await DataAsync(first)).GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        await ProcessJobsAsync(factory);
+
+        using var second = await SubmitAnswerAsync(client, interviewId, q2, finalContent, "async-report-race-a2");
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        aiProvider.EnqueueAsyncHandler(AiPurposes.InterviewEvaluate, async (_, token) =>
+        {
+            entered.SetResult();
+            await release.Task.WaitAsync(token);
+            return new AnswerEvaluation(
+                [
+                    new RubricScore("correctness", 75, finalContent),
+                    new RubricScore("structure", 70, finalContent),
+                    new RubricScore("completeness", 65, finalContent),
+                    new RubricScore("clarity", 80, finalContent)
+                ],
+                "Hãy bổ sung kết quả cụ thể.",
+                new StarEvaluation(false, null, null, null, null, null, [], [], []),
+                AiOperations.ScoreScale,
+                Strengths: [finalContent],
+                Improvements: ["Bổ sung kết quả cụ thể."],
+                ImprovedAnswer: finalContent);
+        });
+
+        var evaluation = ProcessJobsAsync(factory);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            using var complete = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/complete");
+            complete.Headers.Add("Idempotency-Key", "async-report-race-complete");
+            using var completed = await client.SendAsync(complete);
+            Assert.Equal(HttpStatusCode.Accepted, completed.StatusCode);
+            Assert.Equal(PracticeValues.Completing,
+                (await GetInterviewAsync(client, interviewId)).GetProperty("status").GetString());
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        await evaluation;
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(1, await db.OutboxEvents.CountAsync(item =>
+                item.Type == "InterviewReportRequested" && item.AggregateId == interviewId));
+        }
+        await ProcessJobsAsync(factory);
+        Assert.Equal(PracticeValues.Completed,
+            (await GetInterviewAsync(client, interviewId)).GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task ResultsRetryRecoversStrandedCompletingSessionWithoutDuplicateReportJob()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "async-stranded-report@example.test");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "async-stranded-start");
+        await ProcessJobsAsync(factory);
+        var q1 = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+        using var first = await SubmitAnswerAsync(client, interviewId, q1, "Tôi phân tích nguyên nhân.", "async-stranded-a1");
+        var q2 = (await DataAsync(first)).GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        using var second = await SubmitAnswerAsync(client, interviewId, q2, "Tôi theo dõi kết quả.", "async-stranded-a2");
+        await ProcessJobsAsync(factory);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var session = await db.InterviewSessions.SingleAsync(item => item.Id == interviewId);
+            session.Status = PracticeValues.Completing;
+            await db.SaveChangesAsync();
+            Assert.Equal(0, await db.OutboxEvents.CountAsync(item =>
+                item.Type == "InterviewReportRequested" && item.AggregateId == interviewId));
+        }
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var retry = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/results/retry");
+            retry.Headers.Add("Idempotency-Key", $"async-stranded-retry-{attempt}");
+            using var response = await client.SendAsync(retry);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(1, await db.OutboxEvents.CountAsync(item =>
+                item.Type == "InterviewReportRequested" && item.AggregateId == interviewId));
+        }
+        await ProcessJobsAsync(factory);
+        Assert.Equal(PracticeValues.Completed,
+            (await GetInterviewAsync(client, interviewId)).GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task LaterPreparedQuestionsReceivePreviousQuestionContext()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = new NexoraApiFactory(aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "async-question-context@example.test");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        await StartInterviewAsync(client, "async-question-context-start");
+        await ProcessJobsAsync(factory);
+
+        var requests = aiProvider.Invocations
+            .Where(item => item.Purpose == AiPurposes.InterviewFirstQuestion)
+            .ToArray();
+        Assert.Equal(3, requests.Length);
+        Assert.DoesNotContain("previous-question", requests[0].UntrustedInput, StringComparison.Ordinal);
+        Assert.Contains("previous-question", requests[1].UntrustedInput, StringComparison.Ordinal);
+        Assert.Contains("previous-question", requests[2].UntrustedInput, StringComparison.Ordinal);
+        Assert.Contains("do not repeat or paraphrase", requests[2].UntrustedInput, StringComparison.Ordinal);
+    }
+
+    [PostgresFact]
     public async Task ConcurrentAnswerReplayReleasesExactlyOneNextQuestionOnPostgres()
     {
         var aiProvider = new TestAiProvider();
@@ -118,7 +255,7 @@ public sealed class AsyncInterviewApiTests
             item => item.GetProperty("sequence").GetInt32() == 4);
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        Assert.Equal(6, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(5, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
         Assert.Equal(2, await db.OutboxEvents.CountAsync(item =>
             item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
     }
@@ -192,8 +329,8 @@ public sealed class AsyncInterviewApiTests
             recovered.GetProperty("questionPreparationState").GetString());
         Assert.Contains(recovered.GetProperty("questions").EnumerateArray(),
             item => item.GetProperty("sequence").GetInt32() == 4);
-        Assert.Equal(6, await afterDb.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
-        Assert.Equal(6, await afterDb.InterviewQuestions
+        Assert.Equal(5, await afterDb.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(5, await afterDb.InterviewQuestions
             .Where(item => item.InterviewSessionId == interviewId)
             .Select(item => item.Sequence)
             .Distinct()
@@ -201,7 +338,7 @@ public sealed class AsyncInterviewApiTests
     }
 
     [PostgresFact]
-    public async Task ContinueDoesNotDuplicatePendingQuestionPlan()
+    public async Task UnlimitedEntitlementCannotIssueSixthQuestionOnPostgres()
     {
         var aiProvider = new TestAiProvider();
         using var factory = NexoraApiFactory.CreatePostgres(
@@ -215,7 +352,7 @@ public sealed class AsyncInterviewApiTests
         await ProcessJobsAsync(factory);
 
         var current = await GetInterviewAsync(client, interviewId);
-        for (var sequence = 1; sequence <= 20; sequence++)
+        for (var sequence = 1; sequence <= 5; sequence++)
         {
             var question = current.GetProperty("questions").EnumerateArray()
                 .Single(item => item.GetProperty("sequence").GetInt32() == sequence);
@@ -226,7 +363,7 @@ public sealed class AsyncInterviewApiTests
                 $"Unlimited answer {sequence}.",
                 $"async-continue-pending-postgres-answer-{sequence}");
             var answer = await DataAsync(answerResponse);
-            if (sequence < 20)
+            if (sequence < 5)
             {
                 Assert.Equal(sequence + 1, answer.GetProperty("nextQuestion").GetProperty("sequence").GetInt32());
                 current = await GetInterviewAsync(client, interviewId);
@@ -234,51 +371,25 @@ public sealed class AsyncInterviewApiTests
             else
             {
                 Assert.Equal(JsonValueKind.Null, answer.GetProperty("nextQuestion").ValueKind);
+                Assert.Equal(InterviewContinuationValues.MaxQuestionsReached,
+                    answer.GetProperty("continuation").GetProperty("state").GetString());
             }
         }
-
-        var beforeContinue = await GetInterviewAsync(client, interviewId);
-        Assert.Equal(InterviewQuestionPreparationStates.Processing,
-            beforeContinue.GetProperty("questionPreparationState").GetString());
-        using var beforeScope = factory.Services.CreateScope();
-        var beforeDb = beforeScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        var usageBeforeContinue = await beforeDb.UsageEvents.CountAsync(item => item.UserId == account.UserId);
-        var planCallsBeforeContinue = aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion);
-        Assert.Equal(1, await beforeDb.OutboxEvents.CountAsync(item =>
-            item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
 
         using (var continueRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/continue"))
         {
             continueRequest.Headers.Add("Idempotency-Key", "async-continue-pending-postgres-continue");
             using var continueResponse = await client.SendAsync(continueRequest);
-            Assert.Equal(HttpStatusCode.OK, continueResponse.StatusCode);
-            var continued = await DataAsync(continueResponse);
-            Assert.Equal(InterviewQuestionPreparationStates.Processing,
-                continued.GetProperty("questionPreparationState").GetString());
+            Assert.Equal(HttpStatusCode.Conflict, continueResponse.StatusCode);
         }
 
-        using var afterContinueScope = factory.Services.CreateScope();
-        var afterContinueDb = afterContinueScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        Assert.Equal(usageBeforeContinue, await afterContinueDb.UsageEvents.CountAsync(item => item.UserId == account.UserId));
-        Assert.Equal(1, await afterContinueDb.OutboxEvents.CountAsync(item =>
-            item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
-
+        var callsAtCap = aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion);
         await ProcessJobsAsync(factory);
-        await ProcessJobsAsync(factory);
-        var recovered = await GetInterviewAsync(client, interviewId);
-        Assert.Equal(InterviewQuestionPreparationStates.Ready,
-            recovered.GetProperty("questionPreparationState").GetString());
-        Assert.Contains(recovered.GetProperty("questions").EnumerateArray(),
-            item => item.GetProperty("sequence").GetInt32() == 21);
-        Assert.Equal(planCallsBeforeContinue + 20,
-            aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion));
-        Assert.Equal(40, await afterContinueDb.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
-        Assert.Equal(40, await afterContinueDb.InterviewQuestions
-            .Where(item => item.InterviewSessionId == interviewId)
-            .Select(item => item.Sequence)
-            .Distinct()
-            .CountAsync());
-        Assert.Equal(1, await afterContinueDb.OutboxEvents.CountAsync(item =>
+        Assert.Equal(callsAtCap, aiProvider.GetCallCount(AiPurposes.InterviewFirstQuestion));
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(5, await db.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(0, await db.OutboxEvents.CountAsync(item =>
             item.Type == "InterviewQuestionPlanRequested" && item.AggregateId == interviewId));
     }
 
@@ -372,8 +483,8 @@ public sealed class AsyncInterviewApiTests
         Assert.Contains(recovered.GetProperty("questions").EnumerateArray(),
             item => item.GetProperty("sequence").GetInt32() == 4);
         Assert.Equal(4, recovered.GetProperty("questions").GetArrayLength());
-        Assert.Equal(6, await afterDb.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
-        Assert.Equal(6, await afterDb.InterviewQuestions
+        Assert.Equal(5, await afterDb.InterviewQuestions.CountAsync(item => item.InterviewSessionId == interviewId));
+        Assert.Equal(5, await afterDb.InterviewQuestions
             .Where(item => item.InterviewSessionId == interviewId)
             .Select(item => item.Sequence)
             .Distinct()

@@ -522,7 +522,11 @@ Mỗi phần tử trong `interview.questions` là server-owned và có thêm met
 cùng session. `sequence` chỉ dùng để sắp xếp, không được dùng để suy ra
 follow-up. A7 dùng deterministic free-topic policy theo `interviewType` và
 context CV/JD; Q1 luôn là `self_introduction`, còn Q2-Q3 cho user trải nghiệm
-mode đã chọn trước paywall. Sau Q3, response
+mode đã chọn trước paywall. Mỗi session có tối đa **5** câu hỏi; paid/unlimited
+chỉ có thể nhận Q4-Q5 trong cùng session. Q4-Q5 dùng topic server-owned khác
+nhau và generation nhìn thấy các câu trước để tránh lặp. Sau Q5,
+`continuation.state=max_questions_reached`; server không chuẩn bị hay phát Q6.
+Sau Q3 ở Free, response
 trả `nextQuestion: null` và continuation server-owned. `continuation.state` có
 thể là `in_progress`, `upgrade_required` hoặc `max_questions_reached`; chỉ
 `upgrade_required` cho phép gọi endpoint `/interviews/{id}/continue` sau khi

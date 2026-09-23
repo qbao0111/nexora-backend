@@ -135,7 +135,9 @@ probe. The `self_introduction` mode uses `motivation_role_fit` for Q2 and
 prefers JD/CV targeting for Q3. After Q3, `continuation` exposes finish-now
 versus upgrade-required without adding a session state. A paid `/continue`
 re-checks entitlement before AI, keeps the same session and idempotency identity,
-and creates a policy-selected primary; an explicit follow-up is allowed only
+and creates policy-selected primary Q4-Q5. Every session has a hard five-question
+cap, including unlimited entitlements; generation uses previous-question context
+to avoid repetition. An explicit follow-up is allowed only
 for a paid behavioral question whose evaluation has missing STAR evidence.
 
 All user-facing AI-generated natural-language output is Vietnamese-only in the

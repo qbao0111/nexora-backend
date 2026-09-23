@@ -239,7 +239,8 @@ public sealed record AiOperationContext(
     int? TargetQuestionCount = null,
     IReadOnlyDictionary<string, string>? Metadata = null,
     string? CandidateAnswer = null,
-    string? GroundingTranscript = null);
+    string? GroundingTranscript = null,
+    IReadOnlyCollection<string>? PreviousQuestions = null);
 
 public sealed record AiExecutionResult<T>(
     T Value,

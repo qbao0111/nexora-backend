@@ -43,7 +43,8 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
         string? jobDescription,
         ResumeProfile? profile,
         int questionSequence = 1,
-        string? questionTopic = null)
+        string? questionTopic = null,
+        IReadOnlyCollection<(string Topic, string Content)>? previousQuestions = null)
     {
         var builder = new StringBuilder();
         Append(builder, "role", role, 160);
@@ -54,6 +55,12 @@ public sealed class ResumeContextBuilder : IResumeContextBuilder
         Append(builder, "question-topic", questionTopic, 80);
         if (!string.IsNullOrWhiteSpace(questionTopic))
             builder.AppendLine("instruction: the requested question-topic is authoritative; generate one question for that topic only.");
+        if (previousQuestions is { Count: > 0 })
+        {
+            builder.AppendLine("instruction: do not repeat or paraphrase any previous question; test a materially different competency or evidence dimension.");
+            foreach (var previous in previousQuestions.Take(4))
+                Append(builder, $"previous-question ({previous.Topic})", previous.Content, 500);
+        }
         Append(builder, "job-description", jobDescription, 4_000);
         if (profile is not null) AppendProfile(builder, profile, includeDetails: false);
         return Bound(builder.ToString(), InterviewContextLimit);

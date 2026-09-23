@@ -30,7 +30,6 @@ public sealed partial class PracticeService(
     TimeProvider timeProvider,
     ILogger<PracticeService> logger) : IPracticeService, IPracticeJobProcessor
 {
-    private const int UnlimitedQuestionPlanBatchSize = 20;
     private const int MaximumHistoryPageSize = 100;
     private const string DevelopmentResumeAnalysisOperation = "development-resume-analysis.create";
     private const string JobDescriptionCreateOperation = "job-description.create";
@@ -1115,6 +1114,7 @@ public sealed partial class PracticeService(
         session.Version++;
         session.UpdatedAt = now;
         dbContext.Add(Idempotency(userId, "interview.complete", key, fingerprint, session.Id, now));
+        await dbContext.SaveChangesAsync(cancellationToken);
         await TryQueueReportIfReadyAsync(session.Id, now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await CommitAsync(transaction, cancellationToken);
@@ -1189,14 +1189,6 @@ public sealed partial class PracticeService(
 
         if (session.Status == PracticeValues.Completing)
         {
-            var reportJobs = dbContext.OutboxEvents.AsNoTracking()
-                .Where(item => item.AggregateId == session.Id && item.Type == "InterviewReportRequested");
-            var latestReportJob = dbContext.Database.IsNpgsql()
-                ? await reportJobs.OrderByDescending(item => item.CreatedAt).FirstOrDefaultAsync(cancellationToken)
-                : (await reportJobs.ToArrayAsync(cancellationToken)).OrderByDescending(item => item.CreatedAt).FirstOrDefault();
-            if (failedAnswers.Length == 0 && latestReportJob?.Status == BillingValues.Failed &&
-                !await HasPendingReportJobAsync(session.Id, cancellationToken))
-                dbContext.Add(Outbox("InterviewReportRequested", "interview", session.Id, now));
             await TryQueueReportIfReadyAsync(session.Id, now, cancellationToken);
         }
         dbContext.Add(Idempotency(userId, "interview.results.retry", key, fingerprint, session.Id, now));
@@ -1824,21 +1816,18 @@ public sealed partial class PracticeService(
         int startSequence,
         int endSequence,
         bool hasUsableResumeContext,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<(string Topic, string Content)>? existingQuestions = null)
     {
         var prepared = new List<PreparedInterviewQuestion>();
+        var previousQuestions = existingQuestions?.ToList() ?? [];
         for (var sequence = startSequence; sequence <= endSequence; sequence++)
         {
             var topic = sequence == 1 && !string.IsNullOrWhiteSpace(session.FocusTopic)
                 ? session.FocusTopic!
-                : sequence <= InterviewQuestionValues.FreeQuestionLimit
-                    ? InterviewQuestionValues.FreePrimaryTopicForSequence(
+                : InterviewQuestionValues.TopicForSequence(
                         session.InterviewType,
                         sequence,
-                        hasUsableResumeContext,
-                        session.JobDescription is not null)
-                    : InterviewQuestionValues.PaidTopicForContext(
-                        session.InterviewType,
                         hasUsableResumeContext,
                         session.JobDescription is not null);
             var context = resumeContextBuilder.BuildInterviewQuestionContext(
@@ -1849,7 +1838,8 @@ public sealed partial class PracticeService(
                 session.JobDescription?.Content,
                 profile,
                 sequence,
-                topic);
+                topic,
+                previousQuestions);
             var result = await structuredAiExecutor.ExecuteAsync<GeneratedQuestion>(
                 AiOperations.InterviewFirstQuestion,
                 context,
@@ -1861,7 +1851,8 @@ public sealed partial class PracticeService(
                         ["questionSequence"] = sequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
                         ["questionKind"] = InterviewQuestionValues.Primary,
                         ["questionTopic"] = topic
-                    }),
+                    },
+                    PreviousQuestions: previousQuestions.Select(item => item.Content).ToArray()),
                 cancellationToken);
             var content = result.Value.Content?.Trim() ?? string.Empty;
             if (content.Length == 0) throw InvalidAiOutput();
@@ -1871,6 +1862,7 @@ public sealed partial class PracticeService(
                 content[..Math.Min(content.Length, 2_000)],
                 result.PromptVersion,
                 result.ModelVersion));
+            previousQuestions.Add((topic, content));
         }
 
         return prepared;
@@ -1894,7 +1886,7 @@ public sealed partial class PracticeService(
             .Where(item => item.InterviewSessionId == snapshot.Id)
             .Select(item => (int?)item.Sequence)
             .MaxAsync(cancellationToken) ?? 0;
-        var endSequence = PreparationLimit(questionLimit, existingMax + 1);
+        var endSequence = PreparationLimit(questionLimit);
         if (existingMax >= endSequence)
         {
             MarkProcessed(job);
@@ -1906,13 +1898,19 @@ public sealed partial class PracticeService(
         var profile = hasUsableResumeContext
             ? TryReadResumeProfile(snapshot.Resume?.StructuredProfile)
             : null;
+        var existingQuestions = await dbContext.InterviewQuestions.AsNoTracking()
+            .Where(item => item.InterviewSessionId == snapshot.Id)
+            .OrderBy(item => item.Sequence)
+            .Select(item => new { item.Topic, item.Content })
+            .ToArrayAsync(cancellationToken);
         var prepared = await GeneratePreparedQuestionsAsync(
             snapshot,
             profile,
             existingMax + 1,
             endSequence,
             hasUsableResumeContext,
-            cancellationToken);
+            cancellationToken,
+            existingQuestions.Select(item => (item.Topic, item.Content)).ToArray());
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         var session = await FindInterviewForUpdateAsync(snapshot.UserId, snapshot.Id, cancellationToken) ?? throw NotFound();
@@ -2307,9 +2305,11 @@ public sealed partial class PracticeService(
             .SingleOrDefaultAsync(item => item.Id == interviewId && item.UserId == userId, cancellationToken) ?? throw NotFound();
         ValidateQuestionContracts(session.Questions);
         var answer = session.Answers.Single(item => item.Id == answerId);
+        var questionLimit = await GetQuestionLimitAsync(userId, cancellationToken);
         var next = session.Questions
             .OrderBy(item => item.Sequence)
-            .FirstOrDefault(item => item.ReleasedAt is not null &&
+            .FirstOrDefault(item => item.Sequence <= questionLimit &&
+                item.ReleasedAt is not null &&
                 session.Answers.All(existing => existing.QuestionId != item.Id));
         var continuation = await BuildContinuationAsync(userId, session, cancellationToken);
         var isComplete = next is null && continuation?.State == InterviewContinuationValues.MaxQuestionsReached;
@@ -2379,8 +2379,12 @@ public sealed partial class PracticeService(
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        var session = await dbContext.InterviewSessions
-            .SingleOrDefaultAsync(item => item.Id == interviewId, cancellationToken);
+        var session = dbContext.Database.IsNpgsql()
+            ? await dbContext.InterviewSessions.FromSqlInterpolated(
+                    $"SELECT * FROM interview_sessions WHERE \"Id\" = {interviewId} FOR UPDATE")
+                .AsNoTracking().SingleOrDefaultAsync(cancellationToken)
+            : await dbContext.InterviewSessions.AsNoTracking()
+                .SingleOrDefaultAsync(item => item.Id == interviewId, cancellationToken);
         if (session?.Status != PracticeValues.Completing)
             return;
 
@@ -2432,10 +2436,9 @@ public sealed partial class PracticeService(
         _ => "INTERNAL_PROCESSING_FAILED"
     };
 
-    private static int PreparationLimit(int questionLimit, int startSequence = 1) =>
-        questionLimit == int.MaxValue
-            ? startSequence + UnlimitedQuestionPlanBatchSize - 1
-            : Math.Max(InterviewQuestionValues.FreeQuestionLimit, questionLimit);
+    private static int PreparationLimit(int questionLimit) =>
+        Math.Min(InterviewQuestionValues.MaxQuestionsPerSession,
+            Math.Max(InterviewQuestionValues.FreeQuestionLimit, questionLimit));
 
     private async Task<InterviewSession?> FindInterviewForUpdateAsync(
         Guid userId,
@@ -3031,7 +3034,9 @@ public sealed partial class PracticeService(
         InterviewEvaluationProgress? evaluationProgress = null,
         string questionPreparationState = InterviewQuestionPreparationStates.Processing) =>
         new(session.Id, session.Status, session.Role, session.Seniority, session.InterviewType, session.Difficulty, session.Version,
-            questions.Where(item => item.ReleasedAt is not null).OrderBy(item => item.Sequence).Select(MapQuestion).ToArray(),
+            questions.Where(item => item.ReleasedAt is not null &&
+                (session.Status != PracticeValues.Active || item.Sequence <= InterviewQuestionValues.MaxQuestionsPerSession))
+                .OrderBy(item => item.Sequence).Select(MapQuestion).ToArray(),
             answers.OrderBy(item => item.CreatedAt).Select(answer => MapAnswer(answer, session.Status)).ToArray(),
             session.CreatedAt, session.UpdatedAt, continuation, reportState, resultState,
             evaluationProgress ?? BuildEvaluationProgress(answers), questionPreparationState);
@@ -3097,8 +3102,10 @@ public sealed partial class PracticeService(
         if (session.Status != PracticeValues.Active)
             return null;
 
-        var questions = session.Questions.Count(item => item.ReleasedAt is not null);
-        var answered = session.Answers.Count(answer => !string.IsNullOrWhiteSpace(answer.Content));
+        var issued = session.Questions.Where(item => item.Sequence <= questionLimit && item.ReleasedAt is not null).ToArray();
+        var questions = issued.Length;
+        var answered = session.Answers.Count(answer => !string.IsNullOrWhiteSpace(answer.Content) &&
+            issued.Any(question => question.Id == answer.QuestionId));
         var canFinishNow = answered >= MinimumReportAnswers;
         var allIssuedQuestionsAnswered = questions > 0 && answered >= questions;
         if (questions >= questionLimit && allIssuedQuestionsAnswered)
@@ -3119,10 +3126,12 @@ public sealed partial class PracticeService(
         if (!access.Enabled)
             return InterviewQuestionValues.FreeQuestionLimit;
         if (access.Unlimited)
-            return int.MaxValue;
+            return InterviewQuestionValues.MaxQuestionsPerSession;
         if (access.Limit is null or <= 0)
             return InterviewQuestionValues.FreeQuestionLimit;
-        return Math.Max(InterviewQuestionValues.FreeQuestionLimit, access.Limit.Value);
+        return Math.Clamp(access.Limit.Value,
+            InterviewQuestionValues.FreeQuestionLimit,
+            InterviewQuestionValues.MaxQuestionsPerSession);
     }
     private static QuestionView MapQuestion(InterviewQuestion question) => new(
         question.Id,

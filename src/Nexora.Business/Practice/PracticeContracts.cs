@@ -55,6 +55,7 @@ public static class InterviewQuestionPreparationStates
 public static class InterviewQuestionValues
 {
     public const int FreeQuestionLimit = 3;
+    public const int MaxQuestionsPerSession = 5;
     public const string Primary = "primary";
     public const string Followup = "followup";
 
@@ -151,6 +152,26 @@ public static class InterviewQuestionValues
                     "scenario" => Scenario,
                     _ => Technical
                 };
+
+    public static string TopicForSequence(string interviewType, int sequence, bool hasResume, bool hasJobDescription) =>
+        sequence <= FreeQuestionLimit
+            ? FreePrimaryTopicForSequence(interviewType, sequence, hasResume, hasJobDescription)
+            : sequence switch
+            {
+                4 => interviewType.Trim().Equals("scenario", StringComparison.OrdinalIgnoreCase) &&
+                     !hasResume && !hasJobDescription
+                    ? Technical
+                    : PaidTopicForContext(interviewType, hasResume, hasJobDescription),
+                5 => interviewType.Trim().ToLowerInvariant() switch
+                {
+                    "technical" => Scenario,
+                    "behavioral" => Scenario,
+                    "scenario" => Behavioral,
+                    "motivation_role_fit" => Behavioral,
+                    _ => Scenario
+                },
+                _ => throw new ArgumentOutOfRangeException(nameof(sequence))
+            };
 }
 
 public static class InterviewContinuationValues
@@ -402,7 +423,8 @@ public interface IResumeContextBuilder
         string? jobDescription,
         ResumeProfile? profile,
         int questionSequence = 1,
-        string? questionTopic = null);
+        string? questionTopic = null,
+        IReadOnlyCollection<(string Topic, string Content)>? previousQuestions = null);
     string BuildAnswerEvaluationContext(
         string role,
         string seniority,
