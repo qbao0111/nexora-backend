@@ -434,7 +434,7 @@ public sealed class ProgressDashboardApiTests(ITestOutputHelper output)
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         var now = DateTimeOffset.UtcNow;
-        var plan = new Plan { Id = Guid.NewGuid(), Code = $"dashboard-{Guid.NewGuid():N}", Name = "Dashboard test", IsActive = true, CreatedAt = now };
+        var plan = new Plan { Id = Guid.NewGuid(), Code = $"db-{Guid.NewGuid():N}", Name = "Dashboard test", IsActive = true, CreatedAt = now };
         var price = new PlanPrice { Id = Guid.NewGuid(), PlanId = plan.Id, AmountMinor = 1, Currency = "VND", DurationDays = 30, InterviewQuota = 1, IsActive = true, CreatedAt = now };
         var subscription = new Subscription { Id = Guid.NewGuid(), UserId = userId, Status = BillingValues.Active, StartsAt = now.AddMinutes(-1), EndsAt = now.AddDays(30), CreatedAt = now, UpdatedAt = now };
         var entitlement = new Entitlement
