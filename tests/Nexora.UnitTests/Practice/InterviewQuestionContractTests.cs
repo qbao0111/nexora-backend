@@ -91,6 +91,35 @@ public sealed class InterviewQuestionContractTests
         Assert.Equal(5, InterviewQuestionValues.MaxQuestionsPerSession);
     }
 
+    [Fact]
+    public void PaidQuestionTopicsRemainDistinctForEveryTypeAndContext()
+    {
+        string[] interviewTypes =
+        [
+            "technical", "behavioral", "scenario", "cv_targeted", "jd_targeted",
+            "motivation_role_fit", "self_introduction", "unknown"
+        ];
+
+        foreach (var interviewType in interviewTypes)
+        foreach (var hasResume in new[] { false, true })
+        foreach (var hasJobDescription in new[] { false, true })
+        {
+            var fourth = InterviewQuestionValues.TopicForSequence(interviewType, 4, hasResume, hasJobDescription);
+            var fifth = InterviewQuestionValues.TopicForSequence(interviewType, 5, hasResume, hasJobDescription);
+            Assert.NotEqual(fourth, fifth);
+        }
+    }
+
+    [Theory]
+    [InlineData("cv_targeted", true, true, InterviewQuestionValues.JdTargeted)]
+    [InlineData("jd_targeted", true, false, InterviewQuestionValues.CvTargeted)]
+    public void TargetedInterviewEndsWithDistinctAppliedScenario(
+        string interviewType, bool hasResume, bool hasJobDescription, string expectedFourth)
+    {
+        Assert.Equal(expectedFourth, InterviewQuestionValues.TopicForSequence(interviewType, 4, hasResume, hasJobDescription));
+        Assert.Equal(InterviewQuestionValues.Scenario, InterviewQuestionValues.TopicForSequence(interviewType, 5, hasResume, hasJobDescription));
+    }
+
     [Theory]
     [InlineData("Hãy trình bày cách bạn phân tích yêu cầu API.", "BẠN phân tích yêu cầu API như thế nào?")]
     [InlineData("Hãy trình bày cách bạn phân tích yêu cầu API.", "Hãy trình bày cách bạn phân tích yêu cầu API!")]

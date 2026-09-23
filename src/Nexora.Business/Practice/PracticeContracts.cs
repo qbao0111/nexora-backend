@@ -167,8 +167,6 @@ public static class InterviewQuestionValues
                     "technical" => Scenario,
                     "behavioral" => Scenario,
                     "scenario" => Behavioral,
-                    "cv_targeted" => hasJobDescription ? JdTargeted : Scenario,
-                    "jd_targeted" => hasResume ? CvTargeted : Scenario,
                     "motivation_role_fit" => Behavioral,
                     _ => Scenario
                 },
