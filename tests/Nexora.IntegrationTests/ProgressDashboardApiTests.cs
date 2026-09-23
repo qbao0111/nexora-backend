@@ -1,8 +1,12 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Data.Common;
+using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Nexora.Business.Billing;
@@ -17,11 +21,94 @@ using Nexora.Data.Career;
 using Nexora.Data.Learning;
 using Nexora.Data.Persistence;
 using Nexora.Data.Practice;
+using Xunit.Abstractions;
 
 namespace Nexora.IntegrationTests;
 
-public sealed class ProgressDashboardApiTests
+[Collection("PostgreSQL primary resume")]
+public sealed class ProgressDashboardApiTests(ITestOutputHelper output)
 {
+    [Fact]
+    public async Task SqliteBootstrapReadsKeepDatabaseCommandsBounded()
+    {
+        var commands = new ReadCommandCounter();
+        using var factory = new NexoraApiFactory(commands);
+        await MeasureBootstrapReadsAsync(factory, commands);
+    }
+
+    [PostgresFact]
+    public async Task PostgresBootstrapReadsKeepDatabaseCommandsBounded()
+    {
+        var commands = new ReadCommandCounter();
+        var connectionString = Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!;
+        using var factory = NexoraApiFactory.CreatePostgres(connectionString, dbInterceptor: commands);
+        await MeasureBootstrapReadsAsync(factory, commands);
+    }
+
+    private async Task MeasureBootstrapReadsAsync(NexoraApiFactory factory, ReadCommandCounter commands)
+    {
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        Authorize(client, account);
+        await SeedFeatureEntitlementAsync(factory, account.UserId);
+        await SeedResumeAnalysisAsync(factory, account.UserId, PracticeValues.Completed, DateTimeOffset.UtcNow);
+        await SeedInterviewWithReportAsync(factory, account.UserId, 65, DateTimeOffset.UtcNow);
+        await SeedLearningPathActivityAsync(factory, account.UserId, LearningPathValues.Pending, DateTimeOffset.UtcNow);
+
+        foreach (var route in new[] { "/api/v1/progress/dashboard", "/api/v1/me/career-profile", "/api/v1/recommendations/next" })
+        {
+            using (var warm = await client.GetAsync(route)) Assert.Equal(HttpStatusCode.OK, warm.StatusCode);
+            var counts = new List<int>();
+            var elapsed = new List<double>();
+            var dbElapsed = new List<double>();
+            for (var attempt = 0; attempt < 5; attempt++)
+            {
+                commands.Reset();
+                var watch = Stopwatch.StartNew();
+                using var response = await client.GetAsync(route);
+                watch.Stop();
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                counts.Add(commands.Count);
+                elapsed.Add(watch.Elapsed.TotalMilliseconds);
+                dbElapsed.Add(commands.Duration.TotalMilliseconds);
+            }
+
+            output.WriteLine($"{route}: commands={string.Join(',', counts)}; warmMs={string.Join(',', elapsed.Select(value => value.ToString("F1", CultureInfo.InvariantCulture)))}; dbMs={string.Join(',', dbElapsed.Select(value => value.ToString("F1", CultureInfo.InvariantCulture)))}");
+            Assert.All(counts, count => Assert.InRange(count, 1, 100));
+        }
+    }
+
+    private sealed class ReadCommandCounter : DbCommandInterceptor
+    {
+        private int _count;
+        private long _durationTicks;
+
+        public int Count => Volatile.Read(ref _count);
+        public TimeSpan Duration => TimeSpan.FromTicks(Interlocked.Read(ref _durationTicks));
+        public void Reset()
+        {
+            Interlocked.Exchange(ref _count, 0);
+            Interlocked.Exchange(ref _durationTicks, 0);
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _count);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command, CommandExecutedEventData eventData, DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Add(ref _durationTicks, eventData.Duration.Ticks);
+            return base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
     [Fact]
     public async Task DashboardRequiresAuthentication()
     {
