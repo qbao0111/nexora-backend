@@ -36,14 +36,21 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
         {
             var isSemanticRepairAttempt = attempt > 1 && currentValidation is not null && !currentValidation.IsValid;
             var isMalformedOutputRepairAttempt = attempt > 1 && malformedStructuredOutputRetry;
+            var recoveryReason = isSemanticRepairAttempt
+                ? AiRecoveryReason.SemanticValidation
+                : isMalformedOutputRepairAttempt
+                    ? AiRecoveryReason.MalformedStructuredOutput
+                    : outputTruncationRetry
+                        ? AiRecoveryReason.OutputTruncated
+                        : (AiRecoveryReason?)null;
             var isRepairAttempt = isSemanticRepairAttempt || isMalformedOutputRepairAttempt;
             var currentInstructions = isSemanticRepairAttempt
                 ? operation.BuildRepairInstructions(currentValidation!, instructions)
                 : isMalformedOutputRepairAttempt
                     ? operation.BuildMalformedStructuredOutputRepairInstructions(instructions)
                     : instructions;
-            var currentReasoningOverride = isSemanticRepairAttempt
-                ? operation.GetSemanticRepairReasoningOverride(modelVersion)
+            var currentReasoningOverride = recoveryReason is { } reason
+                ? operation.GetRecoveryReasoningOverride(modelVersion, reason) ?? reasoningOverride
                 : reasoningOverride;
             reasoningOverride = null;
             malformedStructuredOutputRetry = false;
@@ -64,9 +71,15 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
             if (currentReasoningOverride is not null)
             {
-                if (isSemanticRepairAttempt)
-                    LogSemanticRepairReasoningOverride(logger, operation.Purpose,
-                        currentReasoningOverride.Value.ToString().ToLowerInvariant(), attempt, correlationId);
+                if (recoveryReason is { } activeReason)
+                    LogRecoveryReasoningOverride(logger, operation.Purpose,
+                        currentReasoningOverride.Value.ToString().ToLowerInvariant(),
+                        activeReason switch
+                        {
+                            AiRecoveryReason.SemanticValidation => "semantic_repair",
+                            AiRecoveryReason.MalformedStructuredOutput => "malformed_structured_output",
+                            _ => "output_truncated"
+                        }, attempt, correlationId);
                 else
                     LogReasoningFallbackRetry(logger, operation.Purpose,
                         currentReasoningOverride.Value.ToString().ToLowerInvariant(), attempt, correlationId);
@@ -353,8 +366,8 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
     [LoggerMessage(LogLevel.Information, "AI structured retry using reasoning override: purpose={Purpose}, effectiveEffort={EffectiveEffort}, attempt={Attempt}, retryReason=reasoning_budget_exhausted, correlationId={CorrelationId}")]
     private static partial void LogReasoningFallbackRetry(ILogger logger, string purpose, string effectiveEffort, int attempt, string correlationId);
 
-    [LoggerMessage(LogLevel.Information, "AI semantic repair using reasoning override: purpose={Purpose}, effectiveEffort={EffectiveEffort}, attempt={Attempt}, retryReason=semantic_repair, correlationId={CorrelationId}")]
-    private static partial void LogSemanticRepairReasoningOverride(ILogger logger, string purpose, string effectiveEffort, int attempt, string correlationId);
+    [LoggerMessage(LogLevel.Information, "AI structured recovery using reasoning override: purpose={Purpose}, effectiveEffort={EffectiveEffort}, retryReason={RetryReason}, attempt={Attempt}, correlationId={CorrelationId}")]
+    private static partial void LogRecoveryReasoningOverride(ILogger logger, string purpose, string effectiveEffort, string retryReason, int attempt, string correlationId);
 
     [LoggerMessage(LogLevel.Error, "AI provider request failed terminal: purpose={Purpose}, model={Model}, failureKind={FailureKind}, effectiveBudget={EffectiveBudget}, reasoningMode={ReasoningMode}, retryHint={RetryHint}, attempt={Attempt}, outcome=failed, correlationId={CorrelationId}")]
     private static partial void LogProviderTerminalFailure(ILogger logger, string purpose, string model, int effectiveBudget, string reasoningMode, string failureKind, string retryHint, int attempt, string correlationId);

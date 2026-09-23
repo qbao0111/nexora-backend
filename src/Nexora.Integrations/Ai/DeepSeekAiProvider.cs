@@ -28,7 +28,7 @@ public sealed class DeepSeekReasoningOptions
     public DeepSeekReasoningPolicyOptions ResumeProfile { get; set; } = Disabled();
     public DeepSeekReasoningPolicyOptions ResumeAnalysis { get; set; } = Enabled("low");
     public DeepSeekReasoningPolicyOptions InterviewFirstQuestion { get; set; } = Disabled();
-    public DeepSeekReasoningPolicyOptions InterviewEvaluate { get; set; } = Enabled("high");
+    public DeepSeekReasoningPolicyOptions InterviewEvaluate { get; set; } = Enabled("low");
     public DeepSeekReasoningPolicyOptions InterviewFollowup { get; set; } = Disabled();
     public DeepSeekReasoningPolicyOptions InterviewReport { get; set; } = Enabled("low");
     public DeepSeekReasoningPolicyOptions ScenarioEvaluate { get; set; } = Enabled("low");
@@ -197,7 +197,7 @@ public sealed partial class DeepSeekAiProvider(
         {
             if (reasoningOverride is AiReasoningEffortOverride.Disabled)
             {
-                if (purpose != AiPurposes.InterviewReport)
+                if (purpose is not AiPurposes.InterviewReport and not AiPurposes.InterviewEvaluate)
                     throw new AiProviderException(AiProviderFailureKind.Configuration,
                         "AI provider reasoning override is unsupported for this operation.");
                 return new DeepSeekReasoningSelection(false, null);
