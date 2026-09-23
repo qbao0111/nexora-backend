@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,7 +34,7 @@ public sealed class ProgressDashboardApiTests(ITestOutputHelper output)
     {
         var commands = new ReadCommandCounter();
         using var factory = new NexoraApiFactory(commands);
-        await MeasureBootstrapReadsAsync(factory, commands);
+        await MeasureBootstrapReadsAsync(factory, commands, postgres: false);
     }
 
     [PostgresFact]
@@ -42,10 +43,10 @@ public sealed class ProgressDashboardApiTests(ITestOutputHelper output)
         var commands = new ReadCommandCounter();
         var connectionString = Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!;
         using var factory = NexoraApiFactory.CreatePostgres(connectionString, dbInterceptor: commands);
-        await MeasureBootstrapReadsAsync(factory, commands);
+        await MeasureBootstrapReadsAsync(factory, commands, postgres: true);
     }
 
-    private async Task MeasureBootstrapReadsAsync(NexoraApiFactory factory, ReadCommandCounter commands)
+    private async Task MeasureBootstrapReadsAsync(NexoraApiFactory factory, ReadCommandCounter commands, bool postgres)
     {
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
@@ -58,7 +59,7 @@ public sealed class ProgressDashboardApiTests(ITestOutputHelper output)
 
         foreach (var (route, maxCommands) in new[]
         {
-            ("/api/v1/progress/dashboard", 23),
+            ("/api/v1/progress/dashboard", postgres ? 13 : 19),
             ("/api/v1/me/career-profile", 9),
             ("/api/v1/recommendations/next", 8)
         })
@@ -77,6 +78,17 @@ public sealed class ProgressDashboardApiTests(ITestOutputHelper output)
                 counts.Add(commands.Count);
                 elapsed.Add(watch.Elapsed.TotalMilliseconds);
                 dbElapsed.Add(commands.Duration.TotalMilliseconds);
+                if (postgres && route == "/api/v1/progress/dashboard")
+                {
+                    Assert.Single(commands.Sql, sql =>
+                        sql.Contains("UNION ALL", StringComparison.OrdinalIgnoreCase) &&
+                        sql.Contains("interview_sessions", StringComparison.OrdinalIgnoreCase) &&
+                        sql.Contains("scenario_attempts", StringComparison.OrdinalIgnoreCase) &&
+                        sql.Contains("star_attempts", StringComparison.OrdinalIgnoreCase));
+                }
+                if (attempt == 0)
+                    foreach (var (sql, index) in commands.Sql.Select((sql, index) => (sql, index)))
+                        output.WriteLine($"{route} #{index + 1}: {string.Join(',', Regex.Matches(sql, "(?:FROM|JOIN)\\s+([\\w\\\".]+)", RegexOptions.IgnoreCase).Select(match => match.Groups[1].Value).Distinct())}");
             }
 
             output.WriteLine($"{route}: commands={string.Join(',', counts)}; warmMs={string.Join(',', elapsed.Select(value => value.ToString("F1", CultureInfo.InvariantCulture)))}; dbMs={string.Join(',', dbElapsed.Select(value => value.ToString("F1", CultureInfo.InvariantCulture)))}");
@@ -88,13 +100,16 @@ public sealed class ProgressDashboardApiTests(ITestOutputHelper output)
     {
         private int _count;
         private long _durationTicks;
+        private readonly List<string> _sql = [];
 
         public int Count => Volatile.Read(ref _count);
         public TimeSpan Duration => TimeSpan.FromTicks(Interlocked.Read(ref _durationTicks));
+        public IReadOnlyList<string> Sql => _sql;
         public void Reset()
         {
             Interlocked.Exchange(ref _count, 0);
             Interlocked.Exchange(ref _durationTicks, 0);
+            _sql.Clear();
         }
 
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
@@ -102,6 +117,7 @@ public sealed class ProgressDashboardApiTests(ITestOutputHelper output)
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _count);
+            _sql.Add(command.CommandText);
             return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
         }
 
@@ -198,6 +214,9 @@ public sealed class ProgressDashboardApiTests(ITestOutputHelper output)
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var data = await DataAsync(response);
         var historical = data.GetProperty("historicalStats");
+        using var legacyResponse = await ownerClient.GetAsync("/api/v1/progress");
+        var legacy = await DataAsync(legacyResponse);
+        Assert.True(JsonElement.DeepEquals(legacy, historical));
         var scores = historical.GetProperty("recentInterviewScores").EnumerateArray().ToArray();
         var activity = historical.GetProperty("recentActivity").EnumerateArray().ToArray();
 

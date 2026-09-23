@@ -6,6 +6,8 @@ using Nexora.Business.Progress;
 using Nexora.Business.Recommendations;
 using Nexora.Business.Skills;
 using Nexora.Data.Persistence;
+using Nexora.Data.Practice;
+using Nexora.Data.Skills;
 
 namespace Nexora.Data.Progress;
 
@@ -18,8 +20,19 @@ public sealed class ProgressDashboardService(
 {
     public async Task<ProgressDashboardView> GetAsync(Guid userId, CancellationToken cancellationToken)
     {
-        var historicalStats = await progressService.GetAsync(userId, cancellationToken);
-        var profile = await skillProfileService.GetAsync(userId, cancellationToken);
+        ProgressView historicalStats;
+        SkillProfileView profile;
+        if (progressService is ScenarioStarService scenarioProgress && skillProfileService is SkillProfileService skillProfiles)
+        {
+            var snapshot = await scenarioProgress.GetDashboardAsync(userId, cancellationToken);
+            historicalStats = snapshot.View;
+            profile = await skillProfiles.GetFromSnapshotAsync(userId, snapshot.Snapshot, cancellationToken);
+        }
+        else
+        {
+            historicalStats = await progressService.GetAsync(userId, cancellationToken);
+            profile = await skillProfileService.GetAsync(userId, cancellationToken);
+        }
         var now = timeProvider.GetUtcNow().ToUniversalTime();
         var windowStart = ProgressDashboardPolicy.GetUtcWeekStart(now);
         var weekly = await GetWeeklyActivitiesAsync(userId, windowStart, now, cancellationToken);
