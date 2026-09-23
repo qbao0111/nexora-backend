@@ -1,6 +1,8 @@
+using System.Data;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Nexora.Business.Ai;
 using Nexora.Business.Billing;
 using Nexora.Business.Common;
@@ -12,8 +14,54 @@ using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Practice;
 
-public sealed partial class PracticeService
+public sealed partial class ResumeExtractionJobHandler(
+    NexoraDbContext dbContext,
+    IStorageProvider storageProvider,
+    IDetailedDocumentExtractor detailedDocumentExtractor,
+    IDocumentOcrProvider documentOcrProvider,
+    IAiProvider aiProvider,
+    TimeProvider timeProvider,
+    ILogger<PracticeService> logger)
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static string ProfilePromptVersion => AiOperations.ResumeProfile.PromptVersion;
+    private static string ProfileSchemaVersion => AiOperations.ResumeProfile.SchemaVersion;
+    private string CurrentModelVersion => string.IsNullOrWhiteSpace(aiProvider.ModelVersion)
+        ? throw new InvalidOperationException("The configured AI provider must expose a model version.")
+        : aiProvider.ModelVersion.Trim();
+
+    private static BusinessException NotFound() => new("NOT_FOUND", "Không tìm thấy tài nguyên.", BusinessErrorKind.NotFound);
+    private void MarkProcessed(OutboxEvent job) { job.Status = BillingValues.Processed; job.ProcessedAt = timeProvider.GetUtcNow(); }
+
+    private async Task LockUserAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = dbContext.Database.IsNpgsql()
+            ? await dbContext.Users.FromSqlInterpolated($"SELECT * FROM asp_net_users WHERE \"Id\" = {userId} FOR UPDATE")
+                .SingleOrDefaultAsync(cancellationToken)
+            : await dbContext.Users.SingleOrDefaultAsync(item => item.Id == userId, cancellationToken);
+        if (user is null) throw NotFound();
+    }
+
+    private async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is not null) return null;
+        return await dbContext.Database.BeginTransactionAsync(dbContext.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
+    }
+
+    private static async Task CommitAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction, CancellationToken cancellationToken)
+    {
+        if (transaction is null) return;
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private void EnqueueResourceChanged(Guid userId, string resourceType, Guid resourceId, string status, DateTimeOffset occurredAt) =>
+        dbContext.RealtimeNotifications.Add(new Nexora.Data.Realtime.RealtimeNotification
+        {
+            UserId = userId, ResourceType = resourceType, ResourceId = resourceId, Status = status, CreatedAt = occurredAt
+        });
+
+    internal Task ProcessAsync(OutboxEvent job, CancellationToken cancellationToken) => ExtractResumeAsync(job, cancellationToken);
+
     private async Task ExtractResumeAsync(OutboxEvent job, CancellationToken cancellationToken)
     {
         var resume = await dbContext.Resumes.Include(item => item.StoredFile).SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
@@ -69,7 +117,7 @@ public sealed partial class PracticeService
         if (extraction.Quality != DocumentExtractionQuality.Good)
             throw new InvalidDataException("Gemini document extraction did not produce usable text.");
 
-        ValidateResumeProfile(fallback.Profile);
+        ResumeProfileProcessor.ValidateResumeProfile(fallback.Profile);
         await CompleteResumeExtractionAsync(resume, job, extraction, fallback.Profile, ocrFallbackUsed: true, cancellationToken: cancellationToken);
     }
 
@@ -180,62 +228,39 @@ public sealed partial class PracticeService
         await CommitAsync(transaction, cancellationToken);
     }
 
-    private async Task<ResumeProfile> EnsureResumeProfileAsync(
-        ResumeRecord resume, Guid correlationId, CancellationToken cancellationToken)
+    internal async Task FailAsync(OutboxEvent job, CancellationToken cancellationToken)
     {
-        if (resume.ProfilePromptVersion == ProfilePromptVersion &&
-            resume.ProfileSchemaVersion == ProfileSchemaVersion &&
-            resume.ProfileModelVersion == CurrentModelVersion)
+        dbContext.ChangeTracker.Clear();
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        var current = await dbContext.OutboxEvents.SingleAsync(item => item.Id == job.Id, cancellationToken);
+        current.Status = PracticeValues.Failed;
+        current.ProcessedAt = timeProvider.GetUtcNow();
+        var resume = await dbContext.Resumes.SingleAsync(item => item.Id == current.AggregateId, cancellationToken);
+        await LockUserAsync(resume.UserId, cancellationToken);
+        await dbContext.Entry(resume).ReloadAsync(cancellationToken);
+        if (resume.DeletedAt is null)
         {
-            var existing = TryReadResumeProfile(resume.StructuredProfile);
-            if (existing is not null) return existing;
+            resume.Status = PracticeValues.Failed;
+            resume.UpdatedAt = current.ProcessedAt.Value;
+            EnqueueResourceChanged(resume.UserId, "resume", resume.Id, resume.Status, resume.UpdatedAt);
         }
-
-        if (string.IsNullOrWhiteSpace(resume.ExtractedText)) throw InvalidAiOutput();
-        var context = resumeContextBuilder.BuildProfileExtractionContext(resume.ExtractedText);
-        ResumeProfile profile;
-        try
-        {
-            var execResult = await structuredAiExecutor.ExecuteAsync(
-                AiOperations.ResumeProfile,
-                context,
-                new AiOperationContext(correlationId.ToString("N")),
-                cancellationToken);
-            profile = execResult.Value;
-        }
-        catch (AiProviderException exception)
-        {
-            throw AiUnavailable(exception);
-        }
-
-        resume.StructuredProfile = JsonSerializer.Serialize(profile, JsonOptions);
-        resume.ProfileModelVersion = CurrentModelVersion;
-        resume.ProfilePromptVersion = ProfilePromptVersion;
-        resume.ProfileSchemaVersion = ProfileSchemaVersion;
-        resume.UpdatedAt = timeProvider.GetUtcNow();
         await dbContext.SaveChangesAsync(cancellationToken);
-        return profile;
+        await CommitAsync(transaction, cancellationToken);
     }
 
-    private static bool HasUsableResumeContext(ResumeRecord? resume) => resume is { DeletedAt: null };
+    [LoggerMessage(LogLevel.Information,
+        "Resume {ResumeId} extracted with {PageCount} pages, {CharacterCount} chars, {WordCount} words, method {ExtractionMethod}, quality {QualityScore}, OCR fallback {OcrFallbackUsed}, warnings {Warnings}")]
+    private static partial void ResumeExtractionMeasured(
+        ILogger logger, Guid resumeId, int pageCount, int characterCount, int wordCount,
+        string extractionMethod, double qualityScore, string warnings, bool ocrFallbackUsed);
 
-    private static ResumeProfile? TryReadResumeProfile(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        try
-        {
-            var validation = ResumeProfileValidator.NormalizeAndValidate(JsonSerializer.Deserialize<ResumeProfile>(value, JsonOptions));
-            return validation.IsValid ? validation.NormalizedValue : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
+    [LoggerMessage(LogLevel.Warning, "Resume {ResumeId} local extraction failed with {ExceptionType}; trying document fallback")]
+    private static partial void LocalExtractionFailed(ILogger logger, Guid resumeId, string exceptionType);
 
-    private static void ValidateResumeProfile(ResumeProfile profile)
-    {
-        if (!ResumeProfileValidator.NormalizeAndValidate(profile).IsValid) throw InvalidAiOutput();
-    }
+    [LoggerMessage(LogLevel.Error, "Resume {ResumeId} storage integrity check failed: actualBytes={ActualBytes} expectedBytes={ExpectedBytes}")]
+    private static partial void StorageIntegrityFailed(ILogger logger, Guid resumeId, long actualBytes, long expectedBytes);
+
+    [LoggerMessage(LogLevel.Information, "Resume {ResumeId} entered document OCR fallback after {LocalQuality} local quality")]
+    private static partial void OcrFallbackStarted(ILogger logger, Guid resumeId, string localQuality);
 
 }

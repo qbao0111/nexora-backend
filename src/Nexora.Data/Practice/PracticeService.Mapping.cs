@@ -13,34 +13,6 @@ namespace Nexora.Data.Practice;
 
 public sealed partial class PracticeService
 {
-    private static ResumeView MapResume(ResumeRecord resume) => new(
-        resume.Id,
-        resume.StoredFile.FileName,
-        resume.StoredFile.ContentType,
-        resume.StoredFile.Size,
-        resume.Status,
-        resume.CreatedAt,
-        resume.Status == PracticeValues.Failed ? "RESUME_EXTRACTION_FAILED" : null,
-        resume.Status == PracticeValues.Failed ? ResumeExtractionFailureMessage : null);
-    private static JobDescriptionView MapJobDescription(JobDescription jd) => new(jd.Id, jd.Title, jd.Content, jd.CreatedAt);
-    private static ResumeAnalysisView MapAnalysis(ResumeAnalysis analysis) => new(
-        analysis.Id,
-        analysis.Status,
-        ParseJson(analysis.Result),
-        analysis.CreatedAt,
-        analysis.CompletedAt,
-        analysis.ErrorCode,
-        analysis.Mode,
-        ParseAnalysisContext(analysis.ContextJson, analysis.Mode),
-        analysis.ResumeVersion,
-        analysis.JobDescriptionVersion,
-        analysis.ModelVersion,
-        analysis.PromptVersion,
-        analysis.SchemaVersion,
-        analysis.RubricVersion,
-        analysis.ProfileModelVersion,
-        analysis.ProfilePromptVersion,
-        analysis.ProfileSchemaVersion);
     private static InterviewView MapInterview(
         InterviewSession session,
         IEnumerable<InterviewQuestion> questions,

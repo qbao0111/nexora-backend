@@ -15,20 +15,23 @@ namespace Nexora.Data.Practice;
 public sealed partial class PracticeService(
     NexoraDbContext dbContext,
     IUploadProvider uploadProvider,
-    IStorageProvider storageProvider,
-    IDetailedDocumentExtractor detailedDocumentExtractor,
-    IDocumentOcrProvider documentOcrProvider,
     IResumeContextBuilder resumeContextBuilder,
     IAiProvider aiProvider,
     IStructuredAiExecutor structuredAiExecutor,
     IBillingService billingService,
     IFeatureEntitlementService featureEntitlementService,
+    IResumeService resumeService,
+    IJobDescriptionService jobDescriptionService,
+    IResumeAnalysisService resumeAnalysisService,
+    ResumeExtractionJobHandler resumeExtractionJobHandler,
+    ResumeAnalysisJobHandler resumeAnalysisJobHandler,
+    ResumeStorageCleanupProcessor resumeStorageCleanupProcessor,
+    ResumeProfileProcessor resumeProfileProcessor,
     TimeProvider timeProvider,
     ILogger<PracticeService> logger) : IPracticeService, IPracticeJobProcessor
 {
     private const int MaximumHistoryPageSize = 100;
     private const string DevelopmentResumeAnalysisOperation = "development-resume-analysis.create";
-    private const string JobDescriptionCreateOperation = "job-description.create";
     private const string PromptVersion = "phase3-v1";
     private const string SchemaVersion = "phase3-star-v2";
     private static string ProfilePromptVersion => AiOperations.ResumeProfile.PromptVersion;

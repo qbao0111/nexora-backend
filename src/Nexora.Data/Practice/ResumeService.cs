@@ -1,3 +1,5 @@
+using System.Data;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Nexora.Business.Ai;
 using Nexora.Business.Billing;
@@ -10,8 +12,52 @@ using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Practice;
 
-public sealed partial class PracticeService
+public sealed class ResumeService(
+    NexoraDbContext dbContext,
+    IUploadProvider uploadProvider,
+    TimeProvider timeProvider) : IResumeService
 {
+    private const string ResumeExtractionFailureMessage = "Không thể đọc nội dung CV. Vui lòng thử lại với file PDF hoặc DOCX rõ hơn.";
+
+    internal static ResumeView MapResume(ResumeRecord resume) => new(
+        resume.Id, resume.StoredFile.FileName, resume.StoredFile.ContentType, resume.StoredFile.Size,
+        resume.Status, resume.CreatedAt,
+        resume.Status == PracticeValues.Failed ? "RESUME_EXTRACTION_FAILED" : null,
+        resume.Status == PracticeValues.Failed ? ResumeExtractionFailureMessage : null);
+
+    private static BusinessException NotFound() => new("NOT_FOUND", "Không tìm thấy tài nguyên.", BusinessErrorKind.NotFound);
+    private static BusinessException Conflict(string code, string message) => new(code, message, BusinessErrorKind.Conflict);
+
+    private async Task LockUserAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = dbContext.Database.IsNpgsql()
+            ? await dbContext.Users.FromSqlInterpolated($"SELECT * FROM asp_net_users WHERE \"Id\" = {userId} FOR UPDATE")
+                .SingleOrDefaultAsync(cancellationToken)
+            : await dbContext.Users.SingleOrDefaultAsync(item => item.Id == userId, cancellationToken);
+        if (user is null) throw NotFound();
+    }
+
+    private async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is not null) return null;
+        return await dbContext.Database.BeginTransactionAsync(dbContext.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
+    }
+
+    private static async Task CommitAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction, CancellationToken cancellationToken)
+    {
+        if (transaction is null) return;
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private static OutboxEvent Outbox(string type, string aggregateType, Guid aggregateId, DateTimeOffset now) =>
+        new() { Id = Guid.NewGuid(), Type = type, AggregateType = aggregateType, AggregateId = aggregateId, Payload = JsonSerializer.Serialize(new { aggregateId }), Status = BillingValues.Pending, CreatedAt = now };
+
+    private void EnqueueResourceChanged(Guid userId, string resourceType, Guid resourceId, string status, DateTimeOffset occurredAt) =>
+        dbContext.RealtimeNotifications.Add(new Nexora.Data.Realtime.RealtimeNotification
+        {
+            UserId = userId, ResourceType = resourceType, ResourceId = resourceId, Status = status, CreatedAt = occurredAt
+        });
+
     public async Task<ResumeView> CreateResumeAsync(Guid userId, string uploadToken, CancellationToken cancellationToken)
     {
         var upload = await uploadProvider.GetCompletedAsync(userId, uploadToken, cancellationToken);

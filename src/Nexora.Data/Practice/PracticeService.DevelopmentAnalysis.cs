@@ -79,7 +79,7 @@ public sealed partial class PracticeService
             .Include(item => item.JobDescription)
             .SingleOrDefaultAsync(item => item.Id == analysisId && item.UserId == userId, cancellationToken)
             ?? throw NotFound();
-        return new(MapResume(analysis.Resume), MapJobDescription(analysis.JobDescription ?? throw Validation("JobDescription is required for development analysis.", "RESUME_ANALYSIS_CONTEXT_INVALID")), MapAnalysis(analysis));
+        return new(ResumeService.MapResume(analysis.Resume), JobDescriptionService.MapJobDescription(analysis.JobDescription ?? throw Validation("JobDescription is required for development analysis.", "RESUME_ANALYSIS_CONTEXT_INVALID")), ResumeAnalysisService.MapAnalysis(analysis));
     }
 
 }

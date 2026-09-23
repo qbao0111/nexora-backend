@@ -100,6 +100,13 @@ public static class DependencyInjection
         services.AddScoped<IProgressDashboardService, ProgressDashboardService>();
         services.AddScoped<IUploadIntentStore, UploadIntentStore>();
         services.AddSingleton<IResumeContextBuilder, ResumeContextBuilder>();
+        services.AddScoped<IResumeService, ResumeService>();
+        services.AddScoped<IJobDescriptionService, JobDescriptionService>();
+        services.AddScoped<IResumeAnalysisService, ResumeAnalysisService>();
+        services.AddScoped<ResumeProfileProcessor>();
+        services.AddScoped<ResumeExtractionJobHandler>();
+        services.AddScoped<ResumeAnalysisJobHandler>();
+        services.AddScoped<ResumeStorageCleanupProcessor>();
         services.AddScoped<PracticeService>();
         services.AddScoped<IPracticeService>(provider => provider.GetRequiredService<PracticeService>());
         services.AddScoped<IPracticeJobProcessor>(provider => provider.GetRequiredService<PracticeService>());
