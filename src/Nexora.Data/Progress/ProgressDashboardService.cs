@@ -6,8 +6,6 @@ using Nexora.Business.Progress;
 using Nexora.Business.Recommendations;
 using Nexora.Business.Skills;
 using Nexora.Data.Persistence;
-using Nexora.Data.Practice;
-using Nexora.Data.Skills;
 
 namespace Nexora.Data.Progress;
 
@@ -22,9 +20,9 @@ public sealed class ProgressDashboardService(
     {
         ProgressView historicalStats;
         SkillProfileView profile;
-        if (progressService is ScenarioStarService scenarioProgress && skillProfileService is SkillProfileService skillProfiles)
+        if (progressService is IDashboardProgressProvider dashboardProgress && skillProfileService is IDashboardSkillProfileProvider skillProfiles)
         {
-            var snapshot = await scenarioProgress.GetDashboardAsync(userId, cancellationToken);
+            var snapshot = await dashboardProgress.GetDashboardAsync(userId, cancellationToken);
             historicalStats = snapshot.View;
             profile = await skillProfiles.GetFromSnapshotAsync(userId, snapshot.Snapshot, cancellationToken);
         }

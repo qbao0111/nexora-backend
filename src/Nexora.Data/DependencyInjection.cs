@@ -88,10 +88,10 @@ public static class DependencyInjection
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IBillingService, BillingService>();
         services.AddScoped<IFeatureEntitlementService, FeatureEntitlementService>();
-        services.AddScoped<IScenarioService, ScenarioStarService>();
-        services.AddScoped<IStarAttemptService, ScenarioStarService>();
-        services.AddScoped<IProgressService, ScenarioStarService>();
-        services.AddScoped<IScenarioStarJobProcessor, ScenarioStarService>();
+        services.AddScoped<IScenarioService, ScenarioService>();
+        services.AddScoped<IStarAttemptService, StarAttemptService>();
+        services.AddScoped<IProgressService, ProgressService>();
+        services.AddScoped<IScenarioStarJobProcessor, ScenarioStarJobProcessor>();
         services.AddScoped<ICareerGoalService, CareerGoalService>();
         services.AddScoped<ICareerProfileService, CareerProfileService>();
         services.AddScoped<ISkillProfileService, SkillProfileService>();

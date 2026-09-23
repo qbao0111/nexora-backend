@@ -1,5 +1,9 @@
+using System.Data;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Nexora.Business.Ai;
 using Nexora.Business.Billing;
 using Nexora.Business.Common;
 using Nexora.Business.Practice;
@@ -8,8 +12,41 @@ using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Practice;
 
-public sealed partial class ScenarioStarService
+public sealed class StarAttemptService(
+    NexoraDbContext dbContext,
+    IFeatureEntitlementService featureEntitlementService,
+    IAiProvider aiProvider,
+    TimeProvider timeProvider) : IStarAttemptService
 {
+    private const string PromptVersion = "phase3-star-v2";
+    private const string SchemaVersion = "phase3-star-v2";
+
+    private static StarAttemptView MapStarAttempt(StarAttempt attempt) =>
+        new(attempt.Id, attempt.Question, attempt.Answer, attempt.Status, Parse(attempt.EvaluationJson), attempt.ErrorCode, attempt.CreatedAt, attempt.CompletedAt);
+
+    private static JsonElement? Parse(string? value) => string.IsNullOrWhiteSpace(value) ? null : JsonSerializer.Deserialize<JsonElement>(value);
+    private string CurrentModelVersion => string.IsNullOrWhiteSpace(aiProvider.ModelVersion)
+        ? throw new InvalidOperationException("The configured AI provider must expose a model version.")
+        : aiProvider.ModelVersion.Trim();
+    private static string RequireKey(string value) => string.IsNullOrWhiteSpace(value) || value.Trim().Length > 128
+        ? throw new BusinessException("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key hợp lệ là bắt buộc.", BusinessErrorKind.Validation)
+        : value.Trim();
+    private static BusinessException Validation(string message) => new("VALIDATION_ERROR", message, BusinessErrorKind.Validation);
+    private static string Fingerprint(params object?[] values) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(values)))).ToLowerInvariant();
+
+    private async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is not null) return null;
+        return await dbContext.Database.BeginTransactionAsync(dbContext.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
+    }
+
+    private static async Task CommitAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction, CancellationToken cancellationToken)
+    {
+        if (transaction is null) return;
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public async Task<StarAttemptView> CreateAsync(Guid userId, string question, string answer, string idempotencyKey, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(question) || question.Trim().Length > 2_000) throw Validation("Câu hỏi không hợp lệ.");
