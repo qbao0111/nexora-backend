@@ -1932,7 +1932,7 @@ public sealed class PracticeApiTests
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         var now = DateTimeOffset.UtcNow;
-        var plan = new Plan { Id = Guid.NewGuid(), Code = $"practice-{Guid.NewGuid():N}", Name = "Practice test", IsActive = true, CreatedAt = now };
+        var plan = new Plan { Id = Guid.NewGuid(), Code = $"practice{Guid.NewGuid():N}", Name = "Practice test", IsActive = true, CreatedAt = now };
         var price = new PlanPrice { Id = Guid.NewGuid(), PlanId = plan.Id, AmountMinor = 1, Currency = "VND", DurationDays = 30, InterviewQuota = quota, IsActive = true, CreatedAt = now };
         var order = new Order
         {
