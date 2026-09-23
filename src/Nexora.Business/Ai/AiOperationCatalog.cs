@@ -50,7 +50,9 @@ public abstract class AiOperationDefinition<T>
 
     public virtual bool SupportsOutputTruncationRetry => false;
 
-    public virtual AiReasoningEffortOverride? GetSemanticRepairReasoningOverride(string modelVersion) => null;
+    public virtual AiReasoningEffortOverride? GetRecoveryReasoningOverride(
+        string modelVersion,
+        AiRecoveryReason reason) => null;
 
     protected static int ValidateEffectiveMaxOutputTokens(int value) =>
         value is < 1 or > MaximumEffectiveOutputTokens
@@ -1157,10 +1159,22 @@ public sealed class InterviewFollowupOperation : AiOperationDefinition<Generated
 public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEvaluation>
 {
     public override string Purpose => AiPurposes.InterviewEvaluate;
-    public override string PromptVersion => "interview-eval-v10";
-    public override string SchemaVersion => "interview-eval-v6";
+    public override string PromptVersion => "interview-eval-v11";
+    public override string SchemaVersion => "interview-eval-v7";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 6_000;
+    public override bool SupportsOutputTruncationRetry => true;
+    public override int GetEffectiveMaxOutputTokens(int attempt, bool outputTruncationRetry) =>
+        ValidateEffectiveMaxOutputTokens(attempt == 2 && outputTruncationRetry ? 8_192 : MaxOutputTokens);
+    public override AiReasoningEffortOverride? GetRecoveryReasoningOverride(
+        string modelVersion,
+        AiRecoveryReason reason) =>
+        modelVersion.StartsWith("deepseek:", StringComparison.OrdinalIgnoreCase) &&
+        reason is (AiRecoveryReason.SemanticValidation or
+            AiRecoveryReason.MalformedStructuredOutput or
+            AiRecoveryReason.OutputTruncated)
+            ? AiReasoningEffortOverride.Disabled
+            : null;
 
     public override JsonDocument OutputSchema { get; } = JsonDocument.Parse("""
         {
@@ -1174,26 +1188,26 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                 "properties": {
                   "criterion": { "type": "string", "enum": ["correctness", "structure", "completeness", "clarity"] },
                   "score": { "type": "integer", "minimum": 0, "maximum": 100 },
-                  "evidence": { "type": "string" }
+                  "evidence": { "type": "string", "maxLength": 300 }
                 },
                 "required": ["criterion", "score", "evidence"]
               }
             },
-            "feedback": { "type": "string" },
-            "strengths": { "type": "array", "minItems": 0, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
-            "improvements": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
-            "improvedAnswer": { "type": "string", "minLength": 1, "maxLength": 4000 },
+            "feedback": { "type": "string", "maxLength": 700 },
+            "strengths": { "type": "array", "minItems": 0, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 240 } },
+            "improvements": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 240 } },
+            "improvedAnswer": { "type": "string", "minLength": 1, "maxLength": 1200 },
             "sampleAnswer": {
               "type": "object",
               "nullable": true,
               "additionalProperties": false,
               "properties": {
                 "framework": { "type": "string", "enum": ["star", "self_intro", "technical", "direct"] },
-                "situation": { "type": "string", "nullable": true, "maxLength": 1200 },
-                "task": { "type": "string", "nullable": true, "maxLength": 1200 },
-                "action": { "type": "string", "nullable": true, "maxLength": 1200 },
-                "result": { "type": "string", "nullable": true, "maxLength": 1200 },
-                "fullAnswer": { "type": "string", "minLength": 1, "maxLength": 4000 }
+                "situation": { "type": "string", "nullable": true, "maxLength": 350 },
+                "task": { "type": "string", "nullable": true, "maxLength": 350 },
+                "action": { "type": "string", "nullable": true, "maxLength": 500 },
+                "result": { "type": "string", "nullable": true, "maxLength": 350 },
+                "fullAnswer": { "type": "string", "minLength": 1, "maxLength": 1200 }
               },
               "required": ["framework", "situation", "task", "action", "result", "fullAnswer"]
             },
@@ -1207,8 +1221,8 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                   "properties": {
                     "score": { "type": "integer", "minimum": 0, "maximum": 100 },
                     "detected": { "type": "boolean" },
-                    "evidence": { "type": "string" },
-                    "feedback": { "type": "string" }
+                    "evidence": { "type": "string", "maxLength": 300 },
+                    "feedback": { "type": "string", "maxLength": 240 }
                   },
                   "required": ["score", "detected", "evidence", "feedback"]
                 },
@@ -1217,8 +1231,8 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                   "properties": {
                     "score": { "type": "integer", "minimum": 0, "maximum": 100 },
                     "detected": { "type": "boolean" },
-                    "evidence": { "type": "string" },
-                    "feedback": { "type": "string" }
+                    "evidence": { "type": "string", "maxLength": 300 },
+                    "feedback": { "type": "string", "maxLength": 240 }
                   },
                   "required": ["score", "detected", "evidence", "feedback"]
                 },
@@ -1227,8 +1241,8 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                   "properties": {
                     "score": { "type": "integer", "minimum": 0, "maximum": 100 },
                     "detected": { "type": "boolean" },
-                    "evidence": { "type": "string" },
-                    "feedback": { "type": "string" }
+                    "evidence": { "type": "string", "maxLength": 300 },
+                    "feedback": { "type": "string", "maxLength": 240 }
                   },
                   "required": ["score", "detected", "evidence", "feedback"]
                 },
@@ -1237,14 +1251,14 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
                   "properties": {
                     "score": { "type": "integer", "minimum": 0, "maximum": 100 },
                     "detected": { "type": "boolean" },
-                    "evidence": { "type": "string" },
-                    "feedback": { "type": "string" }
+                    "evidence": { "type": "string", "maxLength": 300 },
+                    "feedback": { "type": "string", "maxLength": 240 }
                   },
                   "required": ["score", "detected", "evidence", "feedback"]
                 },
-                "missingElements": { "type": "array", "items": { "type": "string" } },
-                "strengths": { "type": "array", "items": { "type": "string" } },
-                "coachingTips": { "type": "array", "items": { "type": "string" } }
+                "missingElements": { "type": "array", "maxItems": 4, "items": { "type": "string", "maxLength": 80 } },
+                "strengths": { "type": "array", "maxItems": 3, "items": { "type": "string", "maxLength": 200 } },
+                "coachingTips": { "type": "array", "maxItems": 3, "items": { "type": "string", "maxLength": 240 } }
               },
               "required": ["applicable"]
             }
@@ -1257,6 +1271,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         $"""
         Evaluate the candidate's answer against the job and question requirements.
         Set scoreScale to '0-100'.
+        Produce compact JSON: short direct evidence quotes, one brief point per feedback/strength/improvement, a concise grounded improvedAnswer, and a short optional teaching sample. Avoid repeating advice across fields; finish every required field before adding optional detail.
         Return exactly four rubric scores for criteria: correctness, structure, completeness, clarity (scores 0-100 with non-empty evidence quote).
         Return 1-3 modest strengths grounded only in direct evidence from the candidate's submitted answer. Each strength must reuse at least one concrete phrase, technology, action, fact, or result from that answer. The supplied question and context may inform relevance and rubric scoring, but they are not evidence that the candidate stated or performed anything. Prefer wording such as 'Bạn đã nêu rõ...' or 'Bạn mô tả cụ thể...'. Do not infer leadership, ownership, production experience, business impact, mentoring, scale, team size, architecture ownership, deployment success, or measurable outcomes unless the candidate explicitly states them. If no grounded positive evidence is demonstrated, return an empty strengths array, keep rubric scores below 60 where justified, and do not invent a strength.
         Return 1-3 improvements, and make every item a direct action the candidate can take. Start with or clearly include a substantive action verb such as add, include, explain, quantify, clarify, describe, mention, specify, show, provide, use, connect, highlight, focus, compare, give, identify, emphasize, present, tập trung, trình bày, làm nổi bật, liên hệ, đưa ví dụ, chỉ ra, nhấn mạnh, so sánh, giải thích, mô tả, làm rõ, bổ sung, nêu, định lượng, or cụ thể hóa. Directive prefixes such as 'hãy', 'nên', or 'có thể' may introduce an action, but do not count by themselves. Do not return passive observations such as 'the result is unclear'. Return one improvedAnswer.
@@ -1639,7 +1654,10 @@ public sealed class InterviewReportOperation : AiOperationDefinition<InterviewRe
     public override string SchemaVersion => "interview-report-v3";
     public override string RubricVersion => "rubric-v2";
     public override int MaxOutputTokens => 6_000;
-    public override AiReasoningEffortOverride? GetSemanticRepairReasoningOverride(string modelVersion) =>
+    public override AiReasoningEffortOverride? GetRecoveryReasoningOverride(
+        string modelVersion,
+        AiRecoveryReason reason) =>
+        reason == AiRecoveryReason.SemanticValidation &&
         modelVersion.StartsWith("deepseek:", StringComparison.OrdinalIgnoreCase)
             ? AiReasoningEffortOverride.Disabled
             : null;

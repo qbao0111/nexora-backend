@@ -71,7 +71,7 @@ public sealed class DeepSeekAiProviderTests
     [InlineData(AiPurposes.ResumeProfile, "disabled", null)]
     [InlineData(AiPurposes.ResumeAnalysis, "enabled", "low")]
     [InlineData(AiPurposes.InterviewFirstQuestion, "disabled", null)]
-    [InlineData(AiPurposes.InterviewEvaluate, "enabled", "high")]
+    [InlineData(AiPurposes.InterviewEvaluate, "enabled", "low")]
     [InlineData(AiPurposes.InterviewFollowup, "disabled", null)]
     [InlineData(AiPurposes.InterviewReport, "enabled", "low")]
     [InlineData(AiPurposes.ScenarioEvaluate, "enabled", "low")]
@@ -118,7 +118,9 @@ public sealed class DeepSeekAiProviderTests
     {
         var handler = new RecordingHandler(_ => SuccessResponse(ValidInterviewEvaluationContent()));
         using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
-        var provider = CreateProvider(handler);
+        var options = CreateOptions();
+        options.Reasoning.InterviewEvaluate = new DeepSeekReasoningPolicyOptions { Thinking = "enabled", Effort = "high" };
+        var provider = CreateProvider(handler, options);
         var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
 
         var result = await executor.ExecuteAsync(
@@ -144,7 +146,9 @@ public sealed class DeepSeekAiProviderTests
         var providerLogger = new RecordingLogger<DeepSeekAiProvider>();
         var executorLogger = new RecordingLogger<StructuredAiExecutor>();
         var handler = new RecordingHandler(_ => responses.Dequeue());
-        var provider = CreateProvider(handler, logger: providerLogger);
+        var options = CreateOptions();
+        options.Reasoning.InterviewEvaluate = new DeepSeekReasoningPolicyOptions { Thinking = "enabled", Effort = "high" };
+        var provider = CreateProvider(handler, options, providerLogger);
         var recordingProvider = new RecordingAiProvider(provider);
         var executor = new StructuredAiExecutor(recordingProvider, executorLogger);
 
@@ -212,7 +216,9 @@ public sealed class DeepSeekAiProviderTests
         ]);
         var handler = new RecordingHandler(_ => responses.Dequeue());
         using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
-        var provider = CreateProvider(handler);
+        var options = CreateOptions();
+        options.Reasoning.InterviewEvaluate = new DeepSeekReasoningPolicyOptions { Thinking = "enabled", Effort = "high" };
+        var provider = CreateProvider(handler, options);
         var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
 
         var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
@@ -224,6 +230,59 @@ public sealed class DeepSeekAiProviderTests
         Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
         Assert.Equal(2, handler.Calls);
         Assert.Equal("low", RequestBody(handler, 1).RootElement.GetProperty("reasoning_effort").GetString());
+    }
+
+    [Fact]
+    public async Task InterviewEvaluationLengthRetryDisablesReasoningAndExpandsBudget()
+    {
+        var responses = new Queue<HttpResponseMessage>([
+            LengthResponse("not-json", AiOperations.InterviewEvaluate.MaxOutputTokens),
+            SuccessResponse(ValidInterviewEvaluationContent())
+        ]);
+        var handler = new RecordingHandler(_ => responses.Dequeue());
+        var provider = new RecordingAiProvider(CreateProvider(handler));
+        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "candidate input",
+            new AiOperationContext("interview-length-recovery", ExpectedStar: false),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, handler.Calls);
+        Assert.Equal(AiReasoningEffortOverride.Disabled, provider.Requests[1].ReasoningEffortOverride);
+        Assert.Equal(provider.Requests[0].UntrustedInput, provider.Requests[1].UntrustedInput);
+        Assert.Equal(provider.Requests[0].OutputSchema.RootElement.GetRawText(), provider.Requests[1].OutputSchema.RootElement.GetRawText());
+        using var first = RequestBody(handler, 0);
+        using var second = RequestBody(handler, 1);
+        Assert.Equal("low", first.RootElement.GetProperty("reasoning_effort").GetString());
+        Assert.Equal(6_000, first.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.Equal("disabled", second.RootElement.GetProperty("thinking").GetProperty("type").GetString());
+        Assert.False(second.RootElement.TryGetProperty("reasoning_effort", out _));
+        Assert.Equal(8_192, second.RootElement.GetProperty("max_tokens").GetInt32());
+    }
+
+    [Fact]
+    public async Task InterviewEvaluationFailsClosedAfterTwoTruncatedResponses()
+    {
+        var responses = new Queue<HttpResponseMessage>([
+            LengthResponse("not-json", 6_000),
+            LengthResponse("not-json", 8_192)
+        ]);
+        var handler = new RecordingHandler(_ => responses.Dequeue());
+        var executor = new StructuredAiExecutor(CreateProvider(handler), NullLogger<StructuredAiExecutor>.Instance);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            "candidate input",
+            new AiOperationContext("interview-double-truncation", ExpectedStar: false),
+            CancellationToken.None));
+
+        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
+        Assert.Equal(2, handler.Calls);
+        Assert.Equal("disabled", RequestBody(handler, 1).RootElement.GetProperty("thinking").GetProperty("type").GetString());
+        Assert.Equal(8_192, RequestBody(handler, 1).RootElement.GetProperty("max_tokens").GetInt32());
     }
 
     [Fact]
@@ -298,7 +357,7 @@ public sealed class DeepSeekAiProviderTests
     }
 
     [Fact]
-    public async Task MalformedStructuredResponseUsesJsonCorrectionAtConfiguredHigh()
+    public async Task MalformedStructuredResponseUsesJsonCorrectionWithDisabledReasoning()
     {
         var responses = new Queue<HttpResponseMessage>([
             SuccessResponse("{\"choices\":[{\"message\":{\"content\":\"not-json\"},\"finish_reason\":\"stop\"}]}"),
@@ -318,8 +377,9 @@ public sealed class DeepSeekAiProviderTests
         Assert.True(result.RepairUsed);
         Assert.Equal(2, result.Attempts);
         Assert.Equal(2, handler.Calls);
-        Assert.Equal("high", RequestBody(handler, 0).RootElement.GetProperty("reasoning_effort").GetString());
-        Assert.Equal("high", RequestBody(handler, 1).RootElement.GetProperty("reasoning_effort").GetString());
+        Assert.Equal("low", RequestBody(handler, 0).RootElement.GetProperty("reasoning_effort").GetString());
+        Assert.Equal("disabled", RequestBody(handler, 1).RootElement.GetProperty("thinking").GetProperty("type").GetString());
+        Assert.False(RequestBody(handler, 1).RootElement.TryGetProperty("reasoning_effort", out _));
         Assert.Contains("IMPORTANT JSON CORRECTION INSTRUCTION", handler.RequestBodies[1], StringComparison.Ordinal);
         Assert.DoesNotContain("not-json", handler.RequestBodies[1], StringComparison.Ordinal);
     }
@@ -348,6 +408,56 @@ public sealed class DeepSeekAiProviderTests
         Assert.Contains(logger.Messages, message =>
             message.Contains("structuredFailureStage=content_contract_deserialization_failed", StringComparison.Ordinal));
         Assert.Contains("IMPORTANT JSON CORRECTION INSTRUCTION", handler.RequestBodies[1], StringComparison.Ordinal);
+        Assert.Equal("disabled", RequestBody(handler, 1).RootElement.GetProperty("thinking").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task InterviewFabricatedRewriteRepairsWithDisabledReasoning()
+    {
+        const string candidateAnswer = "I debugged the API.";
+        var fabricated = CandidateEvaluation("I debugged the API and reduced latency by 99% using Kubernetes.");
+        var context = new AiOperationContext("fabricated-rewrite", ExpectedStar: false, CandidateAnswer: candidateAnswer);
+        Assert.Equal("interview.improved_answer_fabricated",
+            AiOperations.InterviewEvaluate.NormalizeAndValidate(fabricated, context).FailureReason);
+        var responses = new Queue<HttpResponseMessage>([
+            SuccessResponse(JsonSerializer.Serialize(fabricated)),
+            SuccessResponse(JsonSerializer.Serialize(CandidateEvaluation(candidateAnswer)))
+        ]);
+        var handler = new RecordingHandler(_ => responses.Dequeue());
+        var executor = new StructuredAiExecutor(CreateProvider(handler), NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate, candidateAnswer, context, CancellationToken.None);
+
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, handler.Calls);
+        Assert.Equal(candidateAnswer, result.Value.ImprovedAnswer);
+        Assert.Contains("interview.improved_answer_fabricated", handler.RequestBodies[1], StringComparison.Ordinal);
+        Assert.Equal("disabled", RequestBody(handler, 1).RootElement.GetProperty("thinking").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task InterviewSemanticCandidateRecoversWhenRepairResponseTruncates()
+    {
+        const string candidateAnswer = "I debugged the API.";
+        var responses = new Queue<HttpResponseMessage>([
+            SuccessResponse(JsonSerializer.Serialize(CandidateEvaluation(
+                "I debugged the API and reduced latency by 99% using Kubernetes."))),
+            LengthResponse("not-json", AiOperations.InterviewEvaluate.MaxOutputTokens)
+        ]);
+        var handler = new RecordingHandler(_ => responses.Dequeue());
+        var executor = new StructuredAiExecutor(CreateProvider(handler), NullLogger<StructuredAiExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate,
+            candidateAnswer,
+            new AiOperationContext("semantic-truncation-recovery", ExpectedStar: false, CandidateAnswer: candidateAnswer),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, handler.Calls);
+        Assert.Equal(candidateAnswer, result.Value.ImprovedAnswer);
+        Assert.Equal("disabled", RequestBody(handler, 1).RootElement.GetProperty("thinking").GetProperty("type").GetString());
     }
 
     [Theory]
@@ -387,15 +497,17 @@ public sealed class DeepSeekAiProviderTests
         Assert.Equal(0, handler.Calls);
     }
 
-    [Fact]
-    public async Task ReportRepairCanDisableThinkingForOneRequest()
+    [Theory]
+    [InlineData(AiPurposes.InterviewReport)]
+    [InlineData(AiPurposes.InterviewEvaluate)]
+    public async Task InterviewRepairCanDisableThinkingForOneRequest(string purpose)
     {
         var handler = new RecordingHandler(_ => SuccessResponse("{\"content\":\"ok\"}"));
         using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
         var provider = CreateProvider(handler);
 
         await provider.GenerateStructuredAsync<GeneratedQuestion>(Request(
-            AiPurposes.InterviewReport, schema,
+            purpose, schema,
             reasoningEffortOverride: AiReasoningEffortOverride.Disabled), CancellationToken.None);
 
         using var body = RequestBody(handler, 0);
@@ -405,7 +517,7 @@ public sealed class DeepSeekAiProviderTests
     }
 
     [Fact]
-    public async Task DisabledThinkingOverrideIsRestrictedToReport()
+    public async Task DisabledThinkingOverrideIsRestrictedToInterviewOperations()
     {
         var handler = new RecordingHandler(_ => SuccessResponse("{\"content\":\"unexpected\"}"));
         using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
@@ -413,7 +525,7 @@ public sealed class DeepSeekAiProviderTests
 
         var exception = await Assert.ThrowsAsync<AiProviderException>(() =>
             provider.GenerateStructuredAsync<GeneratedQuestion>(Request(
-                AiPurposes.InterviewEvaluate, schema,
+                AiPurposes.ScenarioEvaluate, schema,
                 reasoningEffortOverride: AiReasoningEffortOverride.Disabled), CancellationToken.None));
 
         Assert.Equal(AiProviderFailureKind.Configuration, exception.Kind);
@@ -575,7 +687,7 @@ public sealed class DeepSeekAiProviderTests
         Assert.Contains("modelVersion=deepseek:deepseek-v4-flash", telemetry, StringComparison.Ordinal);
         Assert.Contains("effectiveBudget=512", telemetry, StringComparison.Ordinal);
         Assert.Contains("thinking=enabled", telemetry, StringComparison.Ordinal);
-        Assert.Contains("reasoningEffort=high", telemetry, StringComparison.Ordinal);
+        Assert.Contains("reasoningEffort=low", telemetry, StringComparison.Ordinal);
         Assert.Contains("promptTokens=12", telemetry, StringComparison.Ordinal);
         Assert.Contains("promptCacheHitTokens=3", telemetry, StringComparison.Ordinal);
         Assert.Contains("promptCacheMissTokens=9", telemetry, StringComparison.Ordinal);
@@ -659,6 +771,20 @@ public sealed class DeepSeekAiProviderTests
         Strengths: ["Clear explanation in the answer"],
         Improvements: ["Add one concrete example if available"],
         ImprovedAnswer: "Grounded answer with a clear explanation."));
+
+    private static AnswerEvaluation CandidateEvaluation(string improvedAnswer) => new(
+        [
+            new RubricScore("correctness", 80, "Grounded."),
+            new RubricScore("structure", 80, "Grounded."),
+            new RubricScore("completeness", 80, "Grounded."),
+            new RubricScore("clarity", 80, "Grounded.")
+        ],
+        "Good answer.",
+        new StarEvaluation(false, null, null, null, null, null, [], [], []),
+        AiOperations.ScoreScale,
+        ["The API explanation is clear."],
+        ["Add a concrete result if available."],
+        improvedAnswer);
 
     private static string ValidResumeAnalysisContent() => JsonSerializer.Serialize(new ResumeAnalysisOutput(
         ["Strength"],

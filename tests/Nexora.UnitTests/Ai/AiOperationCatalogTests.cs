@@ -971,7 +971,10 @@ public sealed class AiOperationCatalogTests
             SampleFrameworks,
             sampleSchema.GetProperty("properties").GetProperty("framework").GetProperty("enum")
                 .EnumerateArray().Select(value => value.GetString()).ToArray());
-        Assert.Equal(4_000, sampleSchema.GetProperty("properties").GetProperty("fullAnswer").GetProperty("maxLength").GetInt32());
+        Assert.Equal(1_200, sampleSchema.GetProperty("properties").GetProperty("fullAnswer").GetProperty("maxLength").GetInt32());
+        Assert.Equal(1_200, AiOperations.InterviewEvaluate.OutputSchema.RootElement
+            .GetProperty("properties").GetProperty("improvedAnswer").GetProperty("maxLength").GetInt32());
+        Assert.Contains("Produce compact JSON", instructions, StringComparison.Ordinal);
     }
 
     [Fact]

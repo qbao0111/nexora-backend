@@ -42,6 +42,13 @@ public enum AiReasoningEffortOverride
     Disabled
 }
 
+public enum AiRecoveryReason
+{
+    SemanticValidation,
+    MalformedStructuredOutput,
+    OutputTruncated
+}
+
 public enum AiProviderRetryHint
 {
     None,
