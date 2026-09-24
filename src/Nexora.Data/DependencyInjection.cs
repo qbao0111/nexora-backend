@@ -68,6 +68,7 @@ public static class DependencyInjection
             .Validate(options => options.RefreshTokenDays is >= 1 and <= 90, "RefreshTokenDays must be between 1 and 90.")
             .ValidateOnStart();
         services.AddScoped<IAuthService, IdentityAuthService>();
+        services.AddScoped<IAvatarService, AvatarService>();
         services.AddScoped<IAdminService, AdminService>();
         services.AddScoped<IAdminDashboardService, AdminDashboardService>();
         services.AddScoped<IProductFeedbackService, FeedbackService>();

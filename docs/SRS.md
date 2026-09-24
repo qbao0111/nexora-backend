@@ -89,6 +89,7 @@ Candidate browser -> Nexora frontend -> Nexora .NET API -> PostgreSQL
 | FR-AUTH-02 | Backend xác thực session/token ở mọi mutation; frontend localStorage không phải authority. | Must | Gọi API mutation không token nhận `401`. |
 | FR-AUTH-03 | Mọi personal resource kiểm tra ownership/action policy. | Must | User A dùng ID của User B nhận `404` hoặc `403`. |
 | FR-AUTH-04 | User có thể xem/cập nhật profile, export core data và yêu cầu xoá account/data theo configurable retention policy. | Must | Account deletion/export test, revoke session test; final periods theo DEC-03. |
+| FR-AUTH-05 | Owner có thể tải lên/thay/xóa ảnh đại diện private; public chỉ đọc qua opaque AvatarId hiện hành và feedback đã approved + consent mới có avatar URL. | Must | MIME + magic + size, replacement/delete capability, feedback eligibility và account-deletion cleanup integration tests. |
 
 ### 6.2 Plans, payment and usage
 

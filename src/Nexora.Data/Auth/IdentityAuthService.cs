@@ -392,10 +392,10 @@ public sealed partial class IdentityAuthService(
         var roles = (await userManager.GetRolesAsync(user)).ToArray();
         var now = timeProvider.GetUtcNow();
         var accessExpiresAt = now.AddMinutes(_jwtOptions.AccessTokenMinutes);
-        var profileName = user.Profile?.DisplayName ?? await dbContext.UserProfiles
-            .Where(profile => profile.UserId == user.Id).Select(profile => profile.DisplayName)
-            .SingleOrDefaultAsync(cancellationToken);
-        return new AuthSession(new AuthenticatedUser(user.Id, user.Email ?? string.Empty, profileName, roles),
+        var profile = user.Profile ?? await dbContext.UserProfiles.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.UserId == user.Id, cancellationToken);
+        return new AuthSession(new AuthenticatedUser(user.Id, user.Email ?? string.Empty,
+                profile?.DisplayName, roles, profile?.YearsOfExperience, profile?.AvatarId),
             CreateAccessToken(user, roles, now, accessExpiresAt), accessExpiresAt, rawRefreshToken, refreshExpiresAt);
     }
 
@@ -429,7 +429,8 @@ public sealed partial class IdentityAuthService(
     }
 
     private async Task<AuthenticatedUser> MapUserAsync(ApplicationUser user) =>
-        new(user.Id, user.Email ?? string.Empty, user.Profile?.DisplayName, (await userManager.GetRolesAsync(user)).ToArray(), user.Profile?.YearsOfExperience);
+        new(user.Id, user.Email ?? string.Empty, user.Profile?.DisplayName, (await userManager.GetRolesAsync(user)).ToArray(),
+            user.Profile?.YearsOfExperience, user.Profile?.AvatarId);
     private static string HashToken(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token ?? string.Empty)));
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
     private static string? NormalizeDisplayName(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

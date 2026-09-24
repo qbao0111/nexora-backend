@@ -32,7 +32,7 @@ public sealed class CareerProfileController(ICareerProfileService careerProfileS
             profile.Profile.Email,
             profile.Profile.DisplayName,
             profile.Profile.YearsOfExperience,
-            profile.Profile.AvatarUrl),
+            AvatarUrls.For(profile.Profile.AvatarId)),
         profile.PrimaryResume is null ? null : Map(profile.PrimaryResume),
         profile.ActiveCareerGoal is null ? null : new CareerProfileGoalResponse(
             profile.ActiveCareerGoal.Id,

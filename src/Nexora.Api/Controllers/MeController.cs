@@ -50,7 +50,7 @@ public sealed class MeController(IAuthService authService, IBillingService billi
             User.GetRequiredUserId(), Request.Headers["Idempotency-Key"].ToString(), cancellationToken)));
 
     private static UserResponse Map(AuthenticatedUser user, BillingSummaryResponse? billing = null) =>
-        new(user.Id, user.Email, user.DisplayName, user.Roles, billing, user.YearsOfExperience);
+        new(user.Id, user.Email, user.DisplayName, user.Roles, billing, user.YearsOfExperience, AvatarUrls.For(user.AvatarId));
 
     private static BillingSummaryResponse MapBilling(BillingSummary summary) => new(
         summary.Entitlement is null ? null : new EntitlementResponse(
