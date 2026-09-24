@@ -213,7 +213,10 @@ public sealed partial class PrivacyService(
             .Select(item => item.StorageKey).ToArrayAsync(cancellationToken);
         var intentStorageKeys = await dbContext.UploadIntents.AsNoTracking().Where(item => item.UserId == request.UserId)
             .Select(item => item.StorageKey).ToArrayAsync(cancellationToken);
-        foreach (var storageKey in storageKeys.Concat(intentStorageKeys).Distinct(StringComparer.Ordinal))
+        var avatarStorageKeys = await dbContext.UserProfiles.AsNoTracking()
+            .Where(item => item.UserId == request.UserId && item.AvatarStorageKey != null)
+            .Select(item => item.AvatarStorageKey!).ToArrayAsync(cancellationToken);
+        foreach (var storageKey in storageKeys.Concat(intentStorageKeys).Concat(avatarStorageKeys).Distinct(StringComparer.Ordinal))
             await storageProvider.DeleteAsync(storageKey, cancellationToken);
 
         if (activeIntentExpiries.Length > 0)

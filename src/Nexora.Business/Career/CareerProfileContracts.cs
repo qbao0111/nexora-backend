@@ -20,7 +20,7 @@ public sealed record CareerProfileIdentityView(
     string Email,
     string? DisplayName,
     int? YearsOfExperience,
-    string? AvatarUrl);
+    Guid? AvatarId);
 
 public sealed record CareerProfileGoalView(
     Guid Id,

@@ -162,5 +162,7 @@ public sealed class AuthController(
     }
 
     private static AuthSessionResponse MapSession(AuthSession session) =>
-        new(session.AccessToken, session.AccessTokenExpiresAt, new UserResponse(session.User.Id, session.User.Email, session.User.DisplayName, session.User.Roles));
+        new(session.AccessToken, session.AccessTokenExpiresAt, new UserResponse(session.User.Id, session.User.Email,
+            session.User.DisplayName, session.User.Roles, YearsOfExperience: session.User.YearsOfExperience,
+            AvatarUrl: AvatarUrls.For(session.User.AvatarId)));
 }

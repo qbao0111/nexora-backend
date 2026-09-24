@@ -108,6 +108,7 @@ public sealed class FeedbackService(
                 .Select(item => new PublicFeedbackRow(
                     item.Id,
                     item.User.Profile == null ? null : item.User.Profile.DisplayName,
+                    item.User.Profile == null ? null : item.User.Profile.AvatarId,
                     item.Rating,
                     item.Comment!,
                     item.Featured,
@@ -118,6 +119,7 @@ public sealed class FeedbackService(
                     .Select(item => new PublicFeedbackRow(
                         item.Id,
                         item.User.Profile == null ? null : item.User.Profile.DisplayName,
+                        item.User.Profile == null ? null : item.User.Profile.AvatarId,
                         item.Rating,
                         item.Comment!,
                         item.Featured,
@@ -136,7 +138,8 @@ public sealed class FeedbackService(
             string.IsNullOrWhiteSpace(item.DisplayName) ? PublicFallbackDisplayName : item.DisplayName.Trim(),
             item.Rating,
             item.Comment.Trim(),
-            item.PublishedAt)).ToArray();
+            item.PublishedAt,
+            item.AvatarId)).ToArray();
         return new PublicFeedbackPage(averageRating, ratingCount, items);
     }
 
@@ -441,6 +444,7 @@ public sealed class FeedbackService(
     private sealed record PublicFeedbackRow(
         Guid Id,
         string? DisplayName,
+        Guid? AvatarId,
         int Rating,
         string Comment,
         bool Featured,

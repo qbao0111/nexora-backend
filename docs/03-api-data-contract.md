@@ -30,6 +30,9 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/me/password` | Đổi mật khẩu với current password; yêu cầu Bearer và revoke toàn bộ session sau khi thành công. |
 | GET | `/me` | Profile và entitlement hiện hành. |
 | PATCH | `/me/profile` | Cập nhật một phần display name và số năm kinh nghiệm của owner. Email chỉ đọc từ Identity. |
+| PUT | `/me/avatar` | Bearer multipart `file` (JPEG/PNG/WebP, tối đa 2 MiB); trả `{ data: { avatarUrl } }`. |
+| DELETE | `/me/avatar` | Xóa avatar hiện hành, idempotent `204`. |
+| GET | `/avatars/:avatarId` | Stream ảnh private qua opaque ID hiện hành; 404 nếu bị thay/xóa hoặc account inactive/deleting. |
 | PUT | `/me/primary-resume` | Chọn, thay thế hoặc bỏ chọn Primary Resume của owner. CV được chọn phải ở trạng thái `ready`. |
 | GET | `/me/career-profile` | Đọc aggregate Career Profile computed của owner. |
 | GET | `/me/feedback` | Đọc feedback hiện hành của owner. |
@@ -44,7 +47,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/webhooks/payments/fake` | Nhận webhook fake đã ký cho test deterministic nội bộ. |
 | POST | `/webhooks/payments/sepay` | Nhận SePay Sandbox IPN JSON với `X-Secret-Key`, trả `{ "success": true }` khi callback hợp lệ hoặc trùng. |
 | POST | `/webhooks/payments/payos` | Nhận payOS payment webhook JSON; payload signature được xác minh bằng Checksum Key trước khi xử lý, và callback hợp lệ/trùng trả `{ "success": true }`. |
-| POST | `/uploads/presign` | Cấp signed URL upload CV/avatar. |
+| POST | `/uploads/presign` | Cấp signed URL upload CV. Avatar dùng endpoint riêng. |
 | POST | `/resumes` | Ghi metadata file sau upload. |
 | GET | `/resumes` | Liệt kê CV của owner theo thứ tự mới nhất. |
 | GET | `/resumes/:id` | Đọc trạng thái xử lý CV và lỗi an toàn của owner. |
@@ -666,6 +669,16 @@ Metadata fallback là `deterministic:validated-answer-aggregate-v2` và
 
 ### Product feedback
 
+`GET /api/v1/me`, auth-session `user` và `GET /api/v1/me/career-profile` trả `avatarUrl: string | null`
+dạng relative `/api/v1/avatars/{avatarId}`. `PUT /api/v1/me/avatar` nhận một multipart field
+`file` (MIME và magic bytes phải khớp `image/jpeg`, `image/png` hoặc `image/webp`, tối đa 2 MiB)
+và trả response tập trung `{ "data": { "avatarUrl": "..." } }`, không trả UserResponse thiếu billing.
+`DELETE /api/v1/me/avatar` trả `204` kể cả khi chưa có ảnh. AvatarId xoay khi thay ảnh;
+ID cũ trả 404 ngay ở backend. `GET /api/v1/avatars/{avatarId}` không cần auth nhưng chỉ
+stream private object của account active/chưa yêu cầu xóa, với `nosniff` và public cache
+`max-age=300`; không có storage key, tên file gốc, URL tùy ý hoặc byte ảnh trong JSON.
+Ảnh private được dọn trong lifecycle xóa account; privacy export không chứa key/bytes ảnh.
+
 Mỗi user có tối đa một feedback hiện hành (`rating` 1–5, `comment` tối đa
 1.000 ký tự, `allowPublicDisplay`). `PUT /me/feedback` là upsert; thay đổi nội
 dung/rating/consent reset feedback về `pending`, bỏ `featured`, moderator và
@@ -674,9 +687,10 @@ chỉ gồm nội dung do user cung cấp cùng timestamps, không gồm moderat
 
 Public read trả envelope `{ averageRating, ratingCount, items }`. `items` (tối
 đa 20 phần tử, dù query `limit` lớn hơn) chỉ chứa DTO allow-list
-`{ id, displayName, rating, comment, publishedAt }` cho row chưa xóa, user còn
+`{ id, displayName, rating, comment, publishedAt, avatarUrl }` cho row chưa xóa, user còn
 active, `approved`, có consent và comment không rỗng. `averageRating` và
 `ratingCount` tính trên toàn bộ population đủ điều kiện, không chỉ trên `items`.
+`avatarUrl` là null khi owner không có ảnh hiện hành; thay/xóa ảnh không reset moderation.
 Không trả user ID/email/moderator metadata. Admin list hỗ
 trợ status/search/featured/consent/rating/time filters, keyset cursor và
 `pageSize` tối đa 100. Approve/reject/feature/unfeature là các action riêng;

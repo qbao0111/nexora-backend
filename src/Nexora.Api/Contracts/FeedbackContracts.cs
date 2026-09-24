@@ -40,7 +40,8 @@ public sealed record PublicFeedbackResponse(
     string DisplayName,
     int Rating,
     string Comment,
-    DateTimeOffset PublishedAt);
+    DateTimeOffset PublishedAt,
+    string? AvatarUrl);
 
 public sealed record PublicFeedbackPageResponse(
     double? AverageRating,

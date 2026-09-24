@@ -82,7 +82,8 @@ public sealed class CareerProfileService(
                 item.Email,
                 item.Profile == null ? null : item.Profile.DisplayName,
                 item.Profile == null ? null : item.Profile.YearsOfExperience,
-                item.Profile == null ? null : item.Profile.PrimaryResumeId))
+                item.Profile == null ? null : item.Profile.PrimaryResumeId,
+                item.Profile == null ? null : item.Profile.AvatarId))
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw NotFound();
 
@@ -130,7 +131,7 @@ public sealed class CareerProfileService(
             hasDisplayName && hasYearsOfExperience && hasPrimaryResume && hasActiveCareerGoal);
 
         return new CareerProfileView(
-            new CareerProfileIdentityView(account.Id, account.Email ?? string.Empty, account.DisplayName, account.YearsOfExperience, AvatarUrl: null),
+            new CareerProfileIdentityView(account.Id, account.Email ?? string.Empty, account.DisplayName, account.YearsOfExperience, account.AvatarId),
             primaryResume,
             activeCareerGoal,
             skillSummary,
@@ -197,6 +198,6 @@ public sealed class CareerProfileService(
     private static BusinessException NotFound() =>
         new("NOT_FOUND", "Không tìm thấy tài nguyên.", BusinessErrorKind.NotFound);
 
-    private sealed record AccountRow(Guid Id, string? Email, string? DisplayName, int? YearsOfExperience, Guid? PrimaryResumeId);
+    private sealed record AccountRow(Guid Id, string? Email, string? DisplayName, int? YearsOfExperience, Guid? PrimaryResumeId, Guid? AvatarId);
     private sealed record PrimaryResumeRow(Guid Id, string FileName, string Status, DateTimeOffset CreatedAt);
 }

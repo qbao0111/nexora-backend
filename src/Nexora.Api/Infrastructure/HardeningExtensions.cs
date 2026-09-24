@@ -133,7 +133,12 @@ public sealed class FeatureGateMiddleware(RequestDelegate next, IOptions<Feature
 {
     public async Task InvokeAsync(HttpContext context)
     {
-        if (context.Request.Method == HttpMethods.Post && DisabledFeature(context.Request.Path, options.Value) is { } feature)
+        var feature = context.Request.Method == HttpMethods.Post
+            ? DisabledFeature(context.Request.Path, options.Value)
+            : context.Request.Method == HttpMethods.Put && !options.Value.Upload && context.Request.Path == "/api/v1/me/avatar"
+                ? "upload"
+                : null;
+        if (feature is not null)
         {
             await ApiErrorWriter.WriteAsync(context, StatusCodes.Status503ServiceUnavailable,
                 "FEATURE_DISABLED", $"Tính năng {feature} đang tạm dừng.");

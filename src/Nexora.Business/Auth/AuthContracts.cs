@@ -14,7 +14,8 @@ public sealed record AuthenticatedUser(
     string Email,
     string? DisplayName,
     IReadOnlyCollection<string> Roles,
-    int? YearsOfExperience = null);
+    int? YearsOfExperience = null,
+    Guid? AvatarId = null);
 public sealed record AuthSession(AuthenticatedUser User, string AccessToken, DateTimeOffset AccessTokenExpiresAt, string RefreshToken, DateTimeOffset RefreshTokenExpiresAt);
 
 public interface IAuthService

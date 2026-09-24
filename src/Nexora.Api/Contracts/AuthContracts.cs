@@ -48,7 +48,8 @@ public sealed record UserResponse(
     string? DisplayName,
     IReadOnlyCollection<string> Roles,
     BillingSummaryResponse? Billing = null,
-    int? YearsOfExperience = null);
+    int? YearsOfExperience = null,
+    string? AvatarUrl = null);
 public sealed record AuthSessionResponse(string AccessToken, DateTimeOffset AccessTokenExpiresAt, UserResponse User);
 public sealed record RegistrationResponse(string Email, bool VerificationRequired);
 public sealed record EmailVerificationResponse(string Email, bool AlreadyVerified);

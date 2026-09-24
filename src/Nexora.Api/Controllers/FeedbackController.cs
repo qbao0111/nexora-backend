@@ -45,7 +45,8 @@ public sealed class FeedbackController(IProductFeedbackService feedbackService) 
         return Ok(new ApiResponse<PublicFeedbackPageResponse>(new PublicFeedbackPageResponse(
             feedback.AverageRating,
             feedback.RatingCount,
-            feedback.Items.Select(item => new PublicFeedbackResponse(item.Id, item.DisplayName, item.Rating, item.Comment, item.PublishedAt)).ToArray())));
+            feedback.Items.Select(item => new PublicFeedbackResponse(item.Id, item.DisplayName, item.Rating, item.Comment, item.PublishedAt,
+                AvatarUrls.For(item.AvatarId))).ToArray())));
     }
 
     [HttpGet("admin/feedback"), Authorize(Policy = "Admin")]

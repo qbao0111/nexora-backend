@@ -36,7 +36,8 @@ public sealed record PublicFeedbackView(
     string DisplayName,
     int Rating,
     string Comment,
-    DateTimeOffset PublishedAt);
+    DateTimeOffset PublishedAt,
+    Guid? AvatarId);
 
 public sealed record PublicFeedbackPage(
     double? AverageRating,

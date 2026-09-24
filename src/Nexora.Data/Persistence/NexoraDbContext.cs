@@ -94,7 +94,10 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.HasKey(profile => profile.Id);
             entity.HasIndex(profile => profile.UserId).IsUnique();
             entity.HasIndex(profile => profile.PrimaryResumeId);
+            entity.HasIndex(profile => profile.AvatarId).IsUnique();
             entity.Property(profile => profile.DisplayName).HasMaxLength(120);
+            entity.Property(profile => profile.AvatarStorageKey).HasMaxLength(512);
+            entity.Property(profile => profile.AvatarContentType).HasMaxLength(32);
             entity.HasOne(profile => profile.User).WithOne(user => user.Profile)
                 .HasForeignKey<UserProfile>(profile => profile.UserId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(profile => profile.PrimaryResume).WithMany()
