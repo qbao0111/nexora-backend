@@ -998,3 +998,9 @@ This log records completed implementation milestones and verification evidence. 
 - Revenue is derived only from fulfilled Orders at `Order.UpdatedAt`, grouped with `Asia/Ho_Chi_Minh` calendar boundaries and never combined across currencies.
 - Added zero-filled revenue/user-growth series, current-plan/status distributions, revenue-by-plan, recent transactions and stable `(CreatedAt, Id)` keyset pagination with allow-listed fields.
 - Added focused integration coverage for Admin authorization, GMT+7 midnight boundaries, fulfilled-only/currency-separated revenue and tied-timestamp cursor behavior. No entity or migration change was required.
+
+## 2026-09-25 — Public-site content and owner order archive
+
+- Added typed site settings, draft/published About and legal pages, private-backed marketing assets with admin preview and published-only public image reads, plus metadata-only admin audit actions.
+- Added `GET /api/v1/me/orders` owner-scoped keyset pagination without changing `/me`'s latest-20 summary. The new migration adds site tables and the owner/time/id order index.
+- Local SQLite-backed focused API tests cover publication boundaries, admin authorization, asset MIME/magic/size, owner paging/filtering and `/me` compatibility. PostgreSQL-only coverage remains a hosted-CI gate; no live storage/payment/AI provider call was used.

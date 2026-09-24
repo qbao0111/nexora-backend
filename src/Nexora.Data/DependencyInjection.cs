@@ -13,6 +13,7 @@ using Nexora.Business.Practice;
 using Nexora.Business.Privacy;
 using Nexora.Business.Progress;
 using Nexora.Business.Recommendations;
+using Nexora.Business.Site;
 using Nexora.Business.Skills;
 using Nexora.Data.Auth;
 using Nexora.Data.Billing;
@@ -26,6 +27,7 @@ using Nexora.Data.Practice;
 using Nexora.Data.Privacy;
 using Nexora.Data.Progress;
 using Nexora.Data.Recommendations;
+using Nexora.Data.Site;
 using Nexora.Data.Skills;
 
 namespace Nexora.Data;
@@ -88,6 +90,7 @@ public static class DependencyInjection
         services.AddDbContext<NexoraDbContext>(options => options.UseNpgsql(connectionString));
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IBillingService, BillingService>();
+        services.AddScoped<ISiteContentService, SiteContentService>();
         services.AddScoped<IFeatureEntitlementService, FeatureEntitlementService>();
         services.AddScoped<IScenarioService, ScenarioService>();
         services.AddScoped<IStarAttemptService, StarAttemptService>();

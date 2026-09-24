@@ -29,6 +29,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/auth/refresh` | Xoay refresh token trong cookie. |
 | POST | `/me/password` | Đổi mật khẩu với current password; yêu cầu Bearer và revoke toàn bộ session sau khi thành công. |
 | GET | `/me` | Profile và entitlement hiện hành. |
+| GET | `/me/orders` | Archive đơn hàng của owner, keyset cursor; `/me.billing.orders` vẫn chỉ là 20 đơn gần nhất. |
 | PATCH | `/me/profile` | Cập nhật một phần display name và số năm kinh nghiệm của owner. Email chỉ đọc từ Identity. |
 | PUT | `/me/avatar` | Bearer multipart `file` (JPEG/PNG/WebP, tối đa 2 MiB); trả `{ data: { avatarUrl } }`. |
 | DELETE | `/me/avatar` | Xóa avatar hiện hành, idempotent `204`. |
@@ -83,6 +84,17 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | GET | `/health/operations` | Vendor-neutral aggregate operational state (`Healthy`/`Degraded`), không trả count hay resource ID mặc định. |
 | GET | `/feedback/public` | Public testimonial allow-list: approved + consent + comment, không PII. |
 | GET | `/public/platform-stats` | Aggregate công khai cho landing; chỉ trả count/rating, không PII. |
+| GET | `/public/site-settings` | Nội dung footer/liên hệ đã cấu hình, anonymous, cache tối đa 5 phút. |
+| GET | `/public/pages/{about|terms|privacy}` | Chỉ bản đã publish, anonymous; chưa publish trả 404. |
+| GET | `/public/site-assets/{assetId}` | Stream ảnh đã được About bản published tham chiếu theo opaque ID; storage bucket vẫn private, `nosniff`. |
+
+### Nội dung website và lịch sử thanh toán
+
+`GET /api/v1/me/orders?cursor=&pageSize=20&status=` cần Bearer. `pageSize` từ 1–50, mặc định 20; `status` là `pending`, `processing`, `fulfilled` hoặc `failed`. Response `{ "data": { "items": [{ "id", "planCode", "amountMinor", "currency", "status", "createdAt" }], "nextCursor": null|string } }`. Sắp xếp `(createdAt DESC, id DESC)`; cursor chỉ dùng với cùng bộ lọc. Không trả payload provider hay dữ liệu user khác.
+
+`GET /api/v1/public/site-settings` trả `contactEmail`, `brandDescription`, `facebookUrl`, `tiktokUrl`, `supportAvailabilityEnabled`, `supportLabel`, `madeInVietnamEnabled`, `updatedAt`; không có bản ghi thì trả giá trị Nexora an toàn, không có social URL/claim hỗ trợ. `GET /api/v1/public/pages/{key}` trả `key`, `title`, `bodyMarkdown` (Terms/Privacy) hoặc `about` typed content, `effectiveAt`, `isPublished`, `publishedAt`, `updatedAt`; public `updatedAt` là thời điểm publish của snapshot, không đổi khi admin sửa draft. Draft, audit và storage key không public. FE phải render Markdown không hỗ trợ raw HTML, chỉ cho phép link an toàn.
+
+Admin policy bảo vệ `GET/PUT /api/v1/admin/site-settings`, `GET/PUT /api/v1/admin/site-pages/{key}`, `POST /api/v1/admin/site-pages/{key}/publish`, `POST /api/v1/admin/site-assets` (multipart `file`) và `GET /api/v1/admin/site-assets/{assetId}` để preview ảnh draft. Page chỉ nhận `about`, `terms`, `privacy`; `PUT` lưu draft có `concurrencyToken` khi sửa bản đã tồn tại. `POST publish` yêu cầu JSON `{ "concurrencyToken": "<token từ bản draft đã xem>" }`; token cũ trả `409 SITE_CONTENT_CONFLICT`, chỉ token hiện tại mới được chụp thành snapshot public và xoay token. About dùng cấu trúc `heroTitle`, `heroSubtitle`, `heroAssetId`, `missionTitle`, `missionBody`, `missionAssetId`, `values[]`, `milestones[]`, `teamSectionEnabled`, `teamHeading`, `teamMembers[]`. Terms/Privacy dùng `bodyMarkdown`, không nhận raw HTML. Asset chỉ nhận JPEG/PNG/WebP có MIME và magic bytes khớp, tối đa 5 MiB; response chỉ có opaque ID, MIME, size, createdAt. Mọi write thành công tạo `AdminAuditEvent` metadata ngắn, không ghi body/bytes.
 
 ### Public platform stats
 

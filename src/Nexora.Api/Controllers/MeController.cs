@@ -20,6 +20,15 @@ public sealed class MeController(IAuthService authService, IBillingService billi
         return Ok(new ApiResponse<UserResponse>(Map(user, MapBilling(billing))));
     }
 
+    [HttpGet("orders")]
+    public async Task<ActionResult<ApiResponse<OrderPage>>> GetOrders(
+        [FromQuery] string? cursor,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? status = null,
+        CancellationToken cancellationToken = default) =>
+        Ok(new ApiResponse<OrderPage>(await billingService.GetOrdersAsync(
+            User.GetRequiredUserId(), cursor, pageSize, status, cancellationToken)));
+
     [HttpPatch("profile")]
     public async Task<ActionResult<ApiResponse<UserResponse>>> UpdateProfile(
         UpdateProfileRequest request,

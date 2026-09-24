@@ -161,6 +161,8 @@ Available quota is computed from entitlement limit plus ledger events, or mainta
 
 ## 4. Data lifecycle
 
+Public-site content uses three narrow tables: `site_settings` (one typed footer/contact record), `site_pages` (allowlisted `about`, `terms`, `privacy` draft and published snapshots with optimistic token), and `site_assets` (opaque ID, private storage key, MIME, size and admin uploader). The About snapshot is schema-validated structured JSON; legal pages use bounded Markdown without raw HTML. Public reads never expose drafts, storage keys or audit actors. Owner payment history reuses `orders` with `(UserId, CreatedAt, Id)` pagination index and no new payment state.
+
 All values below are proposals only. DEC-03 owns the final production periods and approved user-facing policy; implementation must keep lifecycle policies configurable.
 
 | Data | Default proposal | Notes |
