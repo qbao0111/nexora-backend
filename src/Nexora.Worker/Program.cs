@@ -18,7 +18,9 @@ ProductionSafety.ValidateDevelopmentAdapters(
     builder.Configuration.GetValue("Features:Payment", true),
     builder.Configuration.GetValue("Features:Upload", true),
     builder.Configuration.GetValue<string?>("Storage:Provider"),
-    builder.Configuration.GetValue<string?>("Billing:Payment:Provider"));
+    builder.Configuration.GetValue<string?>("Billing:Payment:Provider"),
+    builder.Environment.IsStaging(),
+    builder.Configuration.GetValue("Storage:Local:PersistentVolumeConfigured", false));
 builder.Services.AddOptions<WorkerPollingOptions>()
     .Bind(builder.Configuration.GetSection(WorkerPollingOptions.SectionName))
     .Validate(options => options.BusyDelayMilliseconds >= 0, "Busy delay must not be negative.")

@@ -1,5 +1,9 @@
 # Nexora Internal Staging Deployment (Render Free)
 
+> **Storage correction (2026-09-25):** The historical local `/tmp/nexora-storage` topology below is not durable. A redeploy/restart can retain database metadata while deleting CVs, avatars, and site assets. Staging and Production now reject `Storage:Provider=local` at startup unless `Storage:Local:PersistentVolumeConfigured=true` is explicitly set for a genuinely mounted persistent volume. Render Free `/tmp` is **not** such a volume. Configure private R2 before deploying this hotfix; never set the persistent-volume flag for `/tmp`.
+
+> Required Render environment keys (set secrets in Render, never in Git): `Storage__Provider=r2`, `Storage__R2__AccountId`, `Storage__R2__Bucket`, `Storage__R2__AccessKeyId`, `Storage__R2__SecretAccessKey`, and `Storage__R2__Endpoint`. Confirm all keys are present without printing values. The endpoint must satisfy the application's R2 HTTPS validation. Existing objects lost from the old `/tmp` container cannot be reconstructed: affected avatars/site images return 404 and must be uploaded again; missing CV objects require a new upload and must not have their DB metadata silently deleted.
+
 ## Overview
 
 This document details the internal staging topology, architecture rationale, configuration, limitations, and operational runbook for hosting the **Nexora Backend** on **Render Free** for frontend team integration.
@@ -20,31 +24,28 @@ Render Free Web Service (`nexora-staging`)
 │   │                                                         │
 │   ├── Nexora.Worker (Outbox queue polling & background jobs)│
 │   │                                                         │
-│   └── Shared Ephemeral Filesystem (/tmp/nexora-storage)     │
+│   └── Private R2 object storage via existing adapter       │
 └─────────────────────────────────────────────────────────────┘
        │                              │                 │
        ▼                              ▼                 ▼
-Neon PostgreSQL (Non-Prod)    Google Gemini API   SePay Sandbox
+Neon PostgreSQL (Non-Prod)    Google Gemini API   SePay Sandbox / R2
 (ep-crimson-art-...-singapore)  (gemini-2.5-flash) (pay-sandbox.sepay.vn)
 ```
 
-### Why API and Worker are Co-located in One Container
-- Current Nexora uses `LocalStorageProvider` for candidate CV/document uploads.
-- When an applicant uploads a resume, `Nexora.Api` stores the file under `Storage__Local__RootPath` (`/tmp/nexora-storage`).
-- The background outbox processor `Nexora.Worker` later inspects the database queue, retrieves the file from that local path, and performs text extraction and profiling.
-- On Render Free, separate services do **not** share a local filesystem, and persistent disks are unavailable.
-- By packaging both executables inside the same Docker container managed by `scripts/render-entrypoint.sh`, both processes read and write to the same `/tmp/nexora-storage` directory while the container is running.
+### API and Worker storage
+- API and Worker currently run in one Render container via `scripts/render-entrypoint.sh`, but share private R2 objects through the existing storage adapter.
+- The former `/tmp/nexora-storage` approach was ephemeral and caused persisted metadata to point at missing objects after restart/deploy.
+- Render Free does not provide a persistent local disk for this topology. Co-location does not make `/tmp` durable.
 
 > [!WARNING]
-> **DO NOT COPY THIS SINGLE-SERVICE FILESYSTEM TOPOLOGY TO PRODUCTION.**  
-> Production requires adopting a durable shared object storage provider (e.g. S3-compatible cloud storage) before splitting `Nexora.Api` and `Nexora.Worker` into independently scalable services.
+> **Do not use `/tmp` for deployed uploads.** R2 credentials and bucket must be configured before this hotfix is deployed.
 
 ---
 
-## Render Free Tier Limitations (Accepted for Staging)
+## Render Free Tier Limitations
 
-The frontend team and stakeholders accept the following constraints of Render Free:
-1. **Ephemeral Raw Storage**: Files uploaded to `/tmp/nexora-storage` are ephemeral. Any restart, redeploy, or container spin-down will clear raw uploads. (Neon PostgreSQL data remains fully persistent).
+The remaining Render Free constraints are:
+1. **Ephemeral local filesystem**: `/tmp` is not used for durable user assets. Previously lost objects cannot be recovered from database metadata.
 2. **Idle Spin-Down**: The Web Service automatically spins down after 15 minutes of inactivity.
 3. **Cold Starts**: The first request after spin-down experiences a cold start delay (typically 30–50 seconds).
 4. **Worker Pauses with Service**: Background processing in `Nexora.Worker` pauses when the container is spun down due to inactivity.
@@ -63,16 +64,16 @@ The frontend team and stakeholders accept the following constraints of Render Fr
 | **Region** | Oregon (`oregon`) |
 | **Auto-Deploy** | Disabled during initial branch validation; enabled on `main` post-merge |
 | **Health Check Route** | `/health/live` (Readiness: `/api/v1/health`) |
-| **Local Storage Path** | `/tmp/nexora-storage` |
+| **Durable storage** | Private R2 bucket, configured by deployment environment |
 | **EF Core Migrations** | Pre-run bundle `/app/nexora-migrate` via `scripts/render-entrypoint.sh` |
 
-### Current runtime source of truth
+### Runtime source of truth
 
-On 2026-09-11, the Render dashboard verified that `nexora-staging` is connected to `main` and live on commit `e25d4022955ad4a097632926ab725044c829cde0`. The dashboard configuration is authoritative for the running service; the branch value in `render.yaml` is only repository reference/configuration and does not prove the deployed commit.
+On 2026-09-11, the Render dashboard verified that `nexora-staging` was connected to `main` and live on commit `e25d4022955ad4a097632926ab725044c829cde0`. The dashboard configuration is authoritative for the running service; the branch value in `render.yaml` is only repository reference/configuration and does not prove the deployed commit. The R2 values below are required target configuration, not a claim that they are already present in Render.
 
 ---
 
-## Environment & Secrets Configuration
+## Required Environment & Secrets Configuration
 
 ### Non-Secret Environment Variables
 - `ASPNETCORE_ENVIRONMENT=Staging`
@@ -80,7 +81,7 @@ On 2026-09-11, the Render dashboard verified that `nexora-staging` is connected 
 - `Features__Ai=true`
 - `Features__Payment=true`
 - `Features__Upload=true`
-- `Storage__Local__RootPath=/tmp/nexora-storage`
+- `Storage__Provider=r2`
 - `Authentication__Jwt__Issuer=Nexora.Api`
 - `Authentication__Jwt__Audience=Nexora.Frontend`
 - `Authentication__RefreshCookie__SameSite=None`
@@ -96,6 +97,7 @@ On 2026-09-11, the Render dashboard verified that `nexora-staging` is connected 
 - `Frontend__AllowedOrigins__4=https://nexora-backend-q32b.onrender.com`
 
 ### Secure Secrets (Configure in Render Dashboard or CLI)
+- `Storage__R2__AccountId`, `Storage__R2__Bucket`, `Storage__R2__AccessKeyId`, `Storage__R2__SecretAccessKey`, `Storage__R2__Endpoint`: private R2 connection settings; configure all before deploying.
 - `ConnectionStrings__Postgres`: Non-production Neon connection string (`sslmode=require`).
 - `Authentication__Jwt__SigningKey`: 64+ character cryptographically secure key.
 - `Authentication__EmailVerification__PublicUrl`: Frontend URL (e.g. `https://nexora-staging.vercel.app` or custom HTTPS domain).

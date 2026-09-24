@@ -7,6 +7,20 @@ namespace Nexora.IntegrationTests;
 
 public sealed class HardeningApiTests
 {
+    [Theory]
+    [InlineData("Staging")]
+    [InlineData("Production")]
+    public void DeployedEnvironmentRejectsEphemeralLocalStorageAtStartup(string environment)
+    {
+        using var factory = new NexoraApiFactory(environment, new Dictionary<string, string?>
+        {
+            ["Storage:Provider"] = "local",
+            ["Storage:Local:PersistentVolumeConfigured"] = "false"
+        });
+        var exception = Assert.Throws<InvalidOperationException>(() => factory.CreateHttpsClient());
+        Assert.Contains("durable storage", exception.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task LoginEmailLimitReturnsCanonical429IndependentlyFromIpLimit()
     {

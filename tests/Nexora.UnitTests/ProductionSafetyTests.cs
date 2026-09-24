@@ -16,7 +16,7 @@ public sealed class ProductionSafetyTests
     public void ProductionStillRejectsPayosUntilDec02IsResolved()
     {
         var exception = Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
-            true, aiEnabled: false, paymentEnabled: true, uploadEnabled: false, paymentProvider: "payos"));
+            true, aiEnabled: false, paymentEnabled: true, uploadEnabled: false, storageProvider: "r2", paymentProvider: "payos"));
 
         Assert.Contains("payOS payment adapter", exception.Message, StringComparison.Ordinal);
     }
@@ -24,7 +24,7 @@ public sealed class ProductionSafetyTests
     [Fact]
     public void DisabledProductionCapabilitiesAndDevelopmentRemainAvailable()
     {
-        ProductionSafety.ValidateDevelopmentAdapters(true, aiEnabled: false, paymentEnabled: false, uploadEnabled: false);
+        ProductionSafety.ValidateDevelopmentAdapters(true, aiEnabled: false, paymentEnabled: false, uploadEnabled: false, storageProvider: "r2");
         ProductionSafety.ValidateDevelopmentAdapters(false, aiEnabled: true, paymentEnabled: true, uploadEnabled: true);
     }
 
@@ -47,6 +47,29 @@ public sealed class ProductionSafetyTests
     {
         Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
             true, aiEnabled: false, paymentEnabled: false, uploadEnabled: true, storageProvider: "local"));
+    }
+
+    [Fact]
+    public void ProductionRejectsLocalEvenWhenUploadIsDisabled()
+    {
+        var exception = Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
+            true, aiEnabled: false, paymentEnabled: false, uploadEnabled: false, storageProvider: "local"));
+        Assert.Contains("durable storage", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StagingRejectsLocalEvenWhenUploadIsDisabled()
+    {
+        Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
+            false, aiEnabled: false, paymentEnabled: false, uploadEnabled: false, storageProvider: "local", isStaging: true));
+    }
+
+    [Fact]
+    public void StagingAllowsR2AndExplicitPersistentLocalVolume()
+    {
+        ProductionSafety.ValidateDevelopmentAdapters(false, false, false, true, storageProvider: "r2", isStaging: true);
+        ProductionSafety.ValidateDevelopmentAdapters(false, false, false, true, storageProvider: "local", isStaging: true,
+            localPersistentVolumeConfigured: true);
     }
 
     [Fact]

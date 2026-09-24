@@ -68,6 +68,14 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
         };
         if (environment is "Staging" or "Production")
         {
+            // Hosted-environment tests must use the durable provider mode. These
+            // synthetic credentials never perform a live R2 request.
+            dict["Storage:Provider"] = "r2";
+            dict["Storage:R2:AccountId"] = "test-account";
+            dict["Storage:R2:Bucket"] = "test-bucket";
+            dict["Storage:R2:AccessKeyId"] = "test-access-key";
+            dict["Storage:R2:SecretAccessKey"] = "test-secret-key";
+            dict["Storage:R2:Endpoint"] = "https://test-account.r2.cloudflarestorage.com";
             dict["Authentication:EmailVerification:PublicUrl"] = "https://staging.nexora.app";
             dict["Email:Provider"] = "resend";
             dict["Email:FromAddress"] = "support@nexora.app";

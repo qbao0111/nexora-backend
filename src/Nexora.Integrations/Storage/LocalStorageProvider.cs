@@ -61,8 +61,18 @@ public sealed class LocalStorageProvider : IStorageProvider
     public Task<Stream> OpenReadAsync(string storageKey, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        Stream stream = new FileStream(ResolvePrivatePath(storageKey), FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
-        return Task.FromResult(stream);
+        var path = ResolvePrivatePath(storageKey);
+        try
+        {
+            Stream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+            return Task.FromResult(stream);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // A lost parent directory is the same missing private object to callers.
+            // Never expose the local path through the exception.
+            throw new FileNotFoundException("Stored object was not found.");
+        }
     }
 
     public Task DeleteAsync(string storageKey, CancellationToken cancellationToken)

@@ -241,6 +241,18 @@ public sealed class SiteContentAndOrderHistoryApiTests
         Assert.Equal("image/png", publicRead.Content.Headers.ContentType?.MediaType);
         Assert.Equal("nosniff", publicRead.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.Equal(ValidPng, await publicRead.Content.ReadAsByteArrayAsync());
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var missing = await db.SiteAssets.SingleAsync(item => item.Id == assetId);
+            missing.StorageKey = "2026/09/missing-site-asset.png";
+            await db.SaveChangesAsync();
+        }
+        using var missingPublic = await client.GetAsync($"/api/v1/public/site-assets/{assetId}");
+        using var missingAdmin = await client.GetAsync($"/api/v1/admin/site-assets/{assetId}");
+        Assert.Equal(HttpStatusCode.NotFound, missingPublic.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, missingAdmin.StatusCode);
     }
 
     [Fact]

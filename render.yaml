@@ -19,8 +19,18 @@ services:
         value: "true"
       - key: Features__Upload
         value: "true"
-      - key: Storage__Local__RootPath
-        value: /tmp/nexora-storage
+      - key: Storage__Provider
+        value: r2
+      - key: Storage__R2__AccountId
+        sync: false
+      - key: Storage__R2__Bucket
+        sync: false
+      - key: Storage__R2__AccessKeyId
+        sync: false
+      - key: Storage__R2__SecretAccessKey
+        sync: false
+      - key: Storage__R2__Endpoint
+        sync: false
       - key: Authentication__Jwt__Issuer
         value: Nexora.Api
       - key: Authentication__Jwt__Audience

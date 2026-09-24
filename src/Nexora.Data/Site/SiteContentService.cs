@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Nexora.Business.Common;
 using Nexora.Business.Site;
 using Nexora.Business.Storage;
@@ -9,7 +10,7 @@ using Npgsql;
 
 namespace Nexora.Data.Site;
 
-public sealed class SiteContentService(NexoraDbContext db, IStorageProvider storage, TimeProvider clock) : ISiteContentService
+public sealed partial class SiteContentService(NexoraDbContext db, IStorageProvider storage, TimeProvider clock, ILogger<SiteContentService> logger) : ISiteContentService
 {
     private static readonly Guid SettingsId = Guid.Parse("a65a1dbd-782d-47f4-a8eb-9d7e61064e23");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -169,8 +170,19 @@ public sealed class SiteContentService(NexoraDbContext db, IStorageProvider stor
                 about.TeamSectionEnabled && about.TeamMembers.Any(member => member.AssetId == id));
             if (!referenced) return null;
         }
-        return (await storage.OpenReadAsync(asset.StorageKey, cancellationToken), asset.ContentType);
+        try
+        {
+            return (await storage.OpenReadAsync(asset.StorageKey, cancellationToken), asset.ContentType);
+        }
+        catch (FileNotFoundException)
+        {
+            SiteAssetMissing(logger, id, storage.GetType().Name);
+            return null;
+        }
     }
+
+    [LoggerMessage(LogLevel.Information, "Stored object not found: domain=site_asset provider={Provider} assetId={AssetId}")]
+    private static partial void SiteAssetMissing(ILogger logger, Guid assetId, string provider);
 
     private async Task CheckAssetsAsync(AboutContent? about, CancellationToken cancellationToken)
     {
