@@ -2,7 +2,10 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Reflection;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http.Metadata;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -10,6 +13,7 @@ using Nexora.Business.Feedback;
 using Nexora.Business.Privacy;
 using Nexora.Business.Storage;
 using Nexora.Data.Feedback;
+using Nexora.Data.Identity;
 using Nexora.Data.Persistence;
 
 namespace Nexora.IntegrationTests;
@@ -78,6 +82,107 @@ public sealed class AvatarApiTests
         Assert.Contains("max-age=300", image.Headers.CacheControl?.ToString(), StringComparison.Ordinal);
         Assert.Null(image.Content.Headers.ContentDisposition);
         Assert.Equal(bytes, await image.Content.ReadAsByteArrayAsync());
+    }
+
+    [Fact]
+    public async Task UploadUsesExistingPerUserRateLimitWithoutLimitingReadOrDelete()
+    {
+        var storage = new RecordingStorage();
+        using var factory = CreateFactory(storage, new Dictionary<string, string?>
+        {
+            ["RateLimits:Upload:PermitLimit"] = "1",
+            ["RateLimits:Upload:WindowMinutes"] = "60"
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client, "avatar-rate-limit@example.test");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.Token);
+
+        using var accepted = await UploadAsync(client, Jpeg, "image/jpeg");
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        var avatarUrl = (await DataAsync(accepted)).GetProperty("avatarUrl").GetString()!;
+        using var limited = await UploadAsync(client, Png, "image/png");
+        Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+        using (var payload = JsonDocument.Parse(await limited.Content.ReadAsStringAsync()))
+            Assert.Equal("RATE_LIMITED", payload.RootElement.GetProperty("error").GetProperty("code").GetString());
+        using (var image = await client.GetAsync(avatarUrl)) Assert.Equal(HttpStatusCode.OK, image.StatusCode);
+        using (var removed = await client.DeleteAsync("/api/v1/me/avatar"))
+            Assert.Equal(HttpStatusCode.NoContent, removed.StatusCode);
+        Assert.Empty(storage.Objects);
+    }
+
+    [Fact]
+    public async Task DisabledUploadFeatureBlocksPutButNotDeleteOrExistingImageRead()
+    {
+        var storage = new RecordingStorage();
+        using var factory = CreateFactory(storage, new Dictionary<string, string?> { ["Features:Upload"] = "false" });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client, "avatar-feature-disabled@example.test");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.Token);
+        var avatarId = Guid.NewGuid();
+        using var imageBytes = new MemoryStream(Jpeg);
+        var stored = await storage.SaveAsync(imageBytes, "avatar.jpg", "image/jpeg", CancellationToken.None);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var profile = await db.UserProfiles.SingleOrDefaultAsync(item => item.UserId == owner.UserId);
+            profile ??= new UserProfile { Id = Guid.NewGuid(), UserId = owner.UserId, CreatedAt = DateTimeOffset.UtcNow };
+            if (db.Entry(profile).State == EntityState.Detached) db.UserProfiles.Add(profile);
+            profile.AvatarId = avatarId;
+            profile.AvatarStorageKey = stored.StorageKey;
+            profile.AvatarContentType = "image/jpeg";
+            await db.SaveChangesAsync();
+        }
+
+        using (var blocked = await UploadAsync(client, Png, "image/png"))
+        {
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, blocked.StatusCode);
+            using var payload = JsonDocument.Parse(await blocked.Content.ReadAsStringAsync());
+            Assert.Equal("FEATURE_DISABLED", payload.RootElement.GetProperty("error").GetProperty("code").GetString());
+        }
+        var avatarUrl = $"/api/v1/avatars/{avatarId}";
+        using (var image = await client.GetAsync(avatarUrl)) Assert.Equal(HttpStatusCode.OK, image.StatusCode);
+        using (var removed = await client.DeleteAsync("/api/v1/me/avatar"))
+            Assert.Equal(HttpStatusCode.NoContent, removed.StatusCode);
+        using (var gone = await client.GetAsync(avatarUrl)) Assert.Equal(HttpStatusCode.NotFound, gone.StatusCode);
+    }
+
+    [Fact]
+    public async Task MultipartBoundaryAcceptsTwoMiBButRejectsLargerFilesAndRequests()
+    {
+        var storage = new RecordingStorage();
+        using var factory = CreateFactory(storage);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client, "avatar-body-limit@example.test");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.Token);
+        var exact = new byte[2 * 1024 * 1024];
+        Jpeg.CopyTo(exact, 0);
+        using (var accepted = await UploadAsync(client, exact, "image/jpeg"))
+            Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+
+        using (var tooLargeFile = await UploadAsync(client, new byte[2 * 1024 * 1024 + 1], "image/png"))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, tooLargeFile.StatusCode);
+            using var payload = JsonDocument.Parse(await tooLargeFile.Content.ReadAsStringAsync());
+            Assert.Equal("AVATAR_FILE_TOO_LARGE", payload.RootElement.GetProperty("error").GetProperty("code").GetString());
+        }
+
+        using var oversizedRequest = await UploadAsync(client, new byte[4 * 1024 * 1024], "image/png");
+        // TestServer does not enforce Kestrel's request-body limit; MVC form parsing enforces the matching bound here.
+        var transportLimit = Assert.Single(typeof(Nexora.Api.Controllers.AvatarController)
+            .GetMethod(nameof(Nexora.Api.Controllers.AvatarController.Upload))!
+            .GetCustomAttributes<RequestSizeLimitAttribute>());
+        Assert.Equal(3 * 1024 * 1024, ((IRequestSizeLimitMetadata)transportLimit).MaxRequestBodySize);
+        var formLimit = Assert.Single(typeof(Nexora.Api.Controllers.AvatarController)
+            .GetMethod(nameof(Nexora.Api.Controllers.AvatarController.Upload))!
+            .GetCustomAttributes<RequestFormLimitsAttribute>());
+        Assert.Equal(3 * 1024 * 1024, formLimit.MultipartBodyLengthLimit);
+        Assert.Equal(HttpStatusCode.BadRequest, oversizedRequest.StatusCode);
+        using (var payload = JsonDocument.Parse(await oversizedRequest.Content.ReadAsStringAsync()))
+            Assert.Equal("VALIDATION_ERROR", payload.RootElement.GetProperty("error").GetProperty("code").GetString());
+        Assert.Single(storage.Objects);
     }
 
     [Fact]
@@ -245,8 +350,8 @@ public sealed class AvatarApiTests
         Assert.Equal(HttpStatusCode.NotFound, gone.StatusCode);
     }
 
-    private static NexoraApiFactory CreateFactory(RecordingStorage storage) =>
-        new(new Dictionary<string, string?>(), services =>
+    private static NexoraApiFactory CreateFactory(RecordingStorage storage, IReadOnlyDictionary<string, string?>? configuration = null) =>
+        new(configuration ?? new Dictionary<string, string?>(), services =>
         {
             services.RemoveAll<IStorageProvider>();
             services.AddSingleton<IStorageProvider>(storage);

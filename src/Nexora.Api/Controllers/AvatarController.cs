@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Nexora.Api.Contracts;
 using Nexora.Api.Infrastructure;
 using Nexora.Business.Auth;
@@ -10,8 +11,9 @@ namespace Nexora.Api.Controllers;
 [ApiController, Route("api/v1")]
 public sealed class AvatarController(IAvatarService avatarService) : ControllerBase
 {
-    [HttpPut("me/avatar"), Authorize, Consumes("multipart/form-data")]
-    [RequestSizeLimit(10 * 1024 * 1024)]
+    [HttpPut("me/avatar"), Authorize, Consumes("multipart/form-data"), EnableRateLimiting(RateLimitPolicies.Upload)]
+    [RequestSizeLimit(3 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 3 * 1024 * 1024)]
     public async Task<ActionResult<ApiResponse<AvatarResponse>>> Upload(
         [FromForm] IFormFile? file,
         CancellationToken cancellationToken)
