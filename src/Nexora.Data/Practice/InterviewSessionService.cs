@@ -9,17 +9,27 @@ using Nexora.Data.Billing;
 using Nexora.Data.Career;
 using Nexora.Data.Persistence;
 
+using static Nexora.Data.Practice.InterviewErrors;
+using static Nexora.Data.Practice.InterviewPersistence;
+using static Nexora.Data.Practice.InterviewQuestionContracts;
+using static Nexora.Data.Practice.InterviewViewAssembler;
+
 namespace Nexora.Data.Practice;
 
-public sealed partial class PracticeService
+public sealed class InterviewSessionService(
+    NexoraDbContext dbContext,
+    InterviewPersistence persistence,
+    InterviewReadState readState,
+    TimeProvider timeProvider) : IInterviewSessionService
 {
+    private const int MaximumHistoryPageSize = 100;
     public async Task<InterviewView> StartInterviewAsync(
         Guid userId, StartInterviewCommand command, string idempotencyKey, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         var key = RequireKey(idempotencyKey);
         var fingerprint = Fingerprint(command);
-        var prior = await FindIdempotentAsync(userId, "interview.start", key, fingerprint, cancellationToken);
+        var prior = await persistence.FindIdempotentAsync(userId, "interview.start", key, fingerprint, cancellationToken);
         if (prior is not null) return await GetInterviewAsync(userId, prior.ResourceId, cancellationToken);
 
         var context = await ResolveInterviewStartContextAsync(userId, command, cancellationToken);
@@ -36,12 +46,12 @@ public sealed partial class PracticeService
     {
         ValidateInterview(context.Role, context.Seniority, context.InterviewType, context.Difficulty);
 
-        await using var transaction = await BeginTransactionAsync(cancellationToken);
-        await LockUserAsync(userId, cancellationToken);
-        var prior = await FindIdempotentAsync(userId, operation, key, fingerprint, cancellationToken);
+        await using var transaction = await persistence.BeginTransactionAsync(cancellationToken);
+        await persistence.LockUserAsync(userId, cancellationToken);
+        var prior = await persistence.FindIdempotentAsync(userId, operation, key, fingerprint, cancellationToken);
         if (prior is not null) return await GetInterviewAsync(userId, prior.ResourceId, cancellationToken);
-        await ValidateOwnedContextAsync(userId, context.ResumeId, context.JobDescriptionId, cancellationToken);
-        var entitlement = await FindActiveEntitlementForUpdateAsync(userId, cancellationToken)
+        await persistence.ValidateOwnedContextAsync(userId, context.ResumeId, context.JobDescriptionId, cancellationToken);
+        var entitlement = await persistence.FindActiveEntitlementForUpdateAsync(userId, cancellationToken)
             ?? throw new BusinessException("QUOTA_EXCEEDED", "Bạn đã dùng hết lượt phỏng vấn của gói hiện tại.", BusinessErrorKind.Forbidden);
         if (Available(entitlement) < 1)
             throw new BusinessException("QUOTA_EXCEEDED", "Bạn đã dùng hết lượt phỏng vấn của gói hiện tại.", BusinessErrorKind.Forbidden);
@@ -239,7 +249,7 @@ public sealed partial class PracticeService
         var normalizedFocus = NormalizePracticeFocus(command.Focus);
         var normalizedReason = NormalizePracticeReason(command.Reason);
         var fingerprint = Fingerprint(interviewId, command.QuestionId, normalizedFocus, normalizedReason);
-        var prior = await FindIdempotentAsync(userId, "interview.practice-again", key, fingerprint, cancellationToken);
+        var prior = await persistence.FindIdempotentAsync(userId, "interview.practice-again", key, fingerprint, cancellationToken);
         if (prior is not null) return await GetInterviewAsync(userId, prior.ResourceId, cancellationToken);
 
         var source = await dbContext.InterviewSessions.AsNoTracking()
@@ -325,12 +335,12 @@ public sealed partial class PracticeService
             .SingleOrDefaultAsync(item => item.Id == interviewId && item.UserId == userId, cancellationToken)
             ?? throw NotFound();
         ValidateQuestionContracts(session.Questions);
-        var continuation = await BuildContinuationAsync(userId, session, cancellationToken);
-        var reportState = await GetReportStateAsync(session.Id, session.Status, cancellationToken);
-        var progress = BuildEvaluationProgress(session.Answers);
-        var questionPreparationState = await GetQuestionPreparationStateAsync(userId, session, cancellationToken);
+        var continuation = await readState.BuildContinuationAsync(userId, session, cancellationToken);
+        var reportState = await readState.GetReportStateAsync(session.Id, session.Status, cancellationToken);
+        var progress = InterviewReadState.BuildEvaluationProgress(session.Answers);
+        var questionPreparationState = await readState.GetQuestionPreparationStateAsync(userId, session, cancellationToken);
         return MapInterview(session, session.Questions, session.Answers, continuation, reportState,
-            GetResultState(session.Status, reportState, progress), progress, questionPreparationState);
+            InterviewReadState.GetResultState(session.Status, reportState, progress), progress, questionPreparationState);
     }
 
     private static void ValidateInterview(string? role, string? seniority, string? interviewType, string? difficulty)
@@ -432,5 +442,18 @@ public sealed partial class PracticeService
     }
 
     private static long PagingSkip(int page, int pageSize) => (long)(page - 1) * pageSize;
+
+    private sealed record InterviewStartContext(
+        string Role,
+        string Seniority,
+        string InterviewType,
+        string Difficulty,
+        Guid? ResumeId,
+        Guid? JobDescriptionId,
+        Guid? CareerGoalId,
+        Guid? SourceInterviewId,
+        Guid? SourceQuestionId,
+        string? PracticeReason,
+        string? FocusTopic);
 
 }

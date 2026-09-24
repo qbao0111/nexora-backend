@@ -11,9 +11,9 @@ using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Practice;
 
-public sealed partial class PracticeService
+internal static class InterviewViewAssembler
 {
-    private static InterviewView MapInterview(
+    internal static InterviewView MapInterview(
         InterviewSession session,
         IEnumerable<InterviewQuestion> questions,
         IEnumerable<InterviewAnswer> answers,
@@ -28,9 +28,9 @@ public sealed partial class PracticeService
                 .OrderBy(item => item.Sequence).Select(MapQuestion).ToArray(),
             answers.OrderBy(item => item.CreatedAt).Select(answer => MapAnswer(answer, session.Status)).ToArray(),
             session.CreatedAt, session.UpdatedAt, continuation, reportState, resultState,
-            evaluationProgress ?? BuildEvaluationProgress(answers), questionPreparationState);
+            evaluationProgress ?? InterviewReadState.BuildEvaluationProgress(answers), questionPreparationState);
 
-    private static QuestionView MapQuestion(InterviewQuestion question) => new(
+    internal static QuestionView MapQuestion(InterviewQuestion question) => new(
         question.Id,
         question.Sequence,
         question.Kind,
@@ -38,7 +38,7 @@ public sealed partial class PracticeService
         question.ParentQuestionId,
         question.Content,
         question.CreatedAt);
-    private static AnswerView MapAnswer(InterviewAnswer answer, string interviewStatus = PracticeValues.Completed) => new(
+    internal static AnswerView MapAnswer(InterviewAnswer answer, string interviewStatus = PracticeValues.Completed) => new(
         answer.Id,
         answer.QuestionId,
         answer.Content,
@@ -50,12 +50,6 @@ public sealed partial class PracticeService
                 : null,
         answer.CreatedAt,
         answer.EvaluationStatus);
-    private static JsonElement? ParseJson(string? value) => value is null ? null : JsonSerializer.Deserialize<JsonElement>(value);
-    private static AnswerEvaluation? TryDeserializeAnswerEvaluation(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        try { return JsonSerializer.Deserialize<AnswerEvaluation>(value, JsonOptions); }
-        catch (JsonException) { return null; }
-    }
+    internal static JsonElement? ParseJson(string? value) => value is null ? null : JsonSerializer.Deserialize<JsonElement>(value);
 
 }

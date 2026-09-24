@@ -27,6 +27,86 @@ public sealed class RealtimeWorkerTests
     private const string DocxType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
     [Fact]
+    public async Task PracticeJobProcessorDispatchesAllSixOutboxTypes()
+    {
+        using var factory = CreateFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.Token);
+        var interview = await PostAsync(client, "/api/v1/interviews", new
+        {
+            role = "Backend developer", seniority = "junior", interviewType = "technical", difficulty = "medium"
+        });
+        var interviewId = interview.GetProperty("id").GetGuid();
+        var resumeId = Guid.NewGuid();
+        var analysisId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var jobTypes = new[]
+        {
+            "ResumeExtractionRequested", "ResumeAnalysisRequested", "InterviewStartRequested",
+            "InterviewAnswerEvaluationRequested", "InterviewQuestionPlanRequested", "InterviewReportRequested"
+        };
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var session = await db.InterviewSessions.SingleAsync(item => item.Id == interviewId);
+            session.Status = PracticeValues.Completed;
+            session.CompletedAt = now;
+            var storedFile = new StoredFile
+            {
+                Id = Guid.NewGuid(), UserId = owner.UserId, StorageKey = $"private/{owner.UserId:N}/dispatch-test",
+                FileName = "dispatch.pdf", ContentType = "application/pdf", Size = 1, Checksum = "00", CreatedAt = now
+            };
+            db.AddRange(storedFile,
+                new ResumeRecord
+                {
+                    Id = resumeId, UserId = owner.UserId, StoredFileId = storedFile.Id, Status = PracticeValues.Ready,
+                    Version = 1, CreatedAt = now, UpdatedAt = now, DeletedAt = now, StorageDeletedAt = now
+                },
+                new ResumeAnalysis
+                {
+                    Id = analysisId, UserId = owner.UserId, ResumeId = resumeId, ResumeVersion = 1,
+                    Mode = ResumeAnalysisModes.FieldBenchmark, Status = PracticeValues.Ready,
+                    ModelVersion = "test-model", PromptVersion = "test-prompt", SchemaVersion = "test-schema",
+                    CreatedAt = now, UpdatedAt = now
+                },
+                new InterviewReport
+                {
+                    Id = Guid.NewGuid(), UserId = owner.UserId, InterviewSessionId = interviewId,
+                    Rubric = "{}", Strengths = "[]", Gaps = "[]", ActionPlan = "[]", Disclaimer = "",
+                    ModelVersion = "test-model", PromptVersion = "test-prompt", RubricVersion = "test-rubric",
+                    SchemaVersion = "test-schema", CreatedAt = now
+                });
+            db.OutboxEvents.AddRange(new[]
+            {
+                ("ResumeExtractionRequested", "resume", resumeId),
+                ("ResumeAnalysisRequested", "resume_analysis", analysisId),
+                ("InterviewAnswerEvaluationRequested", "interview_answer", Guid.NewGuid()),
+                ("InterviewQuestionPlanRequested", "interview", Guid.NewGuid()),
+                ("InterviewReportRequested", "interview", interviewId)
+            }.Select(item => new OutboxEvent
+            {
+                Id = Guid.NewGuid(), Type = item.Item1, AggregateType = item.Item2, AggregateId = item.Item3,
+                Payload = "{}", Status = BillingValues.Pending, CreatedAt = now
+            }));
+            await db.SaveChangesAsync();
+        }
+
+        await ProcessJobsAsync(factory);
+
+        using var verify = factory.Services.CreateScope();
+        var verifyDb = verify.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var jobs = await verifyDb.OutboxEvents.Where(item => jobTypes.Contains(item.Type)).ToArrayAsync();
+        Assert.Equal(6, jobs.Length);
+        Assert.Equal(jobTypes.Order(), jobs.Select(item => item.Type).Order());
+        Assert.All(jobs, job => Assert.Equal(BillingValues.Processed, job.Status));
+        var ai = Assert.IsType<TestAiProvider>(factory.Services.GetRequiredService<IAiProvider>());
+        Assert.Empty(ai.Invocations);
+    }
+
+    [Fact]
     public async Task DeletedResumeSkipsQueuedWorkAndRetriesProviderNeutralObjectCleanup()
     {
         var storage = new RetryOnceStorageProvider();

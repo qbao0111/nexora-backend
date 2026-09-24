@@ -8,6 +8,8 @@ using Nexora.Business.Storage;
 using Nexora.Data.Billing;
 using Nexora.Data.Career;
 using Nexora.Data.Persistence;
+using static Nexora.Data.Practice.InterviewErrors;
+using static Nexora.Data.Practice.InterviewPersistence;
 
 namespace Nexora.Data.Practice;
 
@@ -29,7 +31,7 @@ public sealed partial class PracticeService
             throw Validation("File không hợp lệ hoặc kích thước không khớp.", "INVALID_FILE");
         var checksum = Convert.ToHexString(SHA256.HashData(buffered.GetBuffer().AsSpan(0, checked((int)buffered.Length)))).ToLowerInvariant();
         var fingerprint = Fingerprint(Path.GetFileName(fileName), contentType.Trim().ToLowerInvariant(), size, checksum, normalizedJobDescription);
-        var prior = await FindIdempotentAsync(userId, DevelopmentResumeAnalysisOperation, key, fingerprint, cancellationToken);
+        var prior = await persistence.FindIdempotentAsync(userId, DevelopmentResumeAnalysisOperation, key, fingerprint, cancellationToken);
         if (prior is not null) return await GetDevelopmentResumeAnalysisAsync(userId, prior.ResourceId, cancellationToken);
 
         buffered.Position = 0;
@@ -65,7 +67,7 @@ public sealed partial class PracticeService
             if (state.Status == PracticeValues.Failed)
                 throw Conflict("RESUME_EXTRACTION_FAILED", ResumeExtractionFailureMessage);
 
-            await ProcessPendingAsync(cancellationToken);
+            await jobProcessor.ProcessPendingAsync(cancellationToken);
             await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
         }
 
