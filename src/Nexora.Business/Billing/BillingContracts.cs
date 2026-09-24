@@ -51,6 +51,7 @@ public sealed record CheckoutStatus(
     DateTimeOffset UpdatedAt);
 
 public sealed record OrderView(Guid Id, string PlanCode, long AmountMinor, string Currency, string Status, DateTimeOffset CreatedAt);
+public sealed record OrderPage(IReadOnlyCollection<OrderView> Items, string? NextCursor);
 public sealed record BillingSummary(EntitlementView? Entitlement, IReadOnlyCollection<OrderView> Orders);
 public sealed record EntitlementView(
     Guid Id,
@@ -76,6 +77,7 @@ public interface IBillingService
     Task<CheckoutStatus> RefreshCheckoutAsync(Guid userId, Guid orderId, CancellationToken cancellationToken);
     Task<PaymentWebhookProcessResult> ProcessPaymentWebhookAsync(string provider, PaymentCallbackRequest callback, CancellationToken cancellationToken);
     Task<BillingSummary> GetSummaryAsync(Guid userId, CancellationToken cancellationToken);
+    Task<OrderPage> GetOrdersAsync(Guid userId, string? cursor, int pageSize, string? status, CancellationToken cancellationToken);
     Task<UsageReservation> ReserveInterviewAsync(Guid userId, string sourceId, string idempotencyKey, CancellationToken cancellationToken);
     Task ConsumeReservationAsync(Guid userId, Guid reservationEventId, CancellationToken cancellationToken);
     Task VoidReservationAsync(Guid userId, Guid reservationEventId, CancellationToken cancellationToken);

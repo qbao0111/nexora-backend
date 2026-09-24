@@ -1,5 +1,7 @@
 using System.Data;
 using System.Diagnostics;
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -17,6 +19,60 @@ public sealed partial class BillingService(
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private const int MaximumProviderTransactionIdAttempts = 5;
+
+    public async Task<OrderPage> GetOrdersAsync(Guid userId, string? cursor, int pageSize, string? status, CancellationToken cancellationToken)
+    {
+        if (pageSize is < 1 or > 50)
+            throw new BusinessException("VALIDATION_ERROR", "Kích thước trang phải từ 1 đến 50.", BusinessErrorKind.Validation);
+        if (!string.IsNullOrEmpty(status) && status is not (BillingValues.Pending or BillingValues.Processing or BillingValues.Failed or BillingValues.Fulfilled))
+            throw new BusinessException("VALIDATION_ERROR", "Trạng thái đơn hàng không hợp lệ.", BusinessErrorKind.Validation);
+
+        (DateTimeOffset CreatedAt, Guid Id)? position = null;
+        if (!string.IsNullOrWhiteSpace(cursor))
+        {
+            try
+            {
+                var normalized = cursor.Replace('-', '+').Replace('_', '/');
+                normalized = normalized.PadRight(normalized.Length + ((4 - normalized.Length % 4) % 4), '=');
+                var parts = Encoding.UTF8.GetString(Convert.FromBase64String(normalized)).Split('|');
+                if (parts.Length != 2 || !long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var ticks) ||
+                    !Guid.TryParseExact(parts[1], "N", out var id)) throw new FormatException();
+                position = (new DateTimeOffset(ticks, TimeSpan.Zero), id);
+            }
+            catch (Exception exception) when (exception is FormatException or ArgumentException)
+            {
+                throw new BusinessException("VALIDATION_ERROR", "Cursor đơn hàng không hợp lệ.", BusinessErrorKind.Validation);
+            }
+        }
+
+        var query = dbContext.Orders.AsNoTracking().Where(order => order.UserId == userId);
+        if (status is not null) query = query.Where(order => order.Status == status);
+        OrderView[] rows;
+        if (dbContext.Database.IsNpgsql())
+        {
+            if (position.HasValue)
+                query = query.Where(order => order.CreatedAt < position.Value.CreatedAt ||
+                    (order.CreatedAt == position.Value.CreatedAt && order.Id.CompareTo(position.Value.Id) < 0));
+            rows = await query.OrderByDescending(order => order.CreatedAt).ThenByDescending(order => order.Id)
+                .Select(order => new OrderView(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt))
+                .Take(pageSize + 1).ToArrayAsync(cancellationToken);
+        }
+        else
+        {
+            // SQLite cannot reliably order UUID values using the PostgreSQL provider translation.
+            var materialized = await query.Select(order => new OrderView(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt))
+                .ToArrayAsync(cancellationToken);
+            rows = materialized.Where(order => !position.HasValue || order.CreatedAt < position.Value.CreatedAt ||
+                    (order.CreatedAt == position.Value.CreatedAt && order.Id.CompareTo(position.Value.Id) < 0))
+                .OrderByDescending(order => order.CreatedAt).ThenByDescending(order => order.Id).Take(pageSize + 1).ToArray();
+        }
+        var items = rows.Take(pageSize).ToArray();
+        var nextCursor = rows.Length > pageSize
+            ? Convert.ToBase64String(Encoding.UTF8.GetBytes($"{items[^1].CreatedAt.UtcTicks.ToString(CultureInfo.InvariantCulture)}|{items[^1].Id:N}"))
+                .TrimEnd('=').Replace('+', '-').Replace('/', '_')
+            : null;
+        return new OrderPage(items, nextCursor);
+    }
 
     private static int? Available(int? limit, int reserved, int consumed, int adjustment) =>
         limit is null ? null : limit.Value + adjustment - reserved - consumed;

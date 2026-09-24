@@ -9,6 +9,7 @@ using Nexora.Data.Identity;
 using Nexora.Data.Learning;
 using Nexora.Data.Practice;
 using Nexora.Data.Privacy;
+using Nexora.Data.Site;
 
 namespace Nexora.Data.Persistence;
 
@@ -41,6 +42,9 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<EntitlementFeature> EntitlementFeatures => Set<EntitlementFeature>();
     public DbSet<FeatureUsageEvent> FeatureUsageEvents => Set<FeatureUsageEvent>();
     public DbSet<AdminAuditEvent> AdminAuditEvents => Set<AdminAuditEvent>();
+    public DbSet<SiteSettings> SiteSettings => Set<SiteSettings>();
+    public DbSet<SitePage> SitePages => Set<SitePage>();
+    public DbSet<SiteAsset> SiteAssets => Set<SiteAsset>();
     public DbSet<ScenarioCategory> ScenarioCategories => Set<ScenarioCategory>();
     public DbSet<Scenario> Scenarios => Set<Scenario>();
     public DbSet<ScenarioAttempt> ScenarioAttempts => Set<ScenarioAttempt>();
@@ -116,6 +120,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
                 .HasForeignKey(token => token.UserId).OnDelete(DeleteBehavior.Cascade);
         });
         ConfigureBilling(builder);
+        ConfigureSite(builder);
         ConfigurePractice(builder);
         ConfigurePrivacy(builder);
         ConfigureFeatureManagement(builder);
@@ -335,7 +340,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
         {
             entity.ToTable("orders");
             entity.HasKey(order => order.Id);
-            entity.HasIndex(order => new { order.UserId, order.CreatedAt });
+            entity.HasIndex(order => new { order.UserId, order.CreatedAt, order.Id });
             entity.HasIndex(order => new { order.PaymentProvider, order.ProviderTransactionId }).IsUnique();
             entity.Property(order => order.PlanCodeSnapshot).HasMaxLength(40).IsRequired();
             entity.Property(order => order.Currency).HasMaxLength(3).IsRequired();
@@ -585,6 +590,44 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.HasOne(report => report.User).WithMany().HasForeignKey(report => report.UserId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(report => report.InterviewSession).WithOne(session => session.Report)
                 .HasForeignKey<InterviewReport>(report => report.InterviewSessionId).OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigureSite(ModelBuilder builder)
+    {
+        builder.Entity<SiteSettings>(entity =>
+        {
+            entity.ToTable("site_settings");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.ContactEmail).HasMaxLength(254).IsRequired();
+            entity.Property(item => item.BrandDescription).HasMaxLength(500).IsRequired();
+            entity.Property(item => item.FacebookUrl).HasMaxLength(2048);
+            entity.Property(item => item.TiktokUrl).HasMaxLength(2048);
+            entity.Property(item => item.SupportLabel).HasMaxLength(100);
+            entity.Property(item => item.ConcurrencyToken).IsConcurrencyToken();
+        });
+        builder.Entity<SitePage>(entity =>
+        {
+            entity.ToTable("site_pages");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => item.Key).IsUnique();
+            entity.Property(item => item.Key).HasMaxLength(20).IsRequired();
+            entity.Property(item => item.DraftTitle).HasMaxLength(160).IsRequired();
+            entity.Property(item => item.PublishedTitle).HasMaxLength(160);
+            entity.Property(item => item.DraftBodyMarkdown).HasMaxLength(30_000);
+            entity.Property(item => item.PublishedBodyMarkdown).HasMaxLength(30_000);
+            entity.Property(item => item.DraftAboutJson).HasMaxLength(30_000);
+            entity.Property(item => item.PublishedAboutJson).HasMaxLength(30_000);
+            entity.Property(item => item.ConcurrencyToken).IsConcurrencyToken();
+        });
+        builder.Entity<SiteAsset>(entity =>
+        {
+            entity.ToTable("site_assets");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.StorageKey).HasMaxLength(500).IsRequired();
+            entity.Property(item => item.ContentType).HasMaxLength(40).IsRequired();
+            entity.HasIndex(item => item.StorageKey).IsUnique();
+            entity.HasOne<Nexora.Data.Identity.ApplicationUser>().WithMany().HasForeignKey(item => item.UploadedBy).OnDelete(DeleteBehavior.Restrict);
         });
     }
 
