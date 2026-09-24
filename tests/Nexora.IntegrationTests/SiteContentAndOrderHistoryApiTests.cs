@@ -4,11 +4,13 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Nexora.Business.Authorization;
 using Nexora.Data.Billing;
 using Nexora.Data.Identity;
 using Nexora.Data.Persistence;
+using Nexora.Data.Site;
 
 namespace Nexora.IntegrationTests;
 
@@ -58,7 +60,7 @@ public sealed class SiteContentAndOrderHistoryApiTests
         });
         Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/v1/public/pages/terms")).StatusCode);
-        using var published = await client.PostAsync("/api/v1/admin/site-pages/terms/publish", null);
+        using var published = await PublishAsync(client, "terms", await GetPageTokenAsync(client, "terms"));
         Assert.Equal(HttpStatusCode.OK, published.StatusCode);
         using var publicPage = await client.GetAsync("/api/v1/public/pages/terms");
         Assert.Equal(HttpStatusCode.OK, publicPage.StatusCode);
@@ -233,7 +235,7 @@ public sealed class SiteContentAndOrderHistoryApiTests
         });
         Assert.Equal(HttpStatusCode.OK, draft.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/v1/public/site-assets/{assetId}")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/v1/admin/site-pages/about/publish", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await PublishAsync(client, "about", await GetPageTokenAsync(client, "about"))).StatusCode);
         using var publicRead = await client.GetAsync($"/api/v1/public/site-assets/{assetId}");
         Assert.Equal(HttpStatusCode.OK, publicRead.StatusCode);
         Assert.Equal("image/png", publicRead.Content.Headers.ContentType?.MediaType);
@@ -287,7 +289,7 @@ public sealed class SiteContentAndOrderHistoryApiTests
         });
         Assert.Equal(HttpStatusCode.OK, aboutDraft.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/v1/public/pages/about")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/v1/admin/site-pages/about/publish", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await PublishAsync(client, "about", await GetPageTokenAsync(client, "about"))).StatusCode);
         using var updatedDraft = await client.PutAsJsonAsync("/api/v1/admin/site-pages/about", new
         {
             title = "Bản nháp mới",
@@ -316,6 +318,175 @@ public sealed class SiteContentAndOrderHistoryApiTests
         Assert.Equal(JsonValueKind.Null, publicJson.RootElement.GetProperty("data").GetProperty("concurrencyToken").ValueKind);
     }
 
+    [Fact]
+    public async Task PublishedLegalMetadataAndAdminTokensStayOnReviewedVersions()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await PromoteAndLoginAsync(factory, client, account));
+
+        var firstEffectiveAt = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        var secondEffectiveAt = firstEffectiveAt.AddDays(1);
+        using var firstDraft = await client.PutAsJsonAsync("/api/v1/admin/site-pages/terms", new
+        {
+            title = "Điều khoản v1",
+            bodyMarkdown = "Nội dung v1",
+            effectiveAt = firstEffectiveAt,
+            about = (object?)null,
+            concurrencyToken = (Guid?)null
+        });
+        Assert.Equal(HttpStatusCode.OK, firstDraft.StatusCode);
+        var firstDraftToken = await GetPageTokenAsync(client, "terms");
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/v1/admin/site-pages/terms/publish", new { })).StatusCode);
+        using var firstPublish = await PublishAsync(client, "terms", firstDraftToken);
+        Assert.Equal(HttpStatusCode.OK, firstPublish.StatusCode);
+        var publishedToken = await GetPageTokenAsync(client, "terms");
+        Assert.NotEqual(firstDraftToken, publishedToken);
+
+        using var firstPublic = await client.GetAsync("/api/v1/public/pages/terms");
+        using var firstPublicJson = JsonDocument.Parse(await firstPublic.Content.ReadAsStringAsync());
+        var firstSnapshot = firstPublicJson.RootElement.GetProperty("data");
+        var firstUpdatedAt = firstSnapshot.GetProperty("updatedAt").GetDateTimeOffset();
+        Assert.Equal(firstSnapshot.GetProperty("publishedAt").GetDateTimeOffset(), firstUpdatedAt);
+
+        using var secondDraft = await client.PutAsJsonAsync("/api/v1/admin/site-pages/terms", new
+        {
+            title = "Điều khoản v2",
+            bodyMarkdown = "Nội dung v2",
+            effectiveAt = secondEffectiveAt,
+            about = (object?)null,
+            concurrencyToken = publishedToken
+        });
+        Assert.Equal(HttpStatusCode.OK, secondDraft.StatusCode);
+        var secondDraftToken = await GetPageTokenAsync(client, "terms");
+        Assert.NotEqual(publishedToken, secondDraftToken);
+
+        using var staleDraft = await client.PutAsJsonAsync("/api/v1/admin/site-pages/terms", new
+        {
+            title = "Bản nháp cũ",
+            bodyMarkdown = "Không được lưu",
+            effectiveAt = secondEffectiveAt,
+            about = (object?)null,
+            concurrencyToken = publishedToken
+        });
+        await AssertSiteConflictAsync(staleDraft);
+        using var stalePublish = await PublishAsync(client, "terms", publishedToken);
+        await AssertSiteConflictAsync(stalePublish);
+
+        using var unchangedPublic = await client.GetAsync("/api/v1/public/pages/terms");
+        using var unchangedJson = JsonDocument.Parse(await unchangedPublic.Content.ReadAsStringAsync());
+        var unchanged = unchangedJson.RootElement.GetProperty("data");
+        Assert.Equal("Điều khoản v1", unchanged.GetProperty("title").GetString());
+        Assert.Equal("Nội dung v1", unchanged.GetProperty("bodyMarkdown").GetString());
+        Assert.Equal(firstEffectiveAt, unchanged.GetProperty("effectiveAt").GetDateTimeOffset());
+        Assert.Equal(firstUpdatedAt, unchanged.GetProperty("updatedAt").GetDateTimeOffset());
+        Assert.Equal(firstUpdatedAt, unchanged.GetProperty("publishedAt").GetDateTimeOffset());
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(3, await db.AdminAuditEvents.CountAsync(item => item.Action.StartsWith("site.page.terms.")));
+        }
+
+        await Task.Delay(20);
+        using var secondPublish = await PublishAsync(client, "terms", secondDraftToken);
+        Assert.Equal(HttpStatusCode.OK, secondPublish.StatusCode);
+        Assert.NotEqual(secondDraftToken, await GetPageTokenAsync(client, "terms"));
+        using var secondPublic = await client.GetAsync("/api/v1/public/pages/terms");
+        using var secondPublicJson = JsonDocument.Parse(await secondPublic.Content.ReadAsStringAsync());
+        var secondSnapshot = secondPublicJson.RootElement.GetProperty("data");
+        Assert.Equal("Điều khoản v2", secondSnapshot.GetProperty("title").GetString());
+        Assert.Equal("Nội dung v2", secondSnapshot.GetProperty("bodyMarkdown").GetString());
+        Assert.Equal(secondEffectiveAt, secondSnapshot.GetProperty("effectiveAt").GetDateTimeOffset());
+        Assert.Equal(secondSnapshot.GetProperty("publishedAt").GetDateTimeOffset(), secondSnapshot.GetProperty("updatedAt").GetDateTimeOffset());
+        Assert.NotEqual(firstUpdatedAt, secondSnapshot.GetProperty("updatedAt").GetDateTimeOffset());
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(4, await db.AdminAuditEvents.CountAsync(item => item.Action.StartsWith("site.page.terms.")));
+        }
+    }
+
+    [Fact]
+    public async Task StaleSiteSettingsTokenReturnsConflictWithoutAudit()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await PromoteAndLoginAsync(factory, client, account));
+        using var first = await PutSettingsAsync(client, null, "first@nexora.test");
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        using var firstJson = JsonDocument.Parse(await first.Content.ReadAsStringAsync());
+        var firstToken = firstJson.RootElement.GetProperty("data").GetProperty("concurrencyToken").GetGuid();
+        using var second = await PutSettingsAsync(client, firstToken, "second@nexora.test");
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        using var stale = await PutSettingsAsync(client, firstToken, "stale@nexora.test");
+        await AssertSiteConflictAsync(stale);
+        using var publicRead = await client.GetAsync("/api/v1/public/site-settings");
+        using var publicJson = JsonDocument.Parse(await publicRead.Content.ReadAsStringAsync());
+        Assert.Equal("second@nexora.test", publicJson.RootElement.GetProperty("data").GetProperty("contactEmail").GetString());
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(2, await db.AdminAuditEvents.CountAsync(item => item.Action == "site.settings.update"));
+    }
+
+    [Fact]
+    public Task EfSitePageConcurrencyRaceReturnsSafeConflictWithoutAudit()
+    {
+        var interceptor = new BumpSitePageTokenBeforeSave();
+        return VerifyEfSitePageConcurrencyRaceAsync(new NexoraApiFactory(interceptor), interceptor);
+    }
+
+    [PostgresFact]
+    public Task EfSitePageConcurrencyRaceReturnsSafeConflictOnPostgres()
+    {
+        var interceptor = new BumpSitePageTokenBeforeSave();
+        var connectionString = Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!;
+        return VerifyEfSitePageConcurrencyRaceAsync(NexoraApiFactory.CreatePostgres(connectionString, dbInterceptor: interceptor), interceptor);
+    }
+
+    private static async Task VerifyEfSitePageConcurrencyRaceAsync(NexoraApiFactory factory, BumpSitePageTokenBeforeSave interceptor)
+    {
+        using (factory)
+        {
+            factory.InitializeDatabase();
+            using var client = factory.CreateHttpsClient();
+            var account = await RegisterAsync(client);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await PromoteAndLoginAsync(factory, client, account));
+
+            using var original = await client.PutAsJsonAsync("/api/v1/admin/site-pages/privacy", new
+            {
+                title = "Chính sách v1",
+                bodyMarkdown = "Nội dung v1",
+                about = (object?)null,
+                concurrencyToken = (Guid?)null
+            });
+            Assert.Equal(HttpStatusCode.OK, original.StatusCode);
+            var reviewedToken = await GetPageTokenAsync(client, "privacy");
+            interceptor.Arm();
+
+            using var raced = await client.PutAsJsonAsync("/api/v1/admin/site-pages/privacy", new
+            {
+                title = "Chính sách v2",
+                bodyMarkdown = "Nội dung v2",
+                about = (object?)null,
+                concurrencyToken = reviewedToken
+            });
+            await AssertSiteConflictAsync(raced);
+            Assert.True(interceptor.Triggered);
+
+            using var adminRead = await client.GetAsync("/api/v1/admin/site-pages/privacy");
+            using var adminJson = JsonDocument.Parse(await adminRead.Content.ReadAsStringAsync());
+            Assert.Equal("Chính sách v1", adminJson.RootElement.GetProperty("data").GetProperty("title").GetString());
+            using var scope = factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(1, await db.AdminAuditEvents.CountAsync(item => item.Action == "site.page.privacy.update"));
+        }
+    }
+
     private static readonly byte[] ValidPng = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0];
 
     private static async Task<HttpResponseMessage> UploadAsync(HttpClient client, string contentType, byte[] bytes)
@@ -332,6 +503,51 @@ public sealed class SiteContentAndOrderHistoryApiTests
         using var response = await client.GetAsync($"/api/v1/admin/site-pages/{key}");
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         return json.RootElement.GetProperty("data").GetProperty("concurrencyToken").GetGuid();
+    }
+
+    private static Task<HttpResponseMessage> PublishAsync(HttpClient client, string key, Guid token) =>
+        client.PostAsJsonAsync($"/api/v1/admin/site-pages/{key}/publish", new { concurrencyToken = token });
+
+    private static Task<HttpResponseMessage> PutSettingsAsync(HttpClient client, Guid? token, string contactEmail) =>
+        client.PutAsJsonAsync("/api/v1/admin/site-settings", new
+        {
+            contactEmail,
+            brandDescription = "Nexora",
+            facebookUrl = (string?)null,
+            tiktokUrl = (string?)null,
+            supportAvailabilityEnabled = false,
+            supportLabel = (string?)null,
+            madeInVietnamEnabled = true,
+            concurrencyToken = token
+        });
+
+    private static async Task AssertSiteConflictAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("SITE_CONTENT_CONFLICT", json.RootElement.GetProperty("error").GetProperty("code").GetString());
+    }
+
+    private sealed class BumpSitePageTokenBeforeSave : SaveChangesInterceptor
+    {
+        private int _armed;
+        public bool Triggered { get; private set; }
+        public void Arm() => Interlocked.Exchange(ref _armed, 1);
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            var db = (NexoraDbContext)eventData.Context!;
+            var page = db.ChangeTracker.Entries<SitePage>().SingleOrDefault(entry => entry.State == EntityState.Modified);
+            if (page is not null && Interlocked.CompareExchange(ref _armed, 0, 1) == 1)
+            {
+                var replacement = Guid.NewGuid();
+                await db.SitePages.Where(item => item.Id == page.Entity.Id)
+                    .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.ConcurrencyToken, replacement), cancellationToken);
+                Triggered = true;
+            }
+            return result;
+        }
     }
 
     private static async Task<(Guid Id, string Token, string Email)> RegisterAsync(HttpClient client)

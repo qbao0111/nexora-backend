@@ -5,6 +5,7 @@ using Nexora.Business.Site;
 using Nexora.Business.Storage;
 using Nexora.Data.Billing;
 using Nexora.Data.Persistence;
+using Npgsql;
 
 namespace Nexora.Data.Site;
 
@@ -25,13 +26,14 @@ public sealed class SiteContentService(NexoraDbContext db, IStorageProvider stor
     {
         SiteContentRules.ValidateSettings(write);
         var settings = await db.SiteSettings.SingleOrDefaultAsync(item => item.Id == SettingsId, cancellationToken);
+        var creating = settings is null;
         if (settings is null)
         {
-            if (write.ConcurrencyToken.HasValue) Conflict();
+            if (write.ConcurrencyToken.HasValue) throw Conflict();
             settings = new SiteSettings { Id = SettingsId };
             db.SiteSettings.Add(settings);
         }
-        else if (write.ConcurrencyToken != settings.ConcurrencyToken) Conflict();
+        else if (write.ConcurrencyToken != settings.ConcurrencyToken) throw Conflict();
 
         settings.ContactEmail = write.ContactEmail.Trim();
         settings.BrandDescription = write.BrandDescription.Trim();
@@ -43,7 +45,12 @@ public sealed class SiteContentService(NexoraDbContext db, IStorageProvider stor
         settings.UpdatedAt = clock.GetUtcNow();
         settings.ConcurrencyToken = Guid.NewGuid();
         Audit(actorId, "site.settings.update", "site_settings", settings.Id);
-        await db.SaveChangesAsync(cancellationToken);
+        try { await db.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateConcurrencyException) { throw Conflict(); }
+        catch (DbUpdateException exception) when (creating && IsSiteInsertConflict(exception, "PK_site_settings", "site_settings.Id"))
+        {
+            throw Conflict();
+        }
         return Map(settings, true);
     }
 
@@ -61,13 +68,14 @@ public sealed class SiteContentService(NexoraDbContext db, IStorageProvider stor
         SiteContentRules.ValidatePage(key, write);
         await CheckAssetsAsync(write.About, cancellationToken);
         var page = await db.SitePages.SingleOrDefaultAsync(item => item.Key == key, cancellationToken);
+        var creating = page is null;
         if (page is null)
         {
-            if (write.ConcurrencyToken.HasValue) Conflict();
+            if (write.ConcurrencyToken.HasValue) throw Conflict();
             page = new SitePage { Id = Guid.NewGuid(), Key = key };
             db.SitePages.Add(page);
         }
-        else if (write.ConcurrencyToken != page.ConcurrencyToken) Conflict();
+        else if (write.ConcurrencyToken != page.ConcurrencyToken) throw Conflict();
 
         page.DraftTitle = write.Title.Trim();
         page.DraftBodyMarkdown = write.BodyMarkdown?.Trim();
@@ -76,15 +84,21 @@ public sealed class SiteContentService(NexoraDbContext db, IStorageProvider stor
         page.UpdatedAt = clock.GetUtcNow();
         page.ConcurrencyToken = Guid.NewGuid();
         Audit(actorId, $"site.page.{key}.update", "site_page", page.Id);
-        await db.SaveChangesAsync(cancellationToken);
+        try { await db.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateConcurrencyException) { throw Conflict(); }
+        catch (DbUpdateException exception) when (creating && IsSiteInsertConflict(exception, "IX_site_pages_Key", "site_pages.Key"))
+        {
+            throw Conflict();
+        }
         return Map(page, true);
     }
 
-    public async Task<SitePageView> PublishPageAsync(Guid actorId, string key, CancellationToken cancellationToken)
+    public async Task<SitePageView> PublishPageAsync(Guid actorId, string key, Guid expectedConcurrencyToken, CancellationToken cancellationToken)
     {
         CheckKey(key);
         var page = await db.SitePages.SingleOrDefaultAsync(item => item.Key == key, cancellationToken)
             ?? throw new BusinessException("NOT_FOUND", "Trang chưa có bản nháp.", BusinessErrorKind.NotFound);
+        if (expectedConcurrencyToken != page.ConcurrencyToken) throw Conflict();
         if (key == "about" && page.DraftAboutJson is null || key != "about" && page.DraftBodyMarkdown is null)
             throw new BusinessException("SITE_CONTENT_INVALID", "Bản nháp chưa hoàn chỉnh.", BusinessErrorKind.Validation);
         page.PublishedTitle = page.DraftTitle;
@@ -95,7 +109,8 @@ public sealed class SiteContentService(NexoraDbContext db, IStorageProvider stor
         page.UpdatedAt = page.PublishedAt.Value;
         page.ConcurrencyToken = Guid.NewGuid();
         Audit(actorId, $"site.page.{key}.publish", "site_page", page.Id);
-        await db.SaveChangesAsync(cancellationToken);
+        try { await db.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateConcurrencyException) { throw Conflict(); }
         return Map(page, true);
     }
 
@@ -182,7 +197,7 @@ public sealed class SiteContentService(NexoraDbContext db, IStorageProvider stor
         admin ? value.DraftTitle : value.PublishedTitle!, admin ? value.DraftBodyMarkdown : value.PublishedBodyMarkdown,
         JsonSerializer.Deserialize<AboutContent?>(admin ? value.DraftAboutJson ?? "null" : value.PublishedAboutJson ?? "null", JsonOptions),
         admin ? value.DraftEffectiveAt : value.PublishedEffectiveAt,
-        value.PublishedAt.HasValue, value.PublishedAt, value.UpdatedAt,
+        value.PublishedAt.HasValue, value.PublishedAt, admin ? value.UpdatedAt : value.PublishedAt,
         admin ? value.ConcurrencyToken : null);
 
     private void Audit(Guid actorId, string action, string targetType, Guid targetId) => db.AdminAuditEvents.Add(new AdminAuditEvent
@@ -201,6 +216,12 @@ public sealed class SiteContentService(NexoraDbContext db, IStorageProvider stor
     {
         if (!SiteContentRules.IsPageKey(key)) throw new BusinessException("NOT_FOUND", "Trang không tồn tại.", BusinessErrorKind.NotFound);
     }
-    private static void Conflict() => throw new BusinessException("SITE_CONTENT_CONFLICT", "Nội dung đã thay đổi, vui lòng tải lại.", BusinessErrorKind.Conflict);
+    private static bool IsSiteInsertConflict(DbUpdateException exception, string postgresConstraint, string sqliteColumn) =>
+        exception.InnerException is PostgresException postgres && postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+        postgres.ConstraintName == postgresConstraint ||
+        exception.InnerException?.GetType().FullName == "Microsoft.Data.Sqlite.SqliteException" &&
+        exception.InnerException.Message.Contains($"UNIQUE constraint failed: {sqliteColumn}", StringComparison.Ordinal);
+
+    private static BusinessException Conflict() => new("SITE_CONTENT_CONFLICT", "Nội dung đã thay đổi, vui lòng tải lại.", BusinessErrorKind.Conflict);
     private static void InvalidAsset() => throw new BusinessException("SITE_ASSET_INVALID", "Ảnh không hợp lệ hoặc vượt giới hạn 5 MiB.", BusinessErrorKind.Validation);
 }

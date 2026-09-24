@@ -64,8 +64,8 @@ public sealed class SiteContentController(ISiteContentService site) : Controller
         Ok(new ApiResponse<SitePageView>(await site.UpdatePageAsync(User.GetRequiredUserId(), key, request, cancellationToken)));
 
     [HttpPost("admin/site-pages/{key}/publish"), Authorize(Policy = "Admin")]
-    public async Task<ActionResult<ApiResponse<SitePageView>>> PublishPage(string key, CancellationToken cancellationToken) =>
-        Ok(new ApiResponse<SitePageView>(await site.PublishPageAsync(User.GetRequiredUserId(), key, cancellationToken)));
+    public async Task<ActionResult<ApiResponse<SitePageView>>> PublishPage(string key, SitePagePublishRequest request, CancellationToken cancellationToken) =>
+        Ok(new ApiResponse<SitePageView>(await site.PublishPageAsync(User.GetRequiredUserId(), key, request.ConcurrencyToken!.Value, cancellationToken)));
 
     [HttpPost("admin/site-assets"), Authorize(Policy = "Admin"), RequestSizeLimit(SiteContentRules.MaximumAssetBytes + 64 * 1024)]
     public async Task<ActionResult<ApiResponse<SiteAssetView>>> UploadAsset(IFormFile file, CancellationToken cancellationToken)

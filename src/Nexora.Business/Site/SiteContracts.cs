@@ -30,6 +30,8 @@ public sealed record SitePageWrite(
     string Title, string? BodyMarkdown, AboutContent? About,
     DateTimeOffset? EffectiveAt, Guid? ConcurrencyToken);
 
+public sealed record SitePagePublishRequest([param: Required] Guid? ConcurrencyToken);
+
 public sealed record SiteAssetView(Guid Id, string ContentType, long Size, DateTimeOffset CreatedAt);
 
 public interface ISiteContentService
@@ -38,7 +40,7 @@ public interface ISiteContentService
     Task<SiteSettingsView> UpdateSettingsAsync(Guid actorId, SiteSettingsWrite write, CancellationToken cancellationToken);
     Task<SitePageView?> GetPageAsync(string key, bool admin, CancellationToken cancellationToken);
     Task<SitePageView> UpdatePageAsync(Guid actorId, string key, SitePageWrite write, CancellationToken cancellationToken);
-    Task<SitePageView> PublishPageAsync(Guid actorId, string key, CancellationToken cancellationToken);
+    Task<SitePageView> PublishPageAsync(Guid actorId, string key, Guid expectedConcurrencyToken, CancellationToken cancellationToken);
     Task<SiteAssetView> UploadAssetAsync(Guid actorId, Stream content, string contentType, CancellationToken cancellationToken);
     Task<(Stream Content, string ContentType)?> OpenAssetAsync(Guid id, bool admin, CancellationToken cancellationToken);
 }
