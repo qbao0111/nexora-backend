@@ -12,6 +12,7 @@ using Nexora.Data.Persistence;
 
 namespace Nexora.IntegrationTests;
 
+[Collection("PostgreSQL primary resume")]
 public sealed class SiteContentAndOrderHistoryApiTests
 {
     [Fact]
@@ -133,6 +134,58 @@ public sealed class SiteContentAndOrderHistoryApiTests
         using var me = await client.GetAsync("/api/v1/me");
         using var meJson = JsonDocument.Parse(await me.Content.ReadAsStringAsync());
         Assert.Equal(20, meJson.RootElement.GetProperty("data").GetProperty("billing").GetProperty("orders").GetArrayLength());
+    }
+
+    [PostgresFact]
+    public async Task OrdersArchiveCursorTranslatesAndKeepsStableOrderOnPostgres()
+    {
+        var connectionString = Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!;
+        await using var factory = NexoraApiFactory.CreatePostgres(connectionString);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client);
+        var other = await RegisterAsync(client);
+        var createdAt = new DateTimeOffset(2026, 9, 24, 12, 0, 0, TimeSpan.Zero);
+        var lowerId = Guid.Parse("10000000-0000-0000-0000-000000000001");
+        var higherId = Guid.Parse("10000000-0000-0000-0000-000000000002");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var price = await db.PlanPrices.FirstAsync();
+            foreach (var (id, userId) in new[] { (lowerId, owner.Id), (higherId, owner.Id), (Guid.NewGuid(), other.Id) })
+                db.Orders.Add(new Order
+                {
+                    Id = id,
+                    UserId = userId,
+                    PlanPriceId = price.Id,
+                    PlanCodeSnapshot = "basic",
+                    AmountMinor = 49_000,
+                    Currency = "VND",
+                    Status = "fulfilled",
+                    PaymentProvider = "fake",
+                    ProviderTransactionId = $"archive-{id:N}",
+                    CreatedAt = createdAt,
+                    UpdatedAt = createdAt
+                });
+            await db.SaveChangesAsync();
+        }
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.Token);
+        using var first = await client.GetAsync("/api/v1/me/orders?pageSize=1");
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        using var firstJson = JsonDocument.Parse(await first.Content.ReadAsStringAsync());
+        var firstData = firstJson.RootElement.GetProperty("data");
+        Assert.Equal(higherId, firstData.GetProperty("items")[0].GetProperty("id").GetGuid());
+        var cursor = firstData.GetProperty("nextCursor").GetString();
+        Assert.NotNull(cursor);
+
+        using var second = await client.GetAsync($"/api/v1/me/orders?pageSize=1&cursor={Uri.EscapeDataString(cursor!)}");
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        using var secondJson = JsonDocument.Parse(await second.Content.ReadAsStringAsync());
+        var secondData = secondJson.RootElement.GetProperty("data");
+        Assert.Equal(lowerId, secondData.GetProperty("items")[0].GetProperty("id").GetGuid());
+        Assert.Equal(JsonValueKind.Null, secondData.GetProperty("nextCursor").ValueKind);
     }
 
     [Fact]
