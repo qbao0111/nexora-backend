@@ -118,6 +118,7 @@ public sealed partial class AvatarService(
         }
         catch (FileNotFoundException)
         {
+            AvatarObjectMissing(logger, avatarId, storageProvider.GetType().Name);
             return null;
         }
     }
@@ -158,4 +159,7 @@ public sealed partial class AvatarService(
 
     [LoggerMessage(LogLevel.Warning, "Avatar storage cleanup failed: exceptionType={ExceptionType}")]
     private static partial void AvatarCleanupFailed(ILogger logger, string exceptionType);
+
+    [LoggerMessage(LogLevel.Information, "Stored object not found: domain=avatar provider={Provider} avatarId={AvatarId}")]
+    private static partial void AvatarObjectMissing(ILogger logger, Guid avatarId, string provider);
 }

@@ -11,12 +11,18 @@ public static class ProductionSafety
         bool paymentEnabled,
         bool uploadEnabled,
         string? storageProvider = null,
-        string? paymentProvider = null)
+        string? paymentProvider = null,
+        bool isStaging = false,
+        bool localPersistentVolumeConfigured = false)
     {
         var normalizedStorageProvider = storageProvider?.Trim().ToLowerInvariant() ?? "local";
         var normalizedPaymentProvider = paymentProvider?.Trim().ToLowerInvariant() ?? "fake";
         if (normalizedStorageProvider is not ("local" or "r2"))
             throw new InvalidOperationException("Storage:Provider must be local or r2.");
+
+        if ((isProduction || isStaging) && normalizedStorageProvider == "local" && !localPersistentVolumeConfigured)
+            throw new InvalidOperationException(
+                "Staging and Production require durable storage. Set Storage:Provider=r2, or explicitly configure Storage:Local:PersistentVolumeConfigured=true only for a mounted persistent volume.");
 
         if (!isProduction) return;
         var enabled = new List<string>();

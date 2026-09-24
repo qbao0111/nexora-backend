@@ -45,4 +45,39 @@ public sealed class LocalStorageProviderTests
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task OpenReadNormalizesMissingParentDirectoryWithoutExposingLocalPath()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "nexora-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var provider = new LocalStorageProvider(Options.Create(new LocalStorageOptions { RootPath = root }), TimeProvider.System);
+            var exception = await Assert.ThrowsAsync<FileNotFoundException>(() =>
+                provider.OpenReadAsync("2026/09/missing.jpg", CancellationToken.None));
+            Assert.DoesNotContain(root, exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task OpenReadDoesNotDisguiseNonMissingIoFailure()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "nexora-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var provider = new LocalStorageProvider(Options.Create(new LocalStorageOptions { RootPath = root }), TimeProvider.System);
+            Directory.CreateDirectory(Path.Combine(root, "2026", "09"));
+            var exception = await Record.ExceptionAsync(() => provider.OpenReadAsync("2026/09", CancellationToken.None));
+            Assert.NotNull(exception);
+            Assert.IsNotType<FileNotFoundException>(exception);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
 }

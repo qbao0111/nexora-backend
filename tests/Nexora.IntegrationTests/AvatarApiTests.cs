@@ -85,6 +85,33 @@ public sealed class AvatarApiTests
     }
 
     [Fact]
+    public async Task MissingLocalAvatarDirectoryReturnsNotFoundWithoutLeakingStoragePath()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client, "avatar-missing-local@example.test");
+        var avatarId = Guid.NewGuid();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var profile = await db.UserProfiles.SingleOrDefaultAsync(item => item.UserId == owner.UserId);
+            profile ??= new UserProfile { Id = Guid.NewGuid(), UserId = owner.UserId, CreatedAt = DateTimeOffset.UtcNow };
+            if (db.Entry(profile).State == EntityState.Detached) db.UserProfiles.Add(profile);
+            profile.AvatarId = avatarId;
+            profile.AvatarStorageKey = "2026/09/missing.jpg";
+            profile.AvatarContentType = "image/jpeg";
+            await db.SaveChangesAsync();
+        }
+
+        using var response = await client.GetAsync($"/api/v1/avatars/{avatarId}");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("2026/09/missing.jpg", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("nexora-api-tests", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task UploadUsesExistingPerUserRateLimitWithoutLimitingReadOrDelete()
     {
         var storage = new RecordingStorage();
