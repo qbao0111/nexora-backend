@@ -14,9 +14,11 @@ using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Practice;
 
-public sealed partial class PracticeService
+using static InterviewErrors;
+
+public sealed class InterviewPersistence(NexoraDbContext dbContext, TimeProvider timeProvider)
 {
-    private void FinalizeReservation(Entitlement entitlement, UsageEvent reservation, string action, DateTimeOffset now)
+    internal void FinalizeReservation(Entitlement entitlement, UsageEvent reservation, string action, DateTimeOffset now)
     {
         if (entitlement.Reserved < reservation.Quantity) throw InvalidState();
         entitlement.Reserved -= reservation.Quantity;
@@ -37,7 +39,7 @@ public sealed partial class PracticeService
         });
     }
 
-    private void EnqueueResourceChanged(Guid userId, string resourceType, Guid resourceId, string status, DateTimeOffset occurredAt) =>
+    internal void EnqueueResourceChanged(Guid userId, string resourceType, Guid resourceId, string status, DateTimeOffset occurredAt) =>
         dbContext.RealtimeNotifications.Add(new Nexora.Data.Realtime.RealtimeNotification
         {
             UserId = userId,
@@ -47,7 +49,7 @@ public sealed partial class PracticeService
             CreatedAt = occurredAt
         });
 
-    private async Task ValidateOwnedContextAsync(Guid userId, Guid? resumeId, Guid? jobDescriptionId, CancellationToken cancellationToken)
+    internal async Task ValidateOwnedContextAsync(Guid userId, Guid? resumeId, Guid? jobDescriptionId, CancellationToken cancellationToken)
     {
         if (resumeId is not null && !await dbContext.Resumes.AnyAsync(item =>
                 item.Id == resumeId && item.UserId == userId && item.DeletedAt == null && item.Status == PracticeValues.Ready,
@@ -57,7 +59,7 @@ public sealed partial class PracticeService
             throw NotFound();
     }
 
-    private async Task<IdempotencyRecord?> FindIdempotentAsync(Guid userId, string operation, string key, string fingerprint, CancellationToken cancellationToken)
+    internal async Task<IdempotencyRecord?> FindIdempotentAsync(Guid userId, string operation, string key, string fingerprint, CancellationToken cancellationToken)
     {
         var record = await dbContext.IdempotencyRecords.AsNoTracking()
             .SingleOrDefaultAsync(item => item.ActorId == userId && item.Operation == operation && item.Key == key, cancellationToken);
@@ -66,7 +68,7 @@ public sealed partial class PracticeService
         return record;
     }
 
-    private async Task<InterviewSession?> FindInterviewForUpdateAsync(
+    internal async Task<InterviewSession?> FindInterviewForUpdateAsync(
         Guid userId,
         Guid interviewId,
         CancellationToken cancellationToken)
@@ -82,7 +84,7 @@ public sealed partial class PracticeService
             .SingleOrDefaultAsync(item => item.Id == interviewId && item.UserId == userId, cancellationToken);
     }
 
-    private async Task LockUserAsync(Guid userId, CancellationToken cancellationToken)
+    internal async Task LockUserAsync(Guid userId, CancellationToken cancellationToken)
     {
         var user = dbContext.Database.IsNpgsql()
             ? await dbContext.Users.FromSqlInterpolated($"SELECT * FROM asp_net_users WHERE \"Id\" = {userId} FOR UPDATE")
@@ -91,7 +93,7 @@ public sealed partial class PracticeService
         if (user is null) throw NotFound();
     }
 
-    private async Task<Entitlement?> FindActiveEntitlementForUpdateAsync(Guid userId, CancellationToken cancellationToken)
+    internal async Task<Entitlement?> FindActiveEntitlementForUpdateAsync(Guid userId, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
         if (dbContext.Database.IsNpgsql())
@@ -102,7 +104,7 @@ public sealed partial class PracticeService
         return candidates.Where(item => item.StartsAt <= now && item.EndsAt > now).OrderBy(item => item.EndsAt).FirstOrDefault();
     }
 
-    private async Task<Entitlement?> FindEntitlementForUpdateAsync(Guid entitlementId, CancellationToken cancellationToken)
+    internal async Task<Entitlement?> FindEntitlementForUpdateAsync(Guid entitlementId, CancellationToken cancellationToken)
     {
         if (dbContext.Database.IsNpgsql())
             return await dbContext.Entitlements.FromSqlInterpolated($"SELECT * FROM entitlements WHERE \"Id\" = {entitlementId} FOR UPDATE")
@@ -110,23 +112,23 @@ public sealed partial class PracticeService
         return await dbContext.Entitlements.SingleOrDefaultAsync(item => item.Id == entitlementId, cancellationToken);
     }
 
-    private async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
+    internal async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
     {
         if (dbContext.Database.CurrentTransaction is not null) return null;
         return await dbContext.Database.BeginTransactionAsync(dbContext.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
     }
 
-    private static async Task CommitAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction, CancellationToken cancellationToken)
+    internal static async Task CommitAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction, CancellationToken cancellationToken)
     {
         if (transaction is null) return;
         await transaction.CommitAsync(cancellationToken);
     }
 
-    private static int? Available(Entitlement entitlement) => entitlement.InterviewLimit is null ? null : entitlement.InterviewLimit + entitlement.Adjustment - entitlement.Reserved - entitlement.Consumed;
-    private static string RequireKey(string value) => string.IsNullOrWhiteSpace(value) || value.Trim().Length > 128 ? throw Validation("Idempotency-Key hợp lệ là bắt buộc.", "IDEMPOTENCY_KEY_REQUIRED") : value.Trim();
-    private static string Fingerprint(params object?[] values) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(values)))).ToLowerInvariant();
-    private static IdempotencyRecord Idempotency(Guid userId, string operation, string key, string fingerprint, Guid resourceId, DateTimeOffset now) =>
+    internal static int? Available(Entitlement entitlement) => entitlement.InterviewLimit is null ? null : entitlement.InterviewLimit + entitlement.Adjustment - entitlement.Reserved - entitlement.Consumed;
+    internal static string RequireKey(string value) => string.IsNullOrWhiteSpace(value) || value.Trim().Length > 128 ? throw InterviewErrors.Validation("Idempotency-Key hợp lệ là bắt buộc.", "IDEMPOTENCY_KEY_REQUIRED") : value.Trim();
+    internal static string Fingerprint(params object?[] values) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(values)))).ToLowerInvariant();
+    internal static IdempotencyRecord Idempotency(Guid userId, string operation, string key, string fingerprint, Guid resourceId, DateTimeOffset now) =>
         new() { Id = Guid.NewGuid(), ActorId = userId, Operation = operation, Key = key, RequestFingerprint = fingerprint, ResourceId = resourceId, CreatedAt = now };
-    private static OutboxEvent Outbox(string type, string aggregateType, Guid aggregateId, DateTimeOffset now) =>
+    internal static OutboxEvent Outbox(string type, string aggregateType, Guid aggregateId, DateTimeOffset now) =>
         new() { Id = Guid.NewGuid(), Type = type, AggregateType = aggregateType, AggregateId = aggregateId, Payload = JsonSerializer.Serialize(new { aggregateId }), Status = BillingValues.Pending, CreatedAt = now };
 }

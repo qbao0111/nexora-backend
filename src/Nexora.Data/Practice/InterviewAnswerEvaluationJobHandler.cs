@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Nexora.Business.Ai;
 using Nexora.Business.Billing;
 using Nexora.Business.Common;
@@ -9,13 +10,28 @@ using Nexora.Data.Billing;
 using Nexora.Data.Career;
 using Nexora.Data.Persistence;
 
+using static Nexora.Data.Practice.InterviewErrors;
+using static Nexora.Data.Practice.InterviewPersistence;
+using static Nexora.Data.Practice.InterviewQuestionContracts;
+
 namespace Nexora.Data.Practice;
 
-public sealed partial class PracticeService
+public sealed partial class InterviewAnswerEvaluationJobHandler(
+    NexoraDbContext dbContext,
+    InterviewPersistence persistence,
+    InterviewReportCoordinator reportCoordinator,
+    IResumeContextBuilder resumeContextBuilder,
+    IStructuredAiExecutor structuredAiExecutor,
+    IAiProvider aiProvider,
+    TimeProvider timeProvider,
+    ILogger<PracticeService> logger)
 {
+    internal Task ProcessAsync(OutboxEvent job, CancellationToken cancellationToken) => EvaluateInterviewAnswerAsync(job, cancellationToken);
+    private void MarkProcessed(OutboxEvent job) { job.Status = BillingValues.Processed; job.ProcessedAt = timeProvider.GetUtcNow(); }
+
     private async Task EvaluateInterviewAnswerAsync(OutboxEvent job, CancellationToken cancellationToken)
     {
-        await using (var transaction = await BeginTransactionAsync(cancellationToken))
+        await using (var transaction = await persistence.BeginTransactionAsync(cancellationToken))
         {
             var answer = await dbContext.InterviewAnswers
                 .SingleOrDefaultAsync(item => item.Id == job.AggregateId, cancellationToken);
@@ -51,7 +67,7 @@ public sealed partial class PracticeService
                 : null;
             var hasUsableResumeContext = HasUsableResumeContext(session.Resume);
             var profile = hasUsableResumeContext
-                ? TryReadResumeProfile(session.Resume?.StructuredProfile)
+                ? ResumeProfileProcessor.TryReadResumeProfile(session.Resume?.StructuredProfile)
                 : null;
             var answerContext = resumeContextBuilder.BuildAnswerEvaluationContext(
                 session.Role,
@@ -85,7 +101,7 @@ public sealed partial class PracticeService
                     CandidateAnswer: snapshot.Content),
                 cancellationToken);
 
-            await using var transaction = await BeginTransactionAsync(cancellationToken);
+            await using var transaction = await persistence.BeginTransactionAsync(cancellationToken);
             var answer = await dbContext.InterviewAnswers.SingleAsync(item => item.Id == snapshot.Id, cancellationToken);
             if (answer.EvaluationStatus != InterviewAnswerEvaluationStates.Processing)
             {
@@ -98,9 +114,9 @@ public sealed partial class PracticeService
             answer.EvaluationStatus = InterviewAnswerEvaluationStates.Ready;
             answer.EvaluationCompletedAt = timeProvider.GetUtcNow();
             answer.EvaluationErrorCode = null;
-            EnqueueResourceChanged(snapshot.UserId, "interview", snapshot.InterviewSessionId, answer.EvaluationStatus, answer.EvaluationCompletedAt.Value);
+            persistence.EnqueueResourceChanged(snapshot.UserId, "interview", snapshot.InterviewSessionId, answer.EvaluationStatus, answer.EvaluationCompletedAt.Value);
             await dbContext.SaveChangesAsync(cancellationToken);
-            await TryQueueReportIfReadyAsync(snapshot.InterviewSessionId, answer.EvaluationCompletedAt.Value, cancellationToken);
+            await reportCoordinator.TryQueueReportIfReadyAsync(snapshot.InterviewSessionId, answer.EvaluationCompletedAt.Value, cancellationToken);
             MarkProcessed(job);
             await dbContext.SaveChangesAsync(cancellationToken);
             await CommitAsync(transaction, cancellationToken);
@@ -117,7 +133,7 @@ public sealed partial class PracticeService
         string errorCode,
         CancellationToken cancellationToken)
     {
-        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        await using var transaction = await persistence.BeginTransactionAsync(cancellationToken);
         var answer = await dbContext.InterviewAnswers.SingleOrDefaultAsync(item => item.Id == snapshot.Id, cancellationToken);
         if (answer is not null && answer.EvaluationStatus != InterviewAnswerEvaluationStates.Ready)
         {
@@ -125,7 +141,7 @@ public sealed partial class PracticeService
             answer.Evaluation = null;
             answer.EvaluationErrorCode = errorCode;
             answer.EvaluationCompletedAt = timeProvider.GetUtcNow();
-            EnqueueResourceChanged(answer.UserId, "interview", answer.InterviewSessionId, answer.EvaluationStatus, answer.EvaluationCompletedAt.Value);
+            persistence.EnqueueResourceChanged(answer.UserId, "interview", answer.InterviewSessionId, answer.EvaluationStatus, answer.EvaluationCompletedAt.Value);
         }
         job.Status = BillingValues.Failed;
         job.ProcessedAt = timeProvider.GetUtcNow();
@@ -149,4 +165,30 @@ public sealed partial class PracticeService
         _ => "INTERNAL_PROCESSING_FAILED"
     };
 
+    internal async Task FailAsync(OutboxEvent job, Exception exception, CancellationToken cancellationToken)
+    {
+        dbContext.ChangeTracker.Clear();
+        await using var transaction = await persistence.BeginTransactionAsync(cancellationToken);
+        var current = await dbContext.OutboxEvents.SingleAsync(item => item.Id == job.Id, cancellationToken);
+        current.Status = PracticeValues.Failed;
+        current.ProcessedAt = timeProvider.GetUtcNow();
+        {
+            var answer = await dbContext.InterviewAnswers.SingleOrDefaultAsync(item => item.Id == current.AggregateId, cancellationToken);
+            if (answer is not null && answer.EvaluationStatus != InterviewAnswerEvaluationStates.Ready)
+            {
+                answer.EvaluationStatus = InterviewAnswerEvaluationStates.Failed;
+                answer.Evaluation = null;
+                answer.EvaluationErrorCode = EvaluationErrorCode(exception);
+                answer.EvaluationCompletedAt = current.ProcessedAt;
+                persistence.EnqueueResourceChanged(answer.UserId, "interview", answer.InterviewSessionId, answer.EvaluationStatus, current.ProcessedAt.Value);
+            }
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await CommitAsync(transaction, cancellationToken);
+    }
+
+    [LoggerMessage(LogLevel.Warning,
+        "Interview evaluation failed. purpose={Purpose} model={ModelVersion} answerId={AnswerId} interviewId={InterviewId} failureKind={FailureKind} requestId={RequestId}")]
+    private static partial void EvaluationFailed(
+        ILogger logger, string purpose, string modelVersion, Guid answerId, Guid interviewId, string failureKind, string requestId);
 }

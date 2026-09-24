@@ -8,9 +8,18 @@ using Nexora.Data.Billing;
 using Nexora.Data.Career;
 using Nexora.Data.Persistence;
 
+using static Nexora.Data.Practice.InterviewErrors;
+using static Nexora.Data.Practice.InterviewPersistence;
+using static Nexora.Data.Practice.InterviewQuestionContracts;
+using static Nexora.Data.Practice.InterviewViewAssembler;
+
 namespace Nexora.Data.Practice;
 
-public sealed partial class PracticeService
+public sealed class InterviewAnswerService(
+    NexoraDbContext dbContext,
+    InterviewPersistence persistence,
+    InterviewReadState readState,
+    TimeProvider timeProvider) : IInterviewAnswerService
 {
     public async Task<AnswerResult> SubmitAnswerAsync(
         Guid userId, Guid interviewId, Guid questionId, string content, int? durationSeconds, string idempotencyKey, CancellationToken cancellationToken)
@@ -20,16 +29,16 @@ public sealed partial class PracticeService
             throw Validation("Câu trả lời không hợp lệ.");
         var key = RequireKey(idempotencyKey);
         var fingerprint = Fingerprint(interviewId, questionId, normalizedContent, durationSeconds);
-        var prior = await FindIdempotentAsync(userId, "interview.answer", key, fingerprint, cancellationToken);
+        var prior = await persistence.FindIdempotentAsync(userId, "interview.answer", key, fingerprint, cancellationToken);
         if (prior is not null) return await MapExistingAnswerAsync(userId, interviewId, prior.ResourceId, cancellationToken);
-        await using var transaction = await BeginTransactionAsync(cancellationToken);
-        prior = await FindIdempotentAsync(userId, "interview.answer", key, fingerprint, cancellationToken);
+        await using var transaction = await persistence.BeginTransactionAsync(cancellationToken);
+        prior = await persistence.FindIdempotentAsync(userId, "interview.answer", key, fingerprint, cancellationToken);
         if (prior is not null) return await MapExistingAnswerAsync(userId, interviewId, prior.ResourceId, cancellationToken);
-        var session = await FindInterviewForUpdateAsync(userId, interviewId, cancellationToken) ?? throw NotFound();
+        var session = await persistence.FindInterviewForUpdateAsync(userId, interviewId, cancellationToken) ?? throw NotFound();
         // A concurrent replay can wait on the session lock after its initial
         // idempotency read. Re-check after the lock so it replays the committed
         // answer instead of colliding with the official-answer unique key.
-        prior = await FindIdempotentAsync(userId, "interview.answer", key, fingerprint, cancellationToken);
+        prior = await persistence.FindIdempotentAsync(userId, "interview.answer", key, fingerprint, cancellationToken);
         if (prior is not null)
         {
             await CommitAsync(transaction, cancellationToken);
@@ -40,7 +49,7 @@ public sealed partial class PracticeService
         ValidateQuestionContracts(session.Questions);
         if (session.Status != PracticeValues.Active) throw InvalidState();
         var question = session.Questions.SingleOrDefault(item => item.Id == questionId) ?? throw NotFound();
-        var questionLimit = await GetQuestionLimitAsync(userId, cancellationToken);
+        var questionLimit = await readState.GetQuestionLimitAsync(userId, cancellationToken);
         if (question.ReleasedAt is null || question.Sequence > questionLimit)
             throw InvalidState();
         if (session.Answers.Any(item => item.QuestionId == questionId))
@@ -72,7 +81,7 @@ public sealed partial class PracticeService
             nextQuestion.ReleasedAt = now;
         }
         else if (session.Questions.Max(item => item.Sequence) < questionLimit &&
-                 !await HasPendingQuestionPlanJobAsync(session.Id, cancellationToken))
+                 !await readState.HasPendingQuestionPlanJobAsync(session.Id, cancellationToken))
         {
             dbContext.Add(Outbox("InterviewQuestionPlanRequested", "interview", session.Id, now));
         }
@@ -90,11 +99,11 @@ public sealed partial class PracticeService
         {
             if (transaction is not null) await transaction.RollbackAsync(cancellationToken);
             dbContext.ChangeTracker.Clear();
-            prior = await FindIdempotentAsync(userId, "interview.answer", key, fingerprint, cancellationToken);
+            prior = await persistence.FindIdempotentAsync(userId, "interview.answer", key, fingerprint, cancellationToken);
             if (prior is not null) return await MapExistingAnswerAsync(userId, interviewId, prior.ResourceId, cancellationToken);
             throw Conflict("CONCURRENT_SUBMISSION", "Câu trả lời đang được xử lý hoặc đã được nộp.");
         }
-        var continuation = await BuildContinuationAsync(userId, session, cancellationToken);
+        var continuation = await readState.BuildContinuationAsync(userId, session, cancellationToken);
         var isComplete = nextQuestion is null && continuation?.State == InterviewContinuationValues.MaxQuestionsReached;
         return new AnswerResult(MapAnswer(answer, session.Status), nextQuestion is null ? null : MapQuestion(nextQuestion), isComplete, continuation);
     }
@@ -105,13 +114,13 @@ public sealed partial class PracticeService
             .SingleOrDefaultAsync(item => item.Id == interviewId && item.UserId == userId, cancellationToken) ?? throw NotFound();
         ValidateQuestionContracts(session.Questions);
         var answer = session.Answers.Single(item => item.Id == answerId);
-        var questionLimit = await GetQuestionLimitAsync(userId, cancellationToken);
+        var questionLimit = await readState.GetQuestionLimitAsync(userId, cancellationToken);
         var next = session.Questions
             .OrderBy(item => item.Sequence)
             .FirstOrDefault(item => item.Sequence <= questionLimit &&
                 item.ReleasedAt is not null &&
                 session.Answers.All(existing => existing.QuestionId != item.Id));
-        var continuation = await BuildContinuationAsync(userId, session, cancellationToken);
+        var continuation = await readState.BuildContinuationAsync(userId, session, cancellationToken);
         var isComplete = next is null && continuation?.State == InterviewContinuationValues.MaxQuestionsReached;
         return new AnswerResult(MapAnswer(answer, session.Status), next is null ? null : MapQuestion(next), isComplete, continuation);
     }
