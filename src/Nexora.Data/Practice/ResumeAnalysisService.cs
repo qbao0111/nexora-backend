@@ -1,3 +1,6 @@
+using System.Data;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Nexora.Business.Ai;
@@ -11,8 +14,75 @@ using Nexora.Data.Persistence;
 
 namespace Nexora.Data.Practice;
 
-public sealed partial class PracticeService
+public sealed class ResumeAnalysisService(
+    NexoraDbContext dbContext,
+    IAiProvider aiProvider,
+    IFeatureEntitlementService featureEntitlementService,
+    TimeProvider timeProvider) : IResumeAnalysisService
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private string CurrentModelVersion => string.IsNullOrWhiteSpace(aiProvider.ModelVersion)
+        ? throw new InvalidOperationException("The configured AI provider must expose a model version.")
+        : aiProvider.ModelVersion.Trim();
+
+    private static BusinessException Validation(string message, string code = "VALIDATION_ERROR") => new(code, message, BusinessErrorKind.Validation);
+    private static BusinessException NotFound() => new("NOT_FOUND", "Không tìm thấy tài nguyên.", BusinessErrorKind.NotFound);
+    private static BusinessException CareerGoalNotFound() => new("CAREER_GOAL_NOT_FOUND", "Không tìm thấy career goal.", BusinessErrorKind.NotFound);
+    private static BusinessException Conflict(string code, string message) => new(code, message, BusinessErrorKind.Conflict);
+    private static BusinessException InvalidAiOutput() => new("AI_OUTPUT_INVALID", "AI trả về dữ liệu không hợp lệ.", BusinessErrorKind.ExternalFailure);
+    private static string RequireKey(string value) => string.IsNullOrWhiteSpace(value) || value.Trim().Length > 128 ? throw Validation("Idempotency-Key hợp lệ là bắt buộc.", "IDEMPOTENCY_KEY_REQUIRED") : value.Trim();
+    private static string Fingerprint(params object?[] values) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(values)))).ToLowerInvariant();
+    private static IdempotencyRecord Idempotency(Guid userId, string operation, string key, string fingerprint, Guid resourceId, DateTimeOffset now) =>
+        new() { Id = Guid.NewGuid(), ActorId = userId, Operation = operation, Key = key, RequestFingerprint = fingerprint, ResourceId = resourceId, CreatedAt = now };
+    private static OutboxEvent Outbox(string type, string aggregateType, Guid aggregateId, DateTimeOffset now) =>
+        new() { Id = Guid.NewGuid(), Type = type, AggregateType = aggregateType, AggregateId = aggregateId, Payload = JsonSerializer.Serialize(new { aggregateId }), Status = BillingValues.Pending, CreatedAt = now };
+
+    internal static ResumeAnalysisView MapAnalysis(ResumeAnalysis analysis) => new(
+        analysis.Id, analysis.Status, analysis.Result is null ? null : JsonSerializer.Deserialize<JsonElement>(analysis.Result),
+        analysis.CreatedAt, analysis.CompletedAt, analysis.ErrorCode, analysis.Mode,
+        ParseAnalysisContext(analysis.ContextJson, analysis.Mode), analysis.ResumeVersion, analysis.JobDescriptionVersion,
+        analysis.ModelVersion, analysis.PromptVersion, analysis.SchemaVersion, analysis.RubricVersion,
+        analysis.ProfileModelVersion, analysis.ProfilePromptVersion, analysis.ProfileSchemaVersion);
+
+    private async Task<IdempotencyRecord?> FindIdempotentAsync(Guid userId, string operation, string key, string fingerprint, CancellationToken cancellationToken)
+    {
+        var record = await dbContext.IdempotencyRecords.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.ActorId == userId && item.Operation == operation && item.Key == key, cancellationToken);
+        if (record is not null && record.RequestFingerprint != fingerprint)
+            throw new BusinessException("IDEMPOTENCY_CONFLICT", "Idempotency-Key đã được dùng với dữ liệu khác.", BusinessErrorKind.Conflict);
+        return record;
+    }
+
+    private async Task LockUserAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = dbContext.Database.IsNpgsql()
+            ? await dbContext.Users.FromSqlInterpolated($"SELECT * FROM asp_net_users WHERE \"Id\" = {userId} FOR UPDATE")
+                .SingleOrDefaultAsync(cancellationToken)
+            : await dbContext.Users.SingleOrDefaultAsync(item => item.Id == userId, cancellationToken);
+        if (user is null) throw NotFound();
+    }
+
+    private async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is not null) return null;
+        return await dbContext.Database.BeginTransactionAsync(dbContext.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
+    }
+
+    private static async Task CommitAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction, CancellationToken cancellationToken)
+    {
+        if (transaction is null) return;
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private static (int Page, int PageSize) NormalizePaging(int page, int pageSize)
+    {
+        if (page < 1 || pageSize is < 1 or > 100)
+            throw Validation("Tham số phân trang không hợp lệ.", "INVALID_PAGINATION");
+        return (page, pageSize);
+    }
+
+    private static long PagingSkip(int page, int pageSize) => (long)(page - 1) * pageSize;
+
     public async Task<ResumeAnalysisView> StartResumeAnalysisAsync(
         Guid userId,
         StartResumeAnalysisCommand command,
@@ -184,7 +254,7 @@ public sealed partial class PracticeService
         return new(items, paging.Page, paging.PageSize, totalCount, skip + items.Length < totalCount);
     }
 
-    private static ResumeAnalysisContextView? ParseAnalysisContext(string? value, string mode)
+    internal static ResumeAnalysisContextView? ParseAnalysisContext(string? value, string mode)
     {
         if (!string.IsNullOrWhiteSpace(value))
         {
@@ -205,14 +275,14 @@ public sealed partial class PracticeService
             : new ResumeAnalysisContextView(mode, null, null, null);
     }
 
-    private static AiOperationDefinition<ResumeAnalysisOutput> GetResumeAnalysisOperation(ResumeAnalysisMode mode) => mode switch
+    internal static AiOperationDefinition<ResumeAnalysisOutput> GetResumeAnalysisOperation(ResumeAnalysisMode mode) => mode switch
     {
         ResumeAnalysisMode.JobTargeted => AiOperations.ResumeAnalysis,
         ResumeAnalysisMode.FieldBenchmark => AiOperations.ResumeAnalysisFieldBenchmark,
         _ => throw new ArgumentOutOfRangeException(nameof(mode))
     };
 
-    private static ResumeAnalysisContextView ReadAnalysisContext(ResumeAnalysis analysis)
+    internal static ResumeAnalysisContextView ReadAnalysisContext(ResumeAnalysis analysis)
     {
         ResumeAnalysisContextView? context;
         if (string.IsNullOrWhiteSpace(analysis.ContextJson))
