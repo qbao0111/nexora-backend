@@ -160,6 +160,109 @@ public sealed class AuthPostgresApiTests
         Assert.Equal(emailB, await ReadSessionEmailAsync(refreshB));
     }
 
+    [PostgresFact]
+    public async Task LogoutOfRotatedCookieRevokesAllDescendantsButNotAnotherDevice()
+    {
+        await using var factory = NexoraApiFactory.CreatePostgres(Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient(handleCookies: false);
+        var email = $"postgres-logout-chain-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        using var otherLogin = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        var tokenA = ReadRefreshCookie(login);
+        var otherDeviceToken = ReadRefreshCookie(otherLogin);
+        var accessToken = await ReadAccessTokenAsync(login);
+
+        using var refreshA = await RefreshAsync(client, tokenA);
+        Assert.Equal(HttpStatusCode.OK, refreshA.StatusCode);
+        var tokenB = ReadRefreshCookie(refreshA);
+        using var refreshB = await RefreshAsync(client, tokenB);
+        Assert.Equal(HttpStatusCode.OK, refreshB.StatusCode);
+        var tokenC = ReadRefreshCookie(refreshB);
+
+        using var logout = await LogoutAsync(client, tokenA, accessToken);
+        Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+        using var repeatLogout = await LogoutAsync(client, tokenA, accessToken);
+        Assert.Equal(HttpStatusCode.NoContent, repeatLogout.StatusCode);
+        using var revokedB = await RefreshAsync(client, tokenB);
+        using var revokedC = await RefreshAsync(client, tokenC);
+        await AssertInvalidRefreshAsync(revokedB);
+        await AssertInvalidRefreshAsync(revokedC);
+        using var otherDevice = await RefreshAsync(client, otherDeviceToken);
+        Assert.Equal(HttpStatusCode.OK, otherDevice.StatusCode);
+    }
+
+    [PostgresFact]
+    public async Task LogoutBeforeRefreshRejectsPresentedToken()
+    {
+        await using var factory = NexoraApiFactory.CreatePostgres(Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient(handleCookies: false);
+        var email = $"postgres-logout-first-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        var tokenA = ReadRefreshCookie(login);
+
+        using var logout = await LogoutAsync(client, tokenA, await ReadAccessTokenAsync(login));
+        Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+        using var rejected = await RefreshAsync(client, tokenA);
+        await AssertInvalidRefreshAsync(rejected);
+    }
+
+    [PostgresFact]
+    public async Task ConcurrentRefreshAndLogoutLeaveNoUsableReplacement()
+    {
+        await using var factory = NexoraApiFactory.CreatePostgres(Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!);
+        factory.InitializeDatabase();
+        using var setupClient = factory.CreateHttpsClient(handleCookies: false);
+        var email = $"postgres-logout-race-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(setupClient, email);
+        using var login = await setupClient.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        var tokenA = ReadRefreshCookie(login);
+        var accessToken = await ReadAccessTokenAsync(login);
+        using var refreshClient = factory.CreateHttpsClient(handleCookies: false);
+        using var logoutClient = factory.CreateHttpsClient(handleCookies: false);
+
+        var refreshTask = RefreshAsync(refreshClient, tokenA);
+        var logoutTask = LogoutAsync(logoutClient, tokenA, accessToken);
+        using var refresh = await refreshTask;
+        using var logout = await logoutTask;
+        Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+        Assert.True(refresh.StatusCode is HttpStatusCode.OK or HttpStatusCode.Unauthorized);
+        if (refresh.StatusCode == HttpStatusCode.OK)
+        {
+            using var replacement = await RefreshAsync(setupClient, ReadRefreshCookie(refresh));
+            await AssertInvalidRefreshAsync(replacement);
+        }
+        else
+        {
+            await AssertInvalidRefreshAsync(refresh);
+        }
+    }
+
+    private static async Task<HttpResponseMessage> RefreshAsync(HttpClient client, string token)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/refresh");
+        request.Headers.Add("Cookie", $"nexora.refresh={token}");
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> LogoutAsync(HttpClient client, string token, string accessToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/logout");
+        request.Headers.Add("Cookie", $"nexora.refresh={token}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        return await client.SendAsync(request);
+    }
+
+    private static async Task AssertInvalidRefreshAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("INVALID_REFRESH_TOKEN", body.RootElement.GetProperty("error").GetProperty("code").GetString());
+    }
+
     private static async Task RegisterAndVerifyAsync(HttpClient client, string email)
     {
         using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password = "Strong!Pass123" });
