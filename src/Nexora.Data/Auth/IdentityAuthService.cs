@@ -188,16 +188,17 @@ public sealed partial class IdentityAuthService(
 
     public async Task<AuthSession> RefreshAsync(string refreshToken, CancellationToken cancellationToken)
     {
-        var now = timeProvider.GetUtcNow();
         var hash = HashToken(refreshToken);
-        var existing = await dbContext.RefreshTokens.Include(token => token.User)
-            .SingleOrDefaultAsync(token => token.TokenHash == hash, cancellationToken);
-        if (existing is null || existing.ExpiresAt <= now || !existing.User.IsActive || !existing.User.EmailConfirmed || existing.User.DeletionRequestedAt is not null || existing.User.DeletedAt is not null)
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+        var existing = await FindRefreshTokenForUpdateAsync(hash, cancellationToken);
+        var now = timeProvider.GetUtcNow();
+        if (existing is null || existing.RevokedAt is not null || existing.ExpiresAt <= now)
+            throw InvalidRefreshToken();
+        var user = await dbContext.Users.SingleOrDefaultAsync(item => item.Id == existing.UserId, cancellationToken);
+        if (user is null || !user.IsActive || !user.EmailConfirmed || user.DeletionRequestedAt is not null || user.DeletedAt is not null)
             throw InvalidRefreshToken();
 
         var replacement = CreateRefreshToken(existing.UserId, now);
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        if (existing.RevokedAt is not null) throw InvalidRefreshToken();
         existing.RevokedAt = now;
         existing.ReplacedByTokenHash = replacement.Entity.TokenHash;
         existing.ConcurrencyToken = Guid.NewGuid();
@@ -211,12 +212,37 @@ public sealed partial class IdentityAuthService(
             throw InvalidRefreshToken();
         }
         await transaction.CommitAsync(cancellationToken);
-        return await CreateSessionResponseAsync(existing.User, replacement.RawToken, replacement.Entity.ExpiresAt, cancellationToken);
+        return await CreateSessionResponseAsync(user, replacement.RawToken, replacement.Entity.ExpiresAt, cancellationToken);
     }
 
-    public Task RevokeRefreshTokenAsync(string refreshToken, CancellationToken cancellationToken) =>
-        dbContext.RefreshTokens.Where(token => token.TokenHash == HashToken(refreshToken) && token.RevokedAt == null)
-            .ExecuteUpdateAsync(setters => setters.SetProperty(token => token.RevokedAt, timeProvider.GetUtcNow()), cancellationToken);
+    public async Task RevokeRefreshTokenAsync(string refreshToken, CancellationToken cancellationToken)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+        var hash = HashToken(refreshToken);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        Guid? userId = null;
+        while (seen.Add(hash))
+        {
+            var token = await FindRefreshTokenForUpdateAsync(hash, cancellationToken);
+            if (token is null || (userId is not null && token.UserId != userId)) break;
+            userId = token.UserId;
+            if (token.RevokedAt is null)
+            {
+                token.RevokedAt = timeProvider.GetUtcNow();
+                token.ConcurrencyToken = Guid.NewGuid();
+            }
+            if (token.ReplacedByTokenHash is null) break;
+            hash = token.ReplacedByTokenHash;
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private Task<RefreshToken?> FindRefreshTokenForUpdateAsync(string hash, CancellationToken cancellationToken) =>
+        dbContext.Database.IsNpgsql()
+            ? dbContext.RefreshTokens.FromSqlInterpolated($"SELECT * FROM refresh_tokens WHERE \"TokenHash\" = {hash} FOR UPDATE")
+                .SingleOrDefaultAsync(cancellationToken)
+            : dbContext.RefreshTokens.SingleOrDefaultAsync(token => token.TokenHash == hash, cancellationToken);
 
     public async Task RevokeAllSessionsAsync(Guid userId, CancellationToken cancellationToken)
     {
