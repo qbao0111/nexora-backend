@@ -617,7 +617,7 @@ public sealed partial class AdminService(
             .ThenBy(item => item.EndsAt).FirstOrDefault();
         var roles = await userManager.GetRolesAsync(user);
         var orders = await dbContext.Orders.AsNoTracking().Where(item => item.UserId == userId)
-            .Select(item => new OrderView(item.Id, item.PlanCodeSnapshot, item.AmountMinor, item.Currency, item.Status, item.CreatedAt))
+            .Select(item => new OrderView(item.Id, item.PlanCodeSnapshot, item.AmountMinor, item.Currency, item.Status, item.CreatedAt, item.ExpiresAt))
             .ToArrayAsync(cancellationToken);
         var features = Array.Empty<EntitlementFeatureView>();
         if (entitlement is not null)

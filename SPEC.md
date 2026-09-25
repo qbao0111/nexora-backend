@@ -179,7 +179,7 @@ Plans/prices are server-owned and snapshotted on orders. Before DEC-02, use `IPa
 pending order → verified simulated webhook → paid → entitlement fulfillment
 ```
 
-Duplicate webhook events produce one payment record and one fulfillment. A real Vietnamese provider is deferred.
+New provider checkouts receive a server-owned 15-minute deadline. The worker transitions due `pending` orders to `expired` idempotently; verified provider event timestamps can reconcile a delayed payment that occurred before the deadline, while a post-deadline payment does not grant entitlement. Duplicate webhook events produce one payment record and one fulfillment. A real Vietnamese provider is deferred.
 
 Interview quota uses immutable actions:
 

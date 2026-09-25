@@ -152,6 +152,120 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
     }
 
     [Fact]
+    public async Task NewCheckoutHasServerOwnedExpirationAndExpirationIsIdempotent()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var price = await SeedPlanPriceAsync(interviewQuota: 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var checkout = await CreateCheckoutAsync(client, price.Id, "checkout-expiration");
+        var expiresAt = Assert.IsType<DateTimeOffset>(checkout.ExpiresAt);
+        var now = DateTimeOffset.UtcNow;
+
+        Assert.InRange(expiresAt, now.AddMinutes(14), now.AddMinutes(16));
+        using (var status = await client.GetAsync($"/api/v1/checkout-sessions/{checkout.OrderId}"))
+        {
+            Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+            using var body = JsonDocument.Parse(await status.Content.ReadAsStringAsync());
+            Assert.Equal(expiresAt, body.RootElement.GetProperty("data").GetProperty("expiresAt").GetDateTimeOffset());
+            Assert.Equal(BillingValues.Pending, body.RootElement.GetProperty("data").GetProperty("status").GetString());
+        }
+
+        Assert.Equal(0, await WithBillingServiceAsync(service => service.ExpirePendingPaymentsAsync(CancellationToken.None)));
+        var expiredAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+        await SetOrderAsync(checkout.OrderId, order => order.ExpiresAt = expiredAt);
+
+        Assert.Equal(1, await WithBillingServiceAsync(service => service.ExpirePendingPaymentsAsync(CancellationToken.None)));
+        Assert.Equal(0, await WithBillingServiceAsync(service => service.ExpirePendingPaymentsAsync(CancellationToken.None)));
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var order = await db.Orders.SingleAsync(item => item.Id == checkout.OrderId);
+        Assert.Equal(BillingValues.Expired, order.Status);
+        Assert.Empty(await db.Subscriptions.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task ExpirationDoesNotChangeFulfilledFailedOrLegacyPendingOrders()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var price = await SeedPlanPriceAsync(interviewQuota: 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var fulfilled = await CreateCheckoutAsync(client, price.Id, "checkout-expiration-fulfilled");
+        var cancelled = await CreateCheckoutAsync(client, price.Id, "checkout-expiration-cancelled");
+        var legacy = await CreateCheckoutAsync(client, price.Id, "checkout-expiration-legacy");
+
+        await SetOrdersAsync(orderIds: [fulfilled.OrderId, cancelled.OrderId, legacy.OrderId], order =>
+        {
+            order.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+            if (order.Id == fulfilled.OrderId) order.Status = BillingValues.Fulfilled;
+            if (order.Id == cancelled.OrderId) order.Status = BillingValues.Failed;
+            if (order.Id == legacy.OrderId) order.ExpiresAt = null;
+        });
+
+        Assert.Equal(0, await WithBillingServiceAsync(service => service.ExpirePendingPaymentsAsync(CancellationToken.None)));
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(BillingValues.Fulfilled, (await db.Orders.SingleAsync(item => item.Id == fulfilled.OrderId)).Status);
+        Assert.Equal(BillingValues.Failed, (await db.Orders.SingleAsync(item => item.Id == cancelled.OrderId)).Status);
+        var legacyOrder = await db.Orders.SingleAsync(item => item.Id == legacy.OrderId);
+        Assert.Equal(BillingValues.Pending, legacyOrder.Status);
+        Assert.Null(legacyOrder.ExpiresAt);
+    }
+
+    [Fact]
+    public async Task WebhookBeforeDeadlineCanFulfillExpiredOrderExactlyOnce()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var price = await SeedPlanPriceAsync(interviewQuota: 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var checkout = await CreateCheckoutAsync(client, price.Id, "checkout-expiration-race");
+        var deadline = DateTimeOffset.UtcNow.AddMinutes(-1);
+        await SetOrderAsync(checkout.OrderId, order => order.ExpiresAt = deadline);
+
+        Assert.Equal(1, await WithBillingServiceAsync(service => service.ExpirePendingPaymentsAsync(CancellationToken.None)));
+        var webhook = await CreateWebhookAsync(checkout.OrderId, "evt-expiration-race", occurredAt: deadline.AddSeconds(-1));
+        using var first = await SendWebhookAsync(client, webhook);
+        using var duplicate = await SendWebhookAsync(client, webhook);
+        Assert.Equal(HttpStatusCode.NoContent, first.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, duplicate.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(BillingValues.Fulfilled, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
+        Assert.Equal(1, await db.PaymentEvents.CountAsync(item => item.OrderId == checkout.OrderId));
+        Assert.Equal(1, await db.Subscriptions.CountAsync(item => item.OrderId == checkout.OrderId));
+        Assert.Equal(1, await db.Entitlements.CountAsync(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free"));
+    }
+
+    [Fact]
+    public async Task WebhookAfterDeadlineCannotFulfillExpiredOrder()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var price = await SeedPlanPriceAsync(interviewQuota: 1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var checkout = await CreateCheckoutAsync(client, price.Id, "checkout-expiration-late");
+        var deadline = DateTimeOffset.UtcNow.AddMinutes(-1);
+        await SetOrderAsync(checkout.OrderId, order => order.ExpiresAt = deadline);
+
+        Assert.Equal(1, await WithBillingServiceAsync(service => service.ExpirePendingPaymentsAsync(CancellationToken.None)));
+        using var response = await SendWebhookAsync(client,
+            await CreateWebhookAsync(checkout.OrderId, "evt-expiration-late", occurredAt: deadline.AddSeconds(1)));
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(BillingValues.Expired, (await db.Orders.SingleAsync(item => item.Id == checkout.OrderId)).Status);
+        Assert.Equal(1, await db.PaymentEvents.CountAsync(item => item.OrderId == checkout.OrderId));
+        Assert.Empty(await db.Subscriptions.Where(item => item.OrderId == checkout.OrderId).ToListAsync());
+        Assert.Empty(await db.Entitlements.Where(item => item.UserId == account.UserId && item.PlanCodeSnapshot != "free").ToListAsync());
+    }
+
+    [Fact]
     public async Task ConcurrentQuotaReserveAllowsOneAndLedgerTransitionsRemainImmutableT03()
     {
         using var client = _factory.CreateHttpsClient();
@@ -222,10 +336,15 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var data = json.RootElement.GetProperty("data");
-        return new CheckoutTestResponse(data.GetProperty("orderId").GetGuid(), data.GetProperty("amountMinor").GetInt64());
+        return new CheckoutTestResponse(
+            data.GetProperty("orderId").GetGuid(),
+            data.GetProperty("amountMinor").GetInt64(),
+            data.TryGetProperty("expiresAt", out var expiresAt) && expiresAt.ValueKind != JsonValueKind.Null
+                ? expiresAt.GetDateTimeOffset()
+                : null);
     }
 
-    private async Task<Webhook> CreateWebhookAsync(Guid orderId, string eventId, long amountDelta = 0)
+    private async Task<Webhook> CreateWebhookAsync(Guid orderId, string eventId, long amountDelta = 0, DateTimeOffset? occurredAt = null)
     {
         using var scope = _factory.Services.CreateScope();
         var order = await scope.ServiceProvider.GetRequiredService<NexoraDbContext>().Orders.AsNoTracking().SingleAsync(item => item.Id == orderId);
@@ -237,7 +356,7 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
             amountMinor = order.AmountMinor + amountDelta,
             currency = order.Currency,
             status = "paid",
-            occurredAt = DateTimeOffset.UtcNow
+            occurredAt = occurredAt ?? DateTimeOffset.UtcNow
         }, JsonOptions);
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(TestWebhookKey));
@@ -272,6 +391,21 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
         await action(scope.ServiceProvider.GetRequiredService<IBillingService>());
     }
 
+    private async Task SetOrderAsync(Guid orderId, Action<Order> update)
+    {
+        await SetOrdersAsync([orderId], update);
+    }
+
+    private async Task SetOrdersAsync(IReadOnlyCollection<Guid> orderIds, Action<Order> update)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var orders = await db.Orders.Where(order => orderIds.Contains(order.Id)).ToArrayAsync();
+        Assert.Equal(orderIds.Count, orders.Length);
+        foreach (var order in orders) update(order);
+        await db.SaveChangesAsync();
+    }
+
     private static async Task<Account> RegisterAsync(HttpClient client)
     {
         var email = $"billing-{Guid.NewGuid():N}@example.test";
@@ -291,6 +425,6 @@ public sealed class BillingApiTests : IClassFixture<NexoraApiFactory>
     }
 
     private sealed record Account(Guid UserId, string AccessToken);
-    private sealed record CheckoutTestResponse(Guid OrderId, long AmountMinor);
+    private sealed record CheckoutTestResponse(Guid OrderId, long AmountMinor, DateTimeOffset? ExpiresAt);
     private sealed record Webhook(byte[] Body, string Timestamp, string Signature);
 }

@@ -47,6 +47,7 @@ public sealed class Order
     public string? CheckoutActionSnapshot { get; set; }
     public string FeaturesSnapshot { get; set; } = "[]";
     public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? ExpiresAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public ApplicationUser User { get; set; } = null!;
     public PlanPrice PlanPrice { get; set; } = null!;

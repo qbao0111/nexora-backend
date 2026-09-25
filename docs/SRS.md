@@ -102,6 +102,7 @@ Candidate browser -> Nexora frontend -> Nexora .NET API -> PostgreSQL
 | FR-BILL-05 | Service xử lý quota transactionally bằng immutable `reserve`, `consume`, `void`, `adjustment` events theo BR-08. | Must | Concurrent request không vượt quota; failure boundary produce đúng event. |
 | FR-BILL-06 | User xem plan, usage và basic order history của chính mình trong main journey. | Must | Dashboard amount khớp usage events. |
 | FR-BILL-07 | Trước provider thật, `IPaymentProvider` + `FakePaymentProvider` phải chứng minh pending order → verified simulated webhook → paid → entitlement exactly once, kể cả duplicate event. | Must | Integration tests fake webhook/signature/idempotency. |
+| FR-BILL-08 | Order payment mới có deadline 15 phút do server đặt; worker chuyển `pending` quá hạn sang `expired` idempotently, không expire order terminal, và xử lý webhook thành công gần deadline mà không cấp entitlement hai lần. | Must | API/integration test deadline, terminal-state, duplicate-webhook và expiration/webhook boundary. |
 
 ### 6.3 Resume and CV–JD analysis
 

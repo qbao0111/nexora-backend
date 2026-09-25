@@ -13,7 +13,14 @@ public sealed record PlanPriceResponse(Guid Id, long AmountMinor, string Currenc
 public sealed record PlanResponse(Guid Id, string Code, string Name, IReadOnlyCollection<PlanPriceResponse> Prices);
 public sealed record CheckoutFieldResponse(string Name, string Value);
 public sealed record CheckoutActionResponse(string Method, string Url, IReadOnlyList<CheckoutFieldResponse> Fields);
-public sealed record CheckoutResponse(Guid OrderId, string Status, long AmountMinor, string Currency, string Provider, CheckoutActionResponse? Checkout);
+public sealed record CheckoutResponse(
+    Guid OrderId,
+    string Status,
+    long AmountMinor,
+    string Currency,
+    string Provider,
+    CheckoutActionResponse? Checkout,
+    DateTimeOffset? ExpiresAt = null);
 public sealed record CheckoutStatusResponse(
     Guid OrderId,
     string PlanCode,
@@ -23,7 +30,8 @@ public sealed record CheckoutStatusResponse(
     string Status,
     CheckoutActionResponse? Checkout,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset? ExpiresAt = null);
 public sealed record EntitlementResponse(
     Guid Id,
     string PlanCode,
@@ -35,5 +43,12 @@ public sealed record EntitlementResponse(
     int? Available,
     IReadOnlyCollection<EntitlementFeatureResponse> Features);
 public sealed record EntitlementFeatureResponse(string Code, string Name, bool Enabled, int? Limit, int Reserved, int Consumed, int Adjustment, int? Available, bool Unlimited);
-public sealed record OrderResponse(Guid Id, string PlanCode, long AmountMinor, string Currency, string Status, DateTimeOffset CreatedAt);
+public sealed record OrderResponse(
+    Guid Id,
+    string PlanCode,
+    long AmountMinor,
+    string Currency,
+    string Status,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? ExpiresAt = null);
 public sealed record BillingSummaryResponse(EntitlementResponse? Entitlement, IReadOnlyCollection<OrderResponse> Orders);

@@ -18,6 +18,7 @@ namespace Nexora.Integrations.Payments;
 public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
 {
     private const string Provider = "payos";
+    private const string ExpirationCancellationReason = "Payment expired";
     private const long MinimumGeneratedOrderCode = 1_000_000_000_000_000;
     private const long MaximumGeneratedOrderCodeExclusive = 9_000_000_000_000_000;
     private const long MaximumOrderCode = 9_007_199_254_740_991;
@@ -44,6 +45,8 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
     }
 
     public string ProviderName => Provider;
+
+    public bool SupportsPaymentLinkCancellation => true;
 
     public string CreateProviderTransactionId(Guid orderId)
     {
@@ -72,7 +75,8 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
                     Amount = request.AmountMinor,
                     Description = BuildPaymentDescription(request.PlanName),
                     ReturnUrl = _options.ReturnUrl,
-                    CancelUrl = _options.CancelUrl
+                    CancelUrl = _options.CancelUrl,
+                    ExpiredAt = request.ExpiresAt?.ToUnixTimeSeconds()
                 },
                 new RequestOptions<CreatePaymentLinkRequest>
                 {
@@ -106,6 +110,47 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
             Provider,
             request.ProviderTransactionId,
             new CheckoutAction("GET", response.CheckoutUrl, Array.Empty<CheckoutFormField>()));
+    }
+
+    public async Task CancelPaymentLinkAsync(PaymentOrderRequest request, CancellationToken cancellationToken)
+    {
+        ValidateOrderRequest(request);
+        var orderCode = ParseOrderCode(request.ProviderTransactionId);
+        try
+        {
+            var response = await _client.PaymentRequests.CancelAsync(
+                orderCode,
+                ExpirationCancellationReason,
+                new RequestOptions<CancelPaymentLinkRequest>
+                {
+                    Body = new CancelPaymentLinkRequest { CancellationReason = ExpirationCancellationReason },
+                    CancellationToken = cancellationToken,
+                    MaxRetries = 0
+                });
+            if (response is null || response.OrderCode != orderCode || response.Amount != request.AmountMinor ||
+                response.Status is not (PaymentLinkStatus.Cancelled or PaymentLinkStatus.Expired))
+                throw InvalidResponse();
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw ProviderUnavailable();
+        }
+        catch (HttpRequestException)
+        {
+            throw ProviderUnavailable();
+        }
+        catch (ApiException exception)
+        {
+            throw MapCancellationException(exception);
+        }
+        catch (PayOSException)
+        {
+            throw CancellationFailed();
+        }
+        catch (JsonException)
+        {
+            throw InvalidResponse();
+        }
     }
 
     public async Task<VerifiedPaymentEvent> VerifyWebhookAsync(PaymentCallbackRequest request, CancellationToken cancellationToken)
@@ -434,6 +479,16 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
         return QueryFailed();
     }
 
+    private static BusinessException MapCancellationException(ApiException exception)
+    {
+        var statusCode = exception.StatusCode.GetValueOrDefault();
+        if (statusCode is 401 or 403)
+            return new BusinessException("PAYMENT_PROVIDER_AUTH_FAILED", "Không thể xác thực với cổng thanh toán.", BusinessErrorKind.ExternalFailure);
+        if (statusCode == 429 || statusCode >= 500)
+            return ProviderUnavailable();
+        return CancellationFailed();
+    }
+
     private static BusinessException InvalidWebhook() =>
         new("INVALID_WEBHOOK_SIGNATURE", "Webhook thanh toán không hợp lệ.", BusinessErrorKind.Unauthorized);
 
@@ -448,6 +503,9 @@ public sealed class PayosPaymentProvider : IPaymentProvider, IDisposable
 
     private static BusinessException CheckoutFailed() =>
         new("PAYMENT_CHECKOUT_FAILED", "Không thể tạo phiên thanh toán.", BusinessErrorKind.ExternalFailure);
+
+    private static BusinessException CancellationFailed() =>
+        new("PAYMENT_PROVIDER_CANCEL_FAILED", "Không thể hủy liên kết thanh toán.", BusinessErrorKind.ExternalFailure);
 
     private static BusinessException ProviderUnavailable() =>
         new("PAYMENT_PROVIDER_UNAVAILABLE", "Cổng thanh toán hiện không khả dụng.", BusinessErrorKind.ExternalFailure);

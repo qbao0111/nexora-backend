@@ -50,7 +50,8 @@ public sealed record AdminTransactionView(
     string ProviderTransactionId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    DateTimeOffset? FulfilledAt);
+    DateTimeOffset? FulfilledAt,
+    DateTimeOffset? ExpiresAt = null);
 
 public sealed record AdminDashboardView(
     AdminDashboardRange Range,

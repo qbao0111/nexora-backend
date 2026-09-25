@@ -24,7 +24,7 @@ ApplicationUser 1--N Subscription 1--N Entitlement 1--N UsageEvent
 | --- | --- | --- |
 | `asp_net_users`, `user_profiles` | Identity và profile | Identity là source of truth credential. |
 | `plans`, `plan_prices` | Catalog/version giá | Không sửa price đã được order tham chiếu. |
-| `orders`, `payment_events` | Payment lifecycle | unique provider event/transaction ID; order persists its checkout action snapshot so idempotent retry/read never recreates a provider payment link. |
+| `orders`, `payment_events` | Payment lifecycle | unique provider event/transaction ID; order persists its checkout action snapshot so idempotent retry/read never recreates a provider payment link; due-expiration lookup uses `(status, expires_at)`. |
 | `subscriptions`, `entitlements` | Quyền theo thời hạn | Có `starts_at`, `ends_at`, `status`, snapshot. |
 | `usage_events` | Ledger reserve/consume/void/adjustment quota | immutable, unique idempotency key. |
 | `resumes`, `stored_files` | CV file + extracted text | `storage_key` private; checksum, MIME, scan/extract state; `DeletedAt` tombstone and durable storage cleanup state (`StorageDeletedAt`, attempts, next attempt). |
@@ -55,6 +55,10 @@ plan extension and evaluation durable.
 and soft-delete state. A PostgreSQL partial unique index enforces one current row
 per user. Public reads require every publication gate; moderation history uses
 the existing admin audit stream.
+
+### Payment expiration
+
+`orders.ExpiresAt` is nullable for compatibility with historical pending rows and is populated only by the server when a new provider checkout is created (`CreatedAt` remains the order-creation timestamp). The worker selects `pending` orders whose non-null deadline is due and transitions each under the existing order transaction/row-lock convention to `expired`; repeated runs and already-terminal orders are no-ops. Existing provider cancellation behavior remains represented by `failed`, so no `cancelled` status or renamed legacy status is introduced. `payment_events.OccurredAt` is the provider event timestamp and remains the audit source for payment timing; a separate `PaidAt`/`CancelledAt` column is not added because the immutable payment event history already records those provider events. Historical `pending` rows with `ExpiresAt = null` are not silently backfilled or expired.
 
 ## 3. Required columns
 

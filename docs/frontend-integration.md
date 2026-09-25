@@ -206,6 +206,7 @@ Only pending activities can be selected. Completed/obsolete activities and stale
      "amountMinor": 49000,
      "currency": "VND",
      "provider": "sepay",
+     "expiresAt": "2026-09-25T03:15:00Z",
      "checkout": {
        "method": "POST",
        "url": "https://pay-sandbox.sepay.vn/v1/checkout/init",
@@ -231,11 +232,11 @@ Only pending activities can be selected. Completed/obsolete activities and stale
 
    SePay sends a server-side `POST /api/v1/webhooks/payments/sepay` with `X-Secret-Key`; the browser never receives the SePay SecretKey. The browser return pages (`/payment/success`, `/payment/error`, `/payment/cancel`) are UI hints only. On all three routes, read `pendingPaymentOrderId`, call `GET /api/v1/checkout-sessions/{orderId}`, and treat the backend order status as authoritative. Never grant entitlement from a browser redirect.
 
-   - Success: show “Đang xác nhận thanh toán...”, poll briefly while `pending`, optionally call `POST /api/v1/checkout-sessions/{orderId}/refresh` after a short delay, show success and refetch `/api/v1/me` only when `fulfilled`, then clear `pendingPaymentOrderId`. Show failure if the backend says `failed`.
+   - Success: show “Đang xác nhận thanh toán...”, poll briefly while `pending`, optionally call `POST /api/v1/checkout-sessions/{orderId}/refresh` after a short delay, show success and refetch `/api/v1/me` only when `fulfilled`, then clear `pendingPaymentOrderId`. Show failure if the backend says `failed` or `expired`; display the server-provided `expiresAt` as a hint only.
    - Error: query the backend first because the IPN may already have fulfilled the order; do not immediately mark the order failed locally.
-   - Cancel: query the backend without mutating it. If it remains `pending`, let the user leave or start a new checkout.
+   - Cancel: query the backend without mutating it. If it remains `pending`, let the user leave or start a new checkout. The browser countdown and cancel page never controls the deadline or changes the order state.
 
-   A failed order is terminal and requires a new checkout intent. If Development uses `fake`, the existing fake webhook helper remains available for deterministic tests. After payment completion, refetch `/me`.
+   A failed or expired order is terminal and requires a new checkout intent. If Development uses `fake`, the existing fake webhook helper remains available for deterministic tests. After payment completion, refetch `/me`.
 
 2. `POST /interviews` (`201`, Bearer + idempotency key):
 

@@ -90,7 +90,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 
 ### Nội dung website và lịch sử thanh toán
 
-`GET /api/v1/me/orders?cursor=&pageSize=20&status=` cần Bearer. `pageSize` từ 1–50, mặc định 20; `status` là `pending`, `processing`, `fulfilled` hoặc `failed`. Response `{ "data": { "items": [{ "id", "planCode", "amountMinor", "currency", "status", "createdAt" }], "nextCursor": null|string } }`. Sắp xếp `(createdAt DESC, id DESC)`; cursor chỉ dùng với cùng bộ lọc. Không trả payload provider hay dữ liệu user khác.
+`GET /api/v1/me/orders?cursor=&pageSize=20&status=` cần Bearer. `pageSize` từ 1–50, mặc định 20; `status` là `pending`, `processing`, `fulfilled`, `failed` hoặc `expired`. Response `{ "data": { "items": [{ "id", "planCode", "amountMinor", "currency", "status", "createdAt", "expiresAt" }], "nextCursor": null|string } }`; `expiresAt` là UTC ISO-8601 hoặc `null` đối với order cũ chưa có deadline. Sắp xếp `(createdAt DESC, id DESC)`; cursor chỉ dùng với cùng bộ lọc. Không trả payload provider hay dữ liệu user khác.
 
 `GET /api/v1/public/site-settings` trả `contactEmail`, `brandDescription`, `facebookUrl`, `tiktokUrl`, `supportAvailabilityEnabled`, `supportLabel`, `madeInVietnamEnabled`, `updatedAt`; không có bản ghi thì trả giá trị Nexora an toàn, không có social URL/claim hỗ trợ. `GET /api/v1/public/pages/{key}` trả `key`, `title`, `bodyMarkdown` (Terms/Privacy) hoặc `about` typed content, `effectiveAt`, `isPublished`, `publishedAt`, `updatedAt`; public `updatedAt` là thời điểm publish của snapshot, không đổi khi admin sửa draft. Draft, audit và storage key không public. FE phải render Markdown không hỗ trợ raw HTML, chỉ cho phép link an toàn.
 
@@ -770,9 +770,9 @@ POST /api/v1/scenarios/{scenarioId}/retry
 ## State machines
 
 ```text
-Order: processing -> pending -> paid -> fulfilled
-       pending -> expired | failed
-       paid | fulfilled -> refunded (theo DEC-02/BR-07)
+Order: processing -> pending -> fulfilled (paid)
+       pending -> expired | failed (provider cancellation)
+       fulfilled -> refunded (theo DEC-02/BR-07)
 Resume: uploaded -> extracting -> ready | failed | deleted
          extracting -> ocr_fallback -> ready | failed
 Analysis: queued -> processing -> completed | failed | cancelled
@@ -784,7 +784,7 @@ Interview: canonical tại 08-data-model.md
 
 Chỉ `active` nhận official answer. Completion xảy ra đúng một lần; report generation idempotent; optimistic concurrency/versioning chống transition/answer trùng. Terminal interview states không đổi trừ administrative/recovery process explicit và audited.
 
-Checkout payment responses expose `checkout: { method, url, fields[] }`. SePay uses a signed ordered POST form; the frontend must submit the fields as returned and must not generate signatures. payOS uses `method: "GET"`, its signed checkout URL and an empty `fields` array; the frontend redirects the browser only and never receives payment credentials. Checkout statuses are `processing`, `pending`, `fulfilled` and terminal `failed`. SePay `ORDER_PAID` requires `CAPTURED` + `APPROVED`; `TRANSACTION_VOID` becomes final unpaid and moves a pending order to `failed`. payOS fulfillment requires a signature-verified webhook or server-side status query with the exact persisted numeric provider reference, VND currency and server-owned amount. Browser return/cancel URLs never fulfill an order. Duplicate valid callbacks are acknowledged with HTTP 200 and do not create duplicate subscriptions or entitlements. Order `failed` is terminal and refresh does not call the provider again.
+Checkout payment responses expose `checkout: { method, url, fields[] }` and the server-owned nullable `expiresAt`. SePay uses a signed ordered POST form; the frontend must submit the fields as returned and must not generate signatures. payOS uses `method: "GET"`, its signed checkout URL and an empty `fields` array; the frontend redirects the browser only and never receives payment credentials. A newly created provider checkout receives `expiresAt = server UTC now + 15 minutes`; the client cannot set or override it. Checkout statuses are `processing`, `pending`, `fulfilled` (paid), terminal `failed` (including the existing provider-cancellation mapping) and terminal `expired`. SePay `ORDER_PAID` requires `CAPTURED` + `APPROVED`; `TRANSACTION_VOID` becomes final unpaid and moves a pending order to `failed`. payOS fulfillment requires a signature-verified webhook or server-side status query with the exact persisted numeric provider reference, VND currency and server-owned amount. The payOS webhook transaction timestamp is used when reconciling a payment that was marked `expired` just before delayed delivery: a verified paid event at or before the deadline may fulfill that order; a verified paid event after the deadline does not grant entitlement. A payOS status query without a trustworthy transfer timestamp cannot by itself prove payment before the deadline. Browser return/cancel URLs never fulfill or cancel an order. Duplicate valid callbacks are acknowledged with HTTP 200 and do not create duplicate payment events, subscriptions or entitlements. The worker transitions only `pending` orders with a non-null due deadline, under a PostgreSQL row lock; external payOS cancellation is best effort and cannot roll back the internal `expired` transition. Order `failed`, `fulfilled` and `expired` are terminal for ordinary refresh.
 
 ## Phân quyền
 

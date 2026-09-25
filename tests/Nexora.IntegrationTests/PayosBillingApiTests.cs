@@ -88,6 +88,38 @@ public sealed class PayosBillingApiTests : IDisposable
         Assert.True(long.TryParse(order.ProviderTransactionId, NumberStyles.None, CultureInfo.InvariantCulture, out var orderCode));
         Assert.InRange(orderCode, 1L, 9_007_199_254_740_991L);
         Assert.Equal(order.ProviderTransactionId, _handler.CreatedOrderCodes[0]);
+        Assert.NotNull(order.ExpiresAt);
+        Assert.Contains(order.ExpiresAt.Value.ToUnixTimeSeconds(), _handler.CreatedExpirations);
+    }
+
+    [Fact]
+    public async Task ExpiredPayosOrderIsCancelledBestEffortAfterInternalTransition()
+    {
+        using var client = _factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        var price = await SeedPlanPriceAsync(1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var checkout = await CreateCheckoutAsync(client, price.Id, "payos-expiration");
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var order = await db.Orders.SingleAsync(item => item.Id == checkout.OrderId);
+            order.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var billing = scope.ServiceProvider.GetRequiredService<IBillingService>();
+            Assert.Equal(1, await billing.ExpirePendingPaymentsAsync(CancellationToken.None));
+        }
+
+        using var verifyScope = _factory.Services.CreateScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var expired = await verifyDb.Orders.SingleAsync(item => item.Id == checkout.OrderId);
+        Assert.Equal(BillingValues.Expired, expired.Status);
+        Assert.Contains(expired.ProviderTransactionId, _handler.CancelledOrderCodes);
     }
 
     [Fact]
@@ -449,7 +481,10 @@ public sealed class PayosBillingApiTests : IDisposable
         Assert.Equal("GET", action.GetProperty("method").GetString());
         Assert.StartsWith("https://pay.payos.vn/web/", action.GetProperty("url").GetString()!);
         Assert.Empty(action.GetProperty("fields").EnumerateArray());
-        return new CheckoutResponse(data.GetProperty("orderId").GetGuid(), data.GetProperty("checkout").GetProperty("url").GetString()!);
+        return new CheckoutResponse(
+            data.GetProperty("orderId").GetGuid(),
+            data.GetProperty("checkout").GetProperty("url").GetString()!,
+            data.GetProperty("expiresAt").GetDateTimeOffset());
     }
 
     private async Task<HttpResponseMessage> SendWebhookAsync(
@@ -524,12 +559,14 @@ public sealed class PayosBillingApiTests : IDisposable
     public void Dispose() => _factory.Dispose();
 
     private sealed record Account(Guid UserId, string Email, string AccessToken);
-    private sealed record CheckoutResponse(Guid OrderId, string CheckoutUrl);
+    private sealed record CheckoutResponse(Guid OrderId, string CheckoutUrl, DateTimeOffset ExpiresAt);
 
     private sealed class PayosHttpHandler : HttpMessageHandler
     {
         public List<string> CreatedOrderCodes { get; } = [];
         public List<string> CreatedDescriptions { get; } = [];
+        public List<long> CreatedExpirations { get; } = [];
+        public List<string> CancelledOrderCodes { get; } = [];
         public PaymentLinkStatus QueryStatus { get; set; } = PaymentLinkStatus.Paid;
         public long? QueryAmount { get; set; }
         public long? QueryAmountPaid { get; set; }
@@ -545,6 +582,7 @@ public sealed class PayosBillingApiTests : IDisposable
                 var amount = root.GetProperty("amount").GetInt64();
                 CreatedOrderCodes.Add(orderCode.ToString(CultureInfo.InvariantCulture));
                 CreatedDescriptions.Add(root.GetProperty("description").GetString() ?? string.Empty);
+                CreatedExpirations.Add(root.GetProperty("expiredAt").GetInt64());
                 return SignedResponse(new CreatePaymentLinkResponse
                 {
                     OrderCode = orderCode,
@@ -553,6 +591,23 @@ public sealed class PayosBillingApiTests : IDisposable
                     PaymentLinkId = $"link-{orderCode}",
                     Status = PaymentLinkStatus.Pending,
                     CheckoutUrl = $"https://pay.payos.vn/web/{orderCode}"
+                });
+            }
+
+            if (request.Method == HttpMethod.Post && request.RequestUri?.AbsolutePath.EndsWith("/cancel", StringComparison.Ordinal) == true)
+            {
+                var orderCodeText = request.RequestUri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries)[^2];
+                CancelledOrderCodes.Add(orderCodeText);
+                return SignedResponse(new PaymentLink
+                {
+                    Id = $"link-{orderCodeText}",
+                    OrderCode = long.Parse(orderCodeText, CultureInfo.InvariantCulture),
+                    Amount = 123_000,
+                    AmountPaid = 0,
+                    AmountRemaining = 123_000,
+                    Status = PaymentLinkStatus.Cancelled,
+                    CreatedAt = "2026-09-18T03:30:00.000Z",
+                    Transactions = []
                 });
             }
 

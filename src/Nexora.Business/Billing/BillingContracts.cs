@@ -7,6 +7,8 @@ public static class BillingValues
     public const string Processed = "processed";
     public const string Fulfilled = "fulfilled";
     public const string Failed = "failed";
+    public const string Expired = "expired";
+    public const int PaymentExpirationMinutes = 15;
     public const string Active = "active";
     public const string Reserve = "reserve";
     public const string Consume = "consume";
@@ -37,7 +39,8 @@ public sealed record CheckoutSession(
     long AmountMinor,
     string Currency,
     string Provider,
-    CheckoutAction? Checkout);
+    CheckoutAction? Checkout,
+    DateTimeOffset? ExpiresAt = null);
 
 public sealed record CheckoutStatus(
     Guid OrderId,
@@ -48,9 +51,17 @@ public sealed record CheckoutStatus(
     string Status,
     CheckoutAction? Checkout,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset? ExpiresAt = null);
 
-public sealed record OrderView(Guid Id, string PlanCode, long AmountMinor, string Currency, string Status, DateTimeOffset CreatedAt);
+public sealed record OrderView(
+    Guid Id,
+    string PlanCode,
+    long AmountMinor,
+    string Currency,
+    string Status,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? ExpiresAt = null);
 public sealed record OrderPage(IReadOnlyCollection<OrderView> Items, string? NextCursor);
 public sealed record BillingSummary(EntitlementView? Entitlement, IReadOnlyCollection<OrderView> Orders);
 public sealed record EntitlementView(
@@ -76,6 +87,7 @@ public interface IBillingService
     Task<CheckoutStatus> GetCheckoutAsync(Guid userId, Guid orderId, CancellationToken cancellationToken);
     Task<CheckoutStatus> RefreshCheckoutAsync(Guid userId, Guid orderId, CancellationToken cancellationToken);
     Task<PaymentWebhookProcessResult> ProcessPaymentWebhookAsync(string provider, PaymentCallbackRequest callback, CancellationToken cancellationToken);
+    Task<int> ExpirePendingPaymentsAsync(CancellationToken cancellationToken);
     Task<BillingSummary> GetSummaryAsync(Guid userId, CancellationToken cancellationToken);
     Task<OrderPage> GetOrdersAsync(Guid userId, string? cursor, int pageSize, string? status, CancellationToken cancellationToken);
     Task<UsageReservation> ReserveInterviewAsync(Guid userId, string sourceId, string idempotencyKey, CancellationToken cancellationToken);
@@ -91,7 +103,8 @@ public sealed record PaymentOrderRequest(
     string ProviderTransactionId,
     DateTimeOffset CreatedAt,
     string? IpAddress,
-    string? PlanName = null);
+    string? PlanName = null,
+    DateTimeOffset? ExpiresAt = null);
 public sealed record CheckoutFormField(string Name, string Value);
 public sealed record CheckoutAction(string Method, string Url, IReadOnlyList<CheckoutFormField> Fields);
 public sealed record PaymentCheckout(string Provider, string ProviderTransactionId, CheckoutAction Action);
@@ -112,6 +125,7 @@ public sealed record PaymentWebhookProcessResult(Guid OrderId, string OrderStatu
 public interface IPaymentProvider
 {
     string ProviderName { get; }
+    bool SupportsPaymentLinkCancellation => false;
     string CreateProviderTransactionId(Guid orderId);
     // Some providers can safely rebuild a redirect-only checkout action from a persisted URL.
     // New checkout actions are persisted in full by BillingService; this is only a compatibility
@@ -120,4 +134,5 @@ public interface IPaymentProvider
     Task<PaymentCheckout> CreateCheckoutAsync(PaymentOrderRequest request, CancellationToken cancellationToken);
     Task<VerifiedPaymentEvent> VerifyWebhookAsync(PaymentCallbackRequest request, CancellationToken cancellationToken);
     Task<VerifiedPaymentEvent?> QueryPaymentAsync(PaymentOrderRequest request, CancellationToken cancellationToken);
+    Task CancelPaymentLinkAsync(PaymentOrderRequest request, CancellationToken cancellationToken) => Task.CompletedTask;
 }

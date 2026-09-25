@@ -85,5 +85,5 @@ public sealed class AdminUsersController(IAdminService adminService) : Controlle
         user.CurrentEntitlement is null ? null : new EntitlementDetailResponse(
             user.CurrentEntitlement.Id, user.CurrentEntitlement.PlanCode, user.CurrentEntitlement.StartsAt, user.CurrentEntitlement.EndsAt,
             user.CurrentEntitlement.Features.Select(f => new EntitlementFeatureResponse(f.Code, f.Name, f.Enabled, f.Limit, f.Reserved, f.Consumed, f.Adjustment, f.Available, f.Unlimited)).ToArray()),
-        user.RecentOrders.Select(o => new OrderResponse(o.Id, o.PlanCode, o.AmountMinor, o.Currency, o.Status, o.CreatedAt)).ToArray());
+        user.RecentOrders.Select(o => new OrderResponse(o.Id, o.PlanCode, o.AmountMinor, o.Currency, o.Status, o.CreatedAt, o.ExpiresAt)).ToArray());
 }

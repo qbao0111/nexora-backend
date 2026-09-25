@@ -341,6 +341,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.ToTable("orders");
             entity.HasKey(order => order.Id);
             entity.HasIndex(order => new { order.UserId, order.CreatedAt, order.Id });
+            entity.HasIndex(order => new { order.Status, order.ExpiresAt });
             entity.HasIndex(order => new { order.PaymentProvider, order.ProviderTransactionId }).IsUnique();
             entity.Property(order => order.PlanCodeSnapshot).HasMaxLength(40).IsRequired();
             entity.Property(order => order.Currency).HasMaxLength(3).IsRequired();

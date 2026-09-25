@@ -156,6 +156,35 @@ public sealed class PayosPaymentProviderTests
     }
 
     [Fact]
+    public async Task CreateCheckoutPassesServerOwnedExpirationToPayos()
+    {
+        var handler = new PayosHandler(_ => SignedResponse(CreateLink()));
+        using var provider = NewProvider(handler: handler);
+        var expiresAt = new DateTimeOffset(2026, 9, 25, 3, 0, 0, TimeSpan.Zero);
+
+        await provider.CreateCheckoutAsync(Request(expiresAt: expiresAt), CancellationToken.None);
+
+        using var json = JsonDocument.Parse(Assert.Single(handler.RequestBodies));
+        Assert.Equal(expiresAt.ToUnixTimeSeconds(), json.RootElement.GetProperty("expiredAt").GetInt64());
+    }
+
+    [Fact]
+    public async Task CancelPaymentLinkUsesPayosCancellationOperation()
+    {
+        var handler = new PayosHandler(request => request.RequestUri?.AbsolutePath.EndsWith("/cancel", StringComparison.Ordinal) == true
+            ? SignedResponse(PaymentLink(PaymentLinkStatus.Cancelled))
+            : throw new InvalidOperationException("Unexpected payOS request."));
+        using var provider = NewProvider(handler: handler);
+
+        await provider.CancelPaymentLinkAsync(Request(), CancellationToken.None);
+
+        Assert.True(provider.SupportsPaymentLinkCancellation);
+        Assert.Contains("/v2/payment-requests/1234567890123456/cancel", handler.RequestPaths);
+        using var json = JsonDocument.Parse(Assert.Single(handler.RequestBodies));
+        Assert.Equal("Payment expired", json.RootElement.GetProperty("cancellationReason").GetString());
+    }
+
+    [Fact]
     public async Task CreateCheckoutMapsUpstreamFailureWithoutLeakingDetails()
     {
         var handler = new PayosHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
@@ -355,8 +384,8 @@ public sealed class PayosPaymentProviderTests
     private static PayosPaymentProvider NewProvider(PayosOptions? options = null, HttpMessageHandler? handler = null) =>
         new(new HttpClient(handler ?? new PayosHandler(_ => SignedResponse(PaymentLink(PaymentLinkStatus.Pending)))), Options.Create(options ?? TestOptions), TimeProvider.System);
 
-    private static PaymentOrderRequest Request(string planName = "Basic") =>
-        new(OrderId, 49_000, "VND", ProviderTransactionId, DateTimeOffset.UtcNow, null, planName);
+    private static PaymentOrderRequest Request(string planName = "Basic", DateTimeOffset? expiresAt = null) =>
+        new(OrderId, 49_000, "VND", ProviderTransactionId, DateTimeOffset.UtcNow, null, planName, expiresAt);
 
     private static PaymentCallbackRequest Callback(byte[] body) =>
         new("POST", new Dictionary<string, string>(), new Dictionary<string, string>(), body);

@@ -13,7 +13,7 @@ public sealed class AdminDashboardService(NexoraDbContext dbContext, TimeProvide
     internal const string ReportingTimeZone = "Asia/Ho_Chi_Minh";
     private static readonly string[] AllowedGranularities = ["day", "month", "year"];
     private static readonly string[] AllowedStatuses =
-        [BillingValues.Processing, BillingValues.Pending, BillingValues.Fulfilled, BillingValues.Failed];
+        [BillingValues.Processing, BillingValues.Pending, BillingValues.Fulfilled, BillingValues.Failed, BillingValues.Expired];
     private static readonly TimeZoneInfo TimeZone = TimeZoneInfo.FindSystemTimeZoneById(ReportingTimeZone);
 
     public async Task<AdminDashboardView> GetDashboardAsync(AdminDashboardQuery query, CancellationToken cancellationToken)
@@ -295,7 +295,8 @@ public sealed class AdminDashboardService(NexoraDbContext dbContext, TimeProvide
                 order.ProviderTransactionId,
                 order.CreatedAt,
                 order.UpdatedAt,
-                order.Status == BillingValues.Fulfilled ? order.UpdatedAt : null));
+                order.Status == BillingValues.Fulfilled ? order.UpdatedAt : null,
+                order.ExpiresAt));
 
     private static CurrencySummary[] SummarizeCurrencies(IEnumerable<RevenueRow> rows) => rows
         .GroupBy(row => row.Currency)

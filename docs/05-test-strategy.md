@@ -36,6 +36,7 @@ Chứng minh requirement trong SRS hoạt động đúng, đặc biệt là quy�
 | T-13 | Answer submit, replay and completion while evaluation is asynchronous | POST persists one answer and one effective outbox job without an AI call; only the next prepared question is released; active reads hide coaching; completion waits for all evaluations, then creates one report. Critical idempotency/release queries run on PostgreSQL CI. |
 | T-14 | Feedback submission, moderation, consent withdrawal and deletion | One current owner row; validation/auth enforced; edit resets moderation; only approved + consented + non-empty feedback is public; feature/audit/summary work; public DTO and privacy export do not leak internal or identity fields. |
 | T-15 | Anonymous public platform stats | Active users only; only canonical completed interviews/CV analyses; rating aggregate matches public-feedback eligibility; response has no identity/moderation fields. |
+| T-16 | Payment deadline và webhook gần thời điểm hết hạn | `pending` trước hạn giữ nguyên; due `pending` thành `expired` idempotently; `fulfilled`/`failed` không đổi; một verified event xảy ra trước deadline có thể reconcile đúng một entitlement; event sau deadline không cấp entitlement. |
 
 ### A2 upload-intent coverage
 

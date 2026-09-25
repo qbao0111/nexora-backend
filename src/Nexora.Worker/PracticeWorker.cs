@@ -1,3 +1,4 @@
+using Nexora.Business.Billing;
 using Nexora.Business.Practice;
 using Nexora.Business.Privacy;
 using Nexora.Worker.Observability;
@@ -18,7 +19,11 @@ public sealed partial class PracticeWorker(
             try
             {
                 using var scope = scopeFactory.CreateScope();
-                var count = await scope.ServiceProvider.GetRequiredService<IPrivacyJobProcessor>().ProcessPendingAsync(stoppingToken);
+                var count = 0;
+                var billingService = scope.ServiceProvider.GetService<IBillingService>();
+                if (billingService is not null)
+                    count += await billingService.ExpirePendingPaymentsAsync(stoppingToken);
+                count += await scope.ServiceProvider.GetRequiredService<IPrivacyJobProcessor>().ProcessPendingAsync(stoppingToken);
                 count += await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(stoppingToken);
                 count += await scope.ServiceProvider.GetRequiredService<IScenarioStarJobProcessor>().ProcessPendingAsync(stoppingToken);
                 if (count > 0)

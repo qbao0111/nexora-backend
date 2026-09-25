@@ -24,7 +24,7 @@ public sealed partial class BillingService(
     {
         if (pageSize is < 1 or > 50)
             throw new BusinessException("VALIDATION_ERROR", "Kích thước trang phải từ 1 đến 50.", BusinessErrorKind.Validation);
-        if (!string.IsNullOrEmpty(status) && status is not (BillingValues.Pending or BillingValues.Processing or BillingValues.Failed or BillingValues.Fulfilled))
+        if (!string.IsNullOrEmpty(status) && status is not (BillingValues.Pending or BillingValues.Processing or BillingValues.Failed or BillingValues.Fulfilled or BillingValues.Expired))
             throw new BusinessException("VALIDATION_ERROR", "Trạng thái đơn hàng không hợp lệ.", BusinessErrorKind.Validation);
 
         (DateTimeOffset CreatedAt, Guid Id)? position = null;
@@ -54,13 +54,13 @@ public sealed partial class BillingService(
                 query = query.Where(order => order.CreatedAt < position.Value.CreatedAt ||
                     (order.CreatedAt == position.Value.CreatedAt && order.Id.CompareTo(position.Value.Id) < 0));
             rows = await query.OrderByDescending(order => order.CreatedAt).ThenByDescending(order => order.Id)
-                .Select(order => new OrderView(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt))
+                .Select(order => new OrderView(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt, order.ExpiresAt))
                 .Take(pageSize + 1).ToArrayAsync(cancellationToken);
         }
         else
         {
             // SQLite cannot reliably order UUID values using the PostgreSQL provider translation.
-            var materialized = await query.Select(order => new OrderView(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt))
+            var materialized = await query.Select(order => new OrderView(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt, order.ExpiresAt))
                 .ToArrayAsync(cancellationToken);
             rows = materialized.Where(order => !position.HasValue || order.CreatedAt < position.Value.CreatedAt ||
                     (order.CreatedAt == position.Value.CreatedAt && order.Id.CompareTo(position.Value.Id) < 0))
@@ -195,6 +195,97 @@ public sealed partial class BillingService(
         return await ApplyPaymentEventAsync(verified, cancellationToken);
     }
 
+    public async Task<int> ExpirePendingPaymentsAsync(CancellationToken cancellationToken)
+    {
+        const int batchSize = 50;
+        var now = timeProvider.GetUtcNow();
+        var pendingOrders = dbContext.Orders.AsNoTracking()
+            .Where(order => order.Status == BillingValues.Pending && order.ExpiresAt != null)
+            .Select(order => new { order.Id, order.ExpiresAt });
+        Guid[] orderIds;
+        if (dbContext.Database.IsNpgsql())
+        {
+            orderIds = await pendingOrders
+                .Where(order => order.ExpiresAt <= now)
+                .OrderBy(order => order.ExpiresAt)
+                .ThenBy(order => order.Id)
+                .Select(order => order.Id)
+                .Take(batchSize)
+                .ToArrayAsync(cancellationToken);
+        }
+        else
+        {
+            // SQLite cannot compare DateTimeOffset values in SQL. Keep the fallback
+            // narrow by selecting only candidate keys and deadlines before filtering.
+            var pendingRows = await pendingOrders.ToArrayAsync(cancellationToken);
+            orderIds = pendingRows
+                .Where(order => order.ExpiresAt!.Value <= now)
+                .OrderBy(order => order.ExpiresAt)
+                .ThenBy(order => order.Id)
+                .Take(batchSize)
+                .Select(order => order.Id)
+                .ToArray();
+        }
+
+        var expiredCount = 0;
+        foreach (var orderId in orderIds)
+        {
+            PaymentOrderRequest? cancellationRequest = null;
+            string? cancellationProvider = null;
+            await using (var transaction = await BeginTransactionAsync(cancellationToken))
+            {
+                var order = await FindOrderForUpdateAsync(orderId, cancellationToken);
+                if (order is null || order.Status != BillingValues.Pending || order.ExpiresAt is null || order.ExpiresAt > now)
+                    continue;
+
+                order.Status = BillingValues.Expired;
+                order.UpdatedAt = now;
+                cancellationRequest = new PaymentOrderRequest(
+                    order.Id,
+                    order.AmountMinor,
+                    order.Currency,
+                    order.ProviderTransactionId,
+                    order.CreatedAt,
+                    null,
+                    null,
+                    order.ExpiresAt);
+                cancellationProvider = order.PaymentProvider;
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await CommitAsync(transaction, cancellationToken);
+                expiredCount++;
+                PaymentExpired(logger, CorrelationId(), order.Id, order.PaymentProvider, order.ExpiresAt.Value);
+            }
+
+            if (cancellationRequest is null ||
+                !paymentProvider.SupportsPaymentLinkCancellation ||
+                !string.Equals(cancellationProvider, paymentProvider.ProviderName, StringComparison.Ordinal))
+                continue;
+
+            try
+            {
+                await paymentProvider.CancelPaymentLinkAsync(cancellationRequest, cancellationToken);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                PaymentCancellationFailed(logger, CorrelationId(), cancellationRequest.OrderId, paymentProvider.ProviderName, "timeout");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (BusinessException exception)
+            {
+                PaymentCancellationFailed(logger, CorrelationId(), cancellationRequest.OrderId, paymentProvider.ProviderName, exception.Code);
+            }
+            catch (Exception exception)
+            {
+                PaymentCancellationFailed(logger, CorrelationId(), cancellationRequest.OrderId, paymentProvider.ProviderName, exception.GetType().Name);
+            }
+        }
+
+        return expiredCount;
+    }
+
     private async Task<PaymentWebhookProcessResult> ApplyPaymentEventAsync(VerifiedPaymentEvent verified, CancellationToken cancellationToken)
     {
         if (verified.IsVerificationProbe)
@@ -242,6 +333,13 @@ public sealed partial class BillingService(
 
         var now = timeProvider.GetUtcNow();
         var wasAlreadyFinal = order.Status != BillingValues.Pending;
+        var paymentWithinDeadline = !verified.IsPaid || order.ExpiresAt is null || verified.OccurredAt <= order.ExpiresAt.Value;
+        if (verified.IsPaid && order.Status == BillingValues.Pending && !paymentWithinDeadline &&
+            order.ExpiresAt is { } pendingExpiresAt && pendingExpiresAt <= now)
+        {
+            order.Status = BillingValues.Expired;
+            order.UpdatedAt = now;
+        }
         dbContext.PaymentEvents.Add(new PaymentEvent
         {
             Id = Guid.NewGuid(),
@@ -251,7 +349,8 @@ public sealed partial class BillingService(
             OccurredAt = verified.OccurredAt,
             ReceivedAt = now
         });
-        if (verified.IsPaid && order.Status == BillingValues.Pending)
+        if (verified.IsPaid && paymentWithinDeadline &&
+            (order.Status == BillingValues.Pending || order.Status == BillingValues.Expired))
         {
             order.Status = BillingValues.Fulfilled;
             order.UpdatedAt = now;
@@ -287,7 +386,9 @@ public sealed partial class BillingService(
         }
         else if (!verified.IsPaid && verified.IsFinal && order.Status == BillingValues.Pending)
         {
-            order.Status = BillingValues.Failed;
+            order.Status = order.ExpiresAt is { } unpaidExpiresAt && unpaidExpiresAt <= now
+                ? BillingValues.Expired
+                : BillingValues.Failed;
             order.UpdatedAt = now;
         }
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -387,12 +488,12 @@ public sealed partial class BillingService(
             .ThenBy(item => item.EndsAt).FirstOrDefault();
         var orderRowsQuery = dbContext.Orders.AsNoTracking()
             .Where(order => order.UserId == userId)
-            .Select(order => new { order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt });
+            .Select(order => new { order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt, order.ExpiresAt });
         var orderRows = isSqlite
             ? await dbContext.Orders
                 .FromSqlInterpolated($"SELECT * FROM orders WHERE \"UserId\" = {userId} ORDER BY \"CreatedAt\" DESC, \"Id\" DESC LIMIT 20")
                 .AsNoTracking()
-                .Select(order => new { order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt })
+                .Select(order => new { order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt, order.ExpiresAt })
                 .ToArrayAsync(cancellationToken)
             : await orderRowsQuery
                 .OrderByDescending(order => order.CreatedAt)
@@ -400,7 +501,7 @@ public sealed partial class BillingService(
                 .Take(20)
                 .ToArrayAsync(cancellationToken);
         var orders = orderRows
-            .Select(order => new OrderView(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt))
+            .Select(order => new OrderView(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.Status, order.CreatedAt, order.ExpiresAt))
             .ToArray();
         return new BillingSummary(entitlement, orders);
     }
@@ -653,8 +754,11 @@ public sealed partial class BillingService(
                 .Select(item => item.Plan.Name)
                 .SingleOrDefaultAsync(cancellationToken)
                 ?? throw new BusinessException("PLAN_PRICE_NOT_FOUND", "Gói hoặc mức giá không còn khả dụng.", BusinessErrorKind.NotFound);
+            var checkoutExpiresAt = current.ExpiresAt;
+            if (checkoutExpiresAt is null && current.Status == BillingValues.Processing)
+                checkoutExpiresAt = timeProvider.GetUtcNow().AddMinutes(BillingValues.PaymentExpirationMinutes);
             var providerCheckout = await paymentProvider.CreateCheckoutAsync(
-                new PaymentOrderRequest(current.Id, current.AmountMinor, current.Currency, current.ProviderTransactionId, current.CreatedAt, ipAddress, planName), cancellationToken);
+                new PaymentOrderRequest(current.Id, current.AmountMinor, current.Currency, current.ProviderTransactionId, current.CreatedAt, ipAddress, planName, checkoutExpiresAt), cancellationToken);
             if (!string.Equals(providerCheckout.Provider, paymentProvider.ProviderName, StringComparison.Ordinal) ||
                 !string.Equals(providerCheckout.ProviderTransactionId, current.ProviderTransactionId, StringComparison.Ordinal) ||
                 !IsValidCheckoutAction(providerCheckout.Action))
@@ -663,6 +767,7 @@ public sealed partial class BillingService(
             current.Status = BillingValues.Pending;
             current.CheckoutUrl = providerCheckout.Action.Url;
             current.CheckoutActionSnapshot = SerializeCheckoutAction(providerCheckout.Action);
+            current.ExpiresAt ??= checkoutExpiresAt;
             current.UpdatedAt = timeProvider.GetUtcNow();
             await dbContext.SaveChangesAsync(cancellationToken);
             await CommitAsync(transaction, cancellationToken);
@@ -797,10 +902,10 @@ public sealed partial class BillingService(
         action.Fields.All(field => field is not null && !string.IsNullOrWhiteSpace(field.Name) && field.Value is not null);
 
     private static CheckoutSession MapCheckout(Order order, CheckoutAction? action) =>
-        new(order.Id, order.Status, order.AmountMinor, order.Currency, order.PaymentProvider, action);
+        new(order.Id, order.Status, order.AmountMinor, order.Currency, order.PaymentProvider, action, order.ExpiresAt);
 
     private static CheckoutStatus MapCheckoutStatus(Order order, CheckoutAction? action) =>
-        new(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.PaymentProvider, order.Status, action, order.CreatedAt, order.UpdatedAt);
+        new(order.Id, order.PlanCodeSnapshot, order.AmountMinor, order.Currency, order.PaymentProvider, order.Status, action, order.CreatedAt, order.UpdatedAt, order.ExpiresAt);
 
     private static OutboxEvent CreateOutbox(string type, string aggregateType, Guid aggregateId, object payload, DateTimeOffset now) => new()
     {
@@ -829,6 +934,16 @@ public sealed partial class BillingService(
     [LoggerMessage(LogLevel.Information,
         "Verified payment-provider probe {ProviderEventId} ignored; correlation {CorrelationId}")]
     private static partial void PaymentVerificationProbe(ILogger logger, string correlationId, string providerEventId);
+
+    [LoggerMessage(LogLevel.Information,
+        "Payment order {OrderId} expired at {ExpiresAt}; provider {Provider}; correlation {CorrelationId}")]
+    private static partial void PaymentExpired(
+        ILogger logger, string correlationId, Guid orderId, string provider, DateTimeOffset expiresAt);
+
+    [LoggerMessage(LogLevel.Warning,
+        "Payment-link cancellation failed for expired order {OrderId}; provider {Provider}; reason {Reason}; correlation {CorrelationId}")]
+    private static partial void PaymentCancellationFailed(
+        ILogger logger, string correlationId, Guid orderId, string provider, string reason);
 
     private static string RequireKey(string value) =>
         string.IsNullOrWhiteSpace(value) || value.Trim().Length > 128
