@@ -19,6 +19,8 @@ public static class RateLimitPolicies
     public const string Answer = "answer";
     public const string SpeechToken = "speech-token";
     public const string ContentReport = "content-report";
+    public const string ExternalDeletionRequest = "external-deletion-request";
+    public const string ExternalDeletionConfirm = "external-deletion-confirm";
 }
 
 public sealed class LoginEmailRateLimiter(IConfiguration configuration) : IDisposable
@@ -72,6 +74,8 @@ public static class HardeningExtensions
             AddFixedWindow(options, configuration, RateLimitPolicies.AiJob, "AiJob", 10, 60, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.SpeechToken, "SpeechToken", 10, 15, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.ContentReport, "ContentReport", 5, 60, ByUser);
+            AddFixedWindow(options, configuration, RateLimitPolicies.ExternalDeletionRequest, "ExternalDeletionRequest", 5, 60, ByClientIp);
+            AddFixedWindow(options, configuration, RateLimitPolicies.ExternalDeletionConfirm, "ExternalDeletionConfirm", 10, 15, ByClientIp);
             AddFixedWindow(options, configuration, RateLimitPolicies.Answer, "Answer", 20, 5,
                 context => $"{ByUser(context)}:{context.Request.RouteValues["id"]}");
             options.OnRejected = async (context, cancellationToken) =>
@@ -123,6 +127,7 @@ public static class HardeningExtensions
         }
         return context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
     }
+    private static string ByClientIp(HttpContext context) => context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
     private static string ByUser(HttpContext context) => context.User.FindFirstValue("sub") ?? ByIp(context);
     private static string ByRefreshSession(HttpContext context)
     {

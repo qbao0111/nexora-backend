@@ -24,6 +24,9 @@ public sealed class ResendEmailSender(
     public Task SendPasswordResetAsync(PasswordResetEmail message, CancellationToken cancellationToken) =>
         SendAsync(EmailTemplateRenderer.PasswordReset(message), cancellationToken);
 
+    public Task SendAccountDeletionVerificationAsync(AccountDeletionVerificationEmail message, CancellationToken cancellationToken) =>
+        SendAsync(EmailTemplateRenderer.AccountDeletionVerification(message), cancellationToken);
+
     public Task SendReminderAsync(ReminderEmail message, CancellationToken cancellationToken) =>
         SendAsync(EmailTemplateRenderer.Reminder(message), cancellationToken);
 
@@ -150,6 +153,23 @@ internal static class EmailTemplateRenderer
                 "Đặt lại mật khẩu",
                 link),
             $"Chào {recipientName},\n\nBạn có thể đặt lại mật khẩu Nexora tại:\n{message.ResetLink.AbsoluteUri}\n\nNếu bạn không yêu cầu thao tác này, hãy bỏ qua email này.");
+    }
+
+    public static RenderedEmail AccountDeletionVerification(AccountDeletionVerificationEmail message)
+    {
+        ValidateCommon(message.Recipient, message.VerificationLink);
+        var recipientName = DisplayName(message.Recipient);
+        var link = Link(message.VerificationLink);
+        return new RenderedEmail(
+            message.Recipient,
+            "Xác minh yêu cầu xóa tài khoản Nexora",
+            Layout(
+                recipientName,
+                "Xác minh yêu cầu xóa tài khoản",
+                "Chúng tôi nhận được yêu cầu xóa tài khoản Nexora gắn với email này. Mở liên kết để xác minh và gửi yêu cầu; tài khoản sẽ không bị xóa chỉ bằng email này.",
+                "Xác minh yêu cầu",
+                link),
+            $"Chào {recipientName},\n\nNếu bạn muốn gửi yêu cầu xóa tài khoản Nexora, hãy xác minh tại:\n{message.VerificationLink.AbsoluteUri}\n\nLiên kết chỉ dùng được trong thời gian giới hạn. Nếu bạn không yêu cầu thao tác này, hãy bỏ qua email.");
     }
 
     public static RenderedEmail Reminder(ReminderEmail message)

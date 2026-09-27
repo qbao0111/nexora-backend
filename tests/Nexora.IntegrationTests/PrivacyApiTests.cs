@@ -1,10 +1,14 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Nexora.Business.Billing;
 using Nexora.Business.ContentReports;
 using Nexora.Business.Practice;
@@ -14,6 +18,7 @@ using Nexora.Data.Billing;
 using Nexora.Data.ContentReports;
 using Nexora.Data.Persistence;
 using Nexora.Data.Practice;
+using Nexora.Data.Privacy;
 
 namespace Nexora.IntegrationTests;
 
@@ -136,6 +141,129 @@ public sealed class PrivacyApiTests
         var publicAfterDeletionData = await DataAsync(publicAfterDeletion);
         Assert.Equal(0, publicAfterDeletionData.GetProperty("ratingCount").GetInt32());
         Assert.Empty(publicAfterDeletionData.GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task ExternalDeletionIsEnumerationSafeBoundToVerifiedOwnerAndSingleUse()
+    {
+        var logs = new CapturingLoggerProvider();
+        using var factory = new NexoraApiFactory(new Dictionary<string, string?>(), services =>
+            services.AddSingleton<ILoggerProvider>(logs));
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client);
+        var other = await RegisterAsync(client);
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.AccessToken);
+        using (var current = await client.GetAsync("/api/v1/me/deletion-requests/current"))
+        {
+            Assert.Equal(HttpStatusCode.OK, current.StatusCode);
+            Assert.Equal(JsonValueKind.Null, (await DataAsync(current)).ValueKind);
+        }
+        client.DefaultRequestHeaders.Authorization = null;
+
+        using var existingRequest = await client.PostAsJsonAsync(
+            "/api/v1/account-deletion/external/request", new { email = owner.Email.ToUpperInvariant() });
+        using var missingRequest = await client.PostAsJsonAsync(
+            "/api/v1/account-deletion/external/request", new { email = "unknown-account@example.test" });
+        Assert.True(existingRequest.StatusCode == HttpStatusCode.Accepted,
+            $"{await existingRequest.Content.ReadAsStringAsync()}\n{string.Join('\n', logs.Messages.Where(message =>
+                message.StartsWith("Unhandled error", StringComparison.Ordinal) ||
+                message.StartsWith("Account deletion verification", StringComparison.Ordinal)))}");
+        Assert.Equal(HttpStatusCode.Accepted, missingRequest.StatusCode);
+        Assert.Equal(await existingRequest.Content.ReadAsStringAsync(), await missingRequest.Content.ReadAsStringAsync());
+
+        var token = TestEmailInbox.GetAccountDeletionToken(owner.Email);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var verification = await db.ExternalDeletionVerifications.SingleAsync();
+            Assert.Equal(owner.UserId, verification.UserId);
+            Assert.Equal(64, verification.TokenHash.Length);
+            Assert.NotEqual(token, verification.TokenHash);
+            Assert.Null(verification.ConsumedAt);
+        }
+
+        using var confirmation = await client.PostAsJsonAsync(
+            "/api/v1/account-deletion/external/confirm", new { token, userId = other.UserId });
+        Assert.True(confirmation.StatusCode == HttpStatusCode.Accepted,
+            $"{await confirmation.Content.ReadAsStringAsync()}\n{string.Join('\n', logs.Messages.Where(message => message.StartsWith("Unhandled error", StringComparison.Ordinal)))}");
+        Assert.Equal(PrivacyValues.Queued, (await DataAsync(confirmation)).GetProperty("status").GetString());
+        using var replay = await client.PostAsJsonAsync("/api/v1/account-deletion/external/confirm", new { token });
+        Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.AccessToken);
+        using var revoked = await client.GetAsync("/api/v1/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, revoked.StatusCode);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", other.AccessToken);
+        using var unaffected = await client.GetAsync("/api/v1/me");
+        Assert.Equal(HttpStatusCode.OK, unaffected.StatusCode);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(1, await db.DataPrivacyRequests.CountAsync(item => item.UserId == owner.UserId));
+            Assert.Equal(0, await db.DataPrivacyRequests.CountAsync(item => item.UserId == other.UserId));
+            Assert.NotNull((await db.ExternalDeletionVerifications.SingleAsync()).ConsumedAt);
+            Assert.Equal(1, await scope.ServiceProvider.GetRequiredService<IPrivacyJobProcessor>()
+                .ProcessPendingAsync(CancellationToken.None));
+            Assert.Empty(await db.ExternalDeletionVerifications.Where(item => item.UserId == owner.UserId).ToArrayAsync());
+        }
+        Assert.DoesNotContain(logs.Messages, message => message.Contains(token, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExternalDeletionRejectsUnknownAndExpiredTokens()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        const string expiredToken = "expired-deletion-token";
+        var now = DateTimeOffset.UtcNow;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            db.ExternalDeletionVerifications.Add(new ExternalDeletionVerification
+            {
+                Id = Guid.NewGuid(),
+                UserId = account.UserId,
+                TokenHash = HashToken(expiredToken),
+                CreatedAt = now.AddHours(-2),
+                ExpiresAt = now.AddHours(-1)
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var unknown = await client.PostAsJsonAsync(
+            "/api/v1/account-deletion/external/confirm", new { token = "not-a-valid-token" });
+        using var expired = await client.PostAsJsonAsync(
+            "/api/v1/account-deletion/external/confirm", new { token = expiredToken });
+        Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, expired.StatusCode);
+        using var scopeAfter = factory.Services.CreateScope();
+        var dbAfter = scopeAfter.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Empty(await dbAfter.DataPrivacyRequests.ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task ExternalDeletionRequestIsRateLimitedByIp()
+    {
+        using var factory = new NexoraApiFactory(new Dictionary<string, string?>
+        {
+            ["RateLimits:ExternalDeletionRequest:PermitLimit"] = "1",
+            ["RateLimits:ExternalDeletionRequest:WindowMinutes"] = "60"
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+
+        using var first = await client.PostAsJsonAsync(
+            "/api/v1/account-deletion/external/request", new { email = "first-unknown@example.test" });
+        using var second = await client.PostAsJsonAsync(
+            "/api/v1/account-deletion/external/request", new { email = "second-unknown@example.test" });
+
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, second.StatusCode);
     }
 
     [Fact]
@@ -372,7 +500,7 @@ public sealed class PrivacyApiTests
         using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         var data = await DataAsync(login);
-        return new Account(data.GetProperty("user").GetProperty("id").GetGuid(), data.GetProperty("accessToken").GetString()!);
+        return new Account(data.GetProperty("user").GetProperty("id").GetGuid(), data.GetProperty("accessToken").GetString()!, email);
     }
 
     private static async Task<JsonElement> DataAsync(HttpResponseMessage response)
@@ -381,7 +509,25 @@ public sealed class PrivacyApiTests
         return document.RootElement.GetProperty("data").Clone();
     }
 
-    private sealed record Account(Guid UserId, string AccessToken);
+    private static string HashToken(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+
+    private sealed class CapturingLoggerProvider : ILoggerProvider
+    {
+        public ConcurrentQueue<string> Messages { get; } = new();
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(Messages);
+        public void Dispose() { }
+
+        private sealed class CapturingLogger(ConcurrentQueue<string> messages) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter) => messages.Enqueue(
+                    exception is null ? formatter(state, null) : $"{formatter(state, exception)}\n{exception}");
+        }
+    }
+
+    private sealed record Account(Guid UserId, string AccessToken, string Email);
 
     private sealed class RecordingStorageProvider : IStorageProvider
     {

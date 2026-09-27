@@ -70,7 +70,8 @@ public sealed partial class ScenarioStarJobProcessor(
             if (claimed == 0) continue;
 
             claimedCount++;
-            var job = await dbContext.OutboxEvents.SingleAsync(item => item.Id == candidate.Id, cancellationToken);
+            var job = await dbContext.OutboxEvents.SingleOrDefaultAsync(item => item.Id == candidate.Id, cancellationToken);
+            if (job is null) continue;
             try
             {
                 switch (job.Type)
@@ -91,11 +92,19 @@ public sealed partial class ScenarioStarJobProcessor(
 
     private async Task EvaluateScenarioAsync(OutboxEvent job, CancellationToken cancellationToken)
     {
-        var attempt = await dbContext.ScenarioAttempts.Include(item => item.Scenario)
-            .SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
-        attempt.Status = PracticeFeatureValues.Processing;
-        attempt.UpdatedAt = timeProvider.GetUtcNow();
-        await dbContext.SaveChangesAsync(cancellationToken);
+        ScenarioAttempt attempt;
+        await using (var preparation = await BeginTransactionAsync(cancellationToken))
+        {
+            var current = await FindActiveJobAsync(job, cancellationToken);
+            if (current is null) return;
+            job = current;
+            attempt = await dbContext.ScenarioAttempts.Include(item => item.Scenario)
+                .SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
+            attempt.Status = PracticeFeatureValues.Processing;
+            attempt.UpdatedAt = timeProvider.GetUtcNow();
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(preparation, cancellationToken);
+        }
 
         var input = $"Scenario: {attempt.Scenario.Title}\nCompetency: {attempt.Scenario.Competency}\nDifficulty: {attempt.Scenario.Difficulty}\n\nContent:\n{attempt.Scenario.Content}\n\nUser Answer:\n{attempt.Answer}";
         var execResult = await structuredAiExecutor.ExecuteAsync(
@@ -106,6 +115,10 @@ public sealed partial class ScenarioStarJobProcessor(
         var result = execResult.Value;
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
+        var activeJob = await FindActiveJobAsync(job, cancellationToken);
+        if (activeJob is null) return;
+        job = activeJob;
+        attempt = await dbContext.ScenarioAttempts.SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
         attempt.EvaluationJson = JsonSerializer.Serialize(result, JsonOptions);
         attempt.Status = PracticeFeatureValues.Completed;
         attempt.CompletedAt = attempt.UpdatedAt = timeProvider.GetUtcNow();
@@ -119,10 +132,18 @@ public sealed partial class ScenarioStarJobProcessor(
 
     private async Task EvaluateStarAsync(OutboxEvent job, CancellationToken cancellationToken)
     {
-        var attempt = await dbContext.StarAttempts.SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
-        attempt.Status = PracticeFeatureValues.Processing;
-        attempt.UpdatedAt = timeProvider.GetUtcNow();
-        await dbContext.SaveChangesAsync(cancellationToken);
+        StarAttempt attempt;
+        await using (var preparation = await BeginTransactionAsync(cancellationToken))
+        {
+            var current = await FindActiveJobAsync(job, cancellationToken);
+            if (current is null) return;
+            job = current;
+            attempt = await dbContext.StarAttempts.SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
+            attempt.Status = PracticeFeatureValues.Processing;
+            attempt.UpdatedAt = timeProvider.GetUtcNow();
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await CommitAsync(preparation, cancellationToken);
+        }
 
         var input = $"Question: {attempt.Question}\n\nAnswer: {attempt.Answer}";
         var execResult = await structuredAiExecutor.ExecuteAsync(
@@ -133,6 +154,10 @@ public sealed partial class ScenarioStarJobProcessor(
         var evaluation = execResult.Value;
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
+        var activeJob = await FindActiveJobAsync(job, cancellationToken);
+        if (activeJob is null) return;
+        job = activeJob;
+        attempt = await dbContext.StarAttempts.SingleAsync(item => item.Id == job.AggregateId, cancellationToken);
         attempt.EvaluationJson = JsonSerializer.Serialize(evaluation, JsonOptions);
         attempt.Status = PracticeFeatureValues.Completed;
         attempt.CompletedAt = attempt.UpdatedAt = timeProvider.GetUtcNow();
@@ -148,7 +173,8 @@ public sealed partial class ScenarioStarJobProcessor(
     {
         dbContext.ChangeTracker.Clear();
         await using var transaction = await BeginTransactionAsync(cancellationToken);
-        var current = await dbContext.OutboxEvents.SingleAsync(item => item.Id == job.Id, cancellationToken);
+        var current = await FindActiveJobAsync(job, cancellationToken);
+        if (current is null) return;
         current.Status = PracticeFeatureValues.Failed;
         current.ProcessedAt = timeProvider.GetUtcNow();
 
@@ -174,6 +200,24 @@ public sealed partial class ScenarioStarJobProcessor(
         }
         await dbContext.SaveChangesAsync(cancellationToken);
         await CommitAsync(transaction, cancellationToken);
+    }
+
+    private async Task<OutboxEvent?> FindActiveJobAsync(OutboxEvent job, CancellationToken cancellationToken)
+    {
+        // Discard pre-AI tracked state; privacy deletion may have removed it meanwhile.
+        dbContext.ChangeTracker.Clear();
+        var userId = job.Type == PracticeFeatureValues.ScenarioEvaluationJob
+            ? await dbContext.ScenarioAttempts.Where(item => item.Id == job.AggregateId)
+                .Select(item => (Guid?)item.UserId).SingleOrDefaultAsync(cancellationToken)
+            : await dbContext.StarAttempts.Where(item => item.Id == job.AggregateId)
+                .Select(item => (Guid?)item.UserId).SingleOrDefaultAsync(cancellationToken);
+        if (userId is null) return null;
+        var user = dbContext.Database.IsNpgsql()
+            ? await dbContext.Users.FromSqlInterpolated($"SELECT * FROM asp_net_users WHERE \"Id\" = {userId.Value} FOR UPDATE")
+                .SingleOrDefaultAsync(cancellationToken)
+            : await dbContext.Users.SingleOrDefaultAsync(item => item.Id == userId.Value, cancellationToken);
+        if (user is null || user.DeletionRequestedAt is not null || user.DeletedAt is not null) return null;
+        return await dbContext.OutboxEvents.SingleOrDefaultAsync(item => item.Id == job.Id, cancellationToken);
     }
 
     [LoggerMessage(LogLevel.Information, "Job {JobId} ({JobType}/{AggregateId}) completed")]

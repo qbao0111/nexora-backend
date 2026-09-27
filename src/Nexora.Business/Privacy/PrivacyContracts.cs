@@ -96,7 +96,10 @@ public sealed record DeletionRequestView(Guid Id, string Status, int Attempts, D
 public interface IPrivacyService
 {
     Task<CoreDataExport> ExportAsync(Guid userId, CancellationToken cancellationToken);
+    Task<DeletionRequestView?> GetCurrentDeletionRequestAsync(Guid userId, CancellationToken cancellationToken);
     Task<DeletionRequestView> RequestDeletionAsync(Guid userId, string idempotencyKey, CancellationToken cancellationToken);
+    Task RequestExternalDeletionAsync(string email, CancellationToken cancellationToken);
+    Task<DeletionRequestView> ConfirmExternalDeletionAsync(string token, CancellationToken cancellationToken);
 }
 
 public interface IPrivacyJobProcessor
