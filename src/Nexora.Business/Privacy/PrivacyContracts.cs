@@ -70,6 +70,15 @@ public sealed record ExportFeedback(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     DateTimeOffset? DeletedAt);
+public sealed record ExportContentReport(
+    Guid Id,
+    string ContentType,
+    Guid ContentId,
+    string ReasonCode,
+    string? Description,
+    string Status,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? ResolvedAt);
 public sealed record CoreDataExport(
     DateTimeOffset GeneratedAt,
     ExportProfile Profile,
@@ -80,7 +89,8 @@ public sealed record CoreDataExport(
     IReadOnlyCollection<ExportLearningPath> LearningPaths,
     IReadOnlyCollection<ExportAnalysis> Analyses,
     IReadOnlyCollection<ExportInterview> Interviews,
-    IReadOnlyCollection<ExportFeedback>? Feedback = null);
+    IReadOnlyCollection<ExportFeedback>? Feedback = null,
+    IReadOnlyCollection<ExportContentReport>? ContentReports = null);
 public sealed record DeletionRequestView(Guid Id, string Status, int Attempts, DateTimeOffset RequestedAt, DateTimeOffset? CompletedAt);
 
 public interface IPrivacyService

@@ -11,6 +11,7 @@ ApplicationUser 1--N InterviewSession 1--N InterviewQuestion 1--1 InterviewAnswe
 InterviewQuestion 1--N InterviewQuestion (ParentQuestion -> FollowUps)
 InterviewSession 1--1 InterviewReport
 ApplicationUser 1--0..1 ProductFeedback
+ApplicationUser 1--N ContentReport
 ApplicationUser 1--N StarDraft / ScenarioAttempt
 ApplicationUser 1--N Order 1--N PaymentEvent
 ApplicationUser 1--N Subscription 1--N Entitlement 1--N UsageEvent
@@ -32,6 +33,7 @@ ApplicationUser 1--N Subscription 1--N Entitlement 1--N UsageEvent
 | `job_descriptions`, `resume_analyses` | JD và output analysis | input snapshot/model/prompt version. |
 | `interview_sessions`, `interview_questions`, `interview_answers`, `interview_reports` | Practice loop | answer unique per official question; question release and answer evaluation are durable states. |
 | `product_feedback` | Owner feedback + moderation state | one non-deleted row per user; rating 1–5; consent/status/featured publication gates. |
+| `content_reports` | Owner reports of specific generated AI content + moderation state | server-verified content reference; reporter/admin FKs; bounded snapshot/description; constrained status/type/reason; optimistic moderation version. |
 | `star_drafts`, `scenario_attempts` | Practice support | owner ID, version/status. |
 | `idempotency_keys`, `outbox_events`, `audit_logs` | Reliability/operations | expiry/retention job. |
 | `data_privacy_requests` | Audit/retry state cho export/delete workflow | unique `(user_id, idempotency_key)`; không FK cascade để audit còn lại sau anonymization. |
@@ -55,6 +57,18 @@ plan extension and evaluation durable.
 and soft-delete state. A PostgreSQL partial unique index enforces one current row
 per user. Public reads require every publication gate; moderation history uses
 the existing admin audit stream.
+
+`content_reports` is a separate moderation aggregate, not product feedback.
+The API accepts a canonical resource type and UUID, then resolves the owner and
+exact generated output server-side. Supported IDs point to interview questions,
+ready answer evaluations, interview reports, completed resume analyses,
+scenario evaluations or STAR evaluations. It never accepts a client snapshot.
+Stored snapshots contain only the generated output needed for review—not raw
+CV/JD inputs, submitted transcript/answers or prompts—and are exposed only by
+the explicit Admin detail endpoint, never in the queue. The reporter's account
+deletion explicitly deletes its reports and snapshots; privacy export includes
+the reporter's own submitted report metadata/description but omits the snapshot
+and moderator notes.
 
 ## 3. Required columns
 

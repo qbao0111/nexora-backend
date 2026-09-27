@@ -48,6 +48,8 @@ public sealed partial class PrivacyService(
             .Where(item => item.UserId == userId).ToArrayAsync(cancellationToken);
         var feedback = await dbContext.ProductFeedbacks.AsNoTracking()
             .Where(item => item.UserId == userId).ToArrayAsync(cancellationToken);
+        var contentReports = await dbContext.ContentReports.AsNoTracking()
+            .Where(item => item.ReporterUserId == userId).ToArrayAsync(cancellationToken);
 
         return new CoreDataExport(
             timeProvider.GetUtcNow(),
@@ -111,7 +113,10 @@ public sealed partial class PrivacyService(
                 item.Consent,
                 item.CreatedAt,
                 item.UpdatedAt,
-                item.DeletedAt)).ToArray());
+                item.DeletedAt)).ToArray(),
+            contentReports.OrderBy(item => item.CreatedAt).Select(item => new ExportContentReport(
+                item.Id, item.ContentType, item.ContentId, item.ReasonCode, item.Description, item.Status,
+                item.CreatedAt, item.ResolvedAt)).ToArray());
     }
 
     public async Task<DeletionRequestView> RequestDeletionAsync(Guid userId, string idempotencyKey, CancellationToken cancellationToken)
@@ -284,6 +289,7 @@ public sealed partial class PrivacyService(
         dbContext.InterviewReports.RemoveRange(dbContext.InterviewReports.Where(item => item.UserId == request.UserId));
         dbContext.InterviewAnswers.RemoveRange(dbContext.InterviewAnswers.Where(item => item.UserId == request.UserId));
         dbContext.ProductFeedbacks.RemoveRange(dbContext.ProductFeedbacks.Where(item => item.UserId == request.UserId));
+        dbContext.ContentReports.RemoveRange(dbContext.ContentReports.Where(item => item.ReporterUserId == request.UserId));
         dbContext.InterviewQuestions.RemoveRange(dbContext.InterviewQuestions.Where(item => sessionIds.Contains(item.InterviewSessionId)));
         // Practice-again sessions use restrictive self-references so normal
         // history cannot be deleted accidentally. Clear those links first as

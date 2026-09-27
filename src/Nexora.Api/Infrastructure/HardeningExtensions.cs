@@ -18,6 +18,7 @@ public static class RateLimitPolicies
     public const string AiJob = "ai-job";
     public const string Answer = "answer";
     public const string SpeechToken = "speech-token";
+    public const string ContentReport = "content-report";
 }
 
 public sealed class LoginEmailRateLimiter(IConfiguration configuration) : IDisposable
@@ -70,6 +71,7 @@ public static class HardeningExtensions
             AddFixedWindow(options, configuration, RateLimitPolicies.Checkout, "Checkout", 5, 60, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.AiJob, "AiJob", 10, 60, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.SpeechToken, "SpeechToken", 10, 15, ByUser);
+            AddFixedWindow(options, configuration, RateLimitPolicies.ContentReport, "ContentReport", 5, 60, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.Answer, "Answer", 20, 5,
                 context => $"{ByUser(context)}:{context.Request.RouteValues["id"]}");
             options.OnRejected = async (context, cancellationToken) =>
