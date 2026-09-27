@@ -93,7 +93,11 @@ public sealed class PrivacyPracticeDeletionTests
             Assert.Equal($"private-{other:N}", item.Question);
             Assert.Equal($"private-{other:N}", item.Answer);
         });
-        Assert.All(await db.ContentReports.ToArrayAsync(), item => Assert.Equal(JsonSerializer.Serialize(new { privateContent = $"private-{other:N}" }), item.ContentSnapshot));
+        Assert.All(await db.ContentReports.ToArrayAsync(), item =>
+        {
+            using var snapshot = JsonDocument.Parse(item.ContentSnapshot!);
+            Assert.Equal($"private-{other:N}", snapshot.RootElement.GetProperty("privateContent").GetString());
+        });
         Assert.Equal(1, await db.Scenarios.CountAsync());
         Assert.All(await db.OutboxEvents.Select(item => item.Payload).ToArrayAsync(), payload => Assert.Contains(other.ToString("N"), payload));
         foreach (var userId in new[] { owner, other })
