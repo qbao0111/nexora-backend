@@ -18,6 +18,12 @@ internal sealed class RecordingEmailSender : IEmailSender
         TestEmailInbox.RecordPasswordReset(message.Recipient.Address, message.ResetLink);
         return Task.CompletedTask;
     }
+
+    public Task SendAccountDeletionVerificationAsync(AccountDeletionVerificationEmail message, CancellationToken cancellationToken)
+    {
+        TestEmailInbox.RecordAccountDeletion(message.Recipient.Address, message.VerificationLink);
+        return Task.CompletedTask;
+    }
     public Task SendReminderAsync(ReminderEmail message, CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
@@ -25,10 +31,12 @@ internal static class TestEmailInbox
 {
     private static readonly ConcurrentDictionary<string, ConcurrentQueue<Uri>> VerificationLinks = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, Uri> PasswordResetLinks = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, Uri> AccountDeletionLinks = new(StringComparer.OrdinalIgnoreCase);
 
     public static void Record(string email, Uri verificationLink) =>
         VerificationLinks.GetOrAdd(email, static _ => new ConcurrentQueue<Uri>()).Enqueue(verificationLink);
     public static void RecordPasswordReset(string email, Uri resetLink) => PasswordResetLinks[email] = resetLink;
+    public static void RecordAccountDeletion(string email, Uri verificationLink) => AccountDeletionLinks[email] = verificationLink;
 
     public static Uri GetVerificationLink(string email) =>
         GetVerificationLinks(email) is { Count: > 0 } links
@@ -44,6 +52,13 @@ internal static class TestEmailInbox
         PasswordResetLinks.TryGetValue(email, out var link)
             ? link
             : throw new InvalidOperationException($"No password reset email was recorded for {email}.");
+
+    public static Uri GetAccountDeletionLink(string email) =>
+        AccountDeletionLinks.TryGetValue(email, out var link)
+            ? link
+            : throw new InvalidOperationException($"No account deletion email was recorded for {email}.");
+
+    public static string GetAccountDeletionToken(string email) => ParseQuery(GetAccountDeletionLink(email))["token"];
 
     public static async Task VerifyAsync(HttpClient client, string email)
     {

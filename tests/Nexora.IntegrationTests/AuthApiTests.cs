@@ -1282,6 +1282,9 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
         public Task SendPasswordResetAsync(Nexora.Business.Email.PasswordResetEmail message, CancellationToken cancellationToken) =>
             throw new HttpRequestException("Resend service unreachable.");
 
+        public Task SendAccountDeletionVerificationAsync(Nexora.Business.Email.AccountDeletionVerificationEmail message, CancellationToken cancellationToken) =>
+            throw new HttpRequestException("Resend service unreachable.");
+
         public Task SendReminderAsync(Nexora.Business.Email.ReminderEmail message, CancellationToken cancellationToken) =>
             throw new HttpRequestException("Resend service unreachable.");
     }

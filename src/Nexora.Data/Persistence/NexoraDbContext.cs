@@ -38,6 +38,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<InterviewAnswer> InterviewAnswers => Set<InterviewAnswer>();
     public DbSet<InterviewReport> InterviewReports => Set<InterviewReport>();
     public DbSet<DataPrivacyRequest> DataPrivacyRequests => Set<DataPrivacyRequest>();
+    public DbSet<ExternalDeletionVerification> ExternalDeletionVerifications => Set<ExternalDeletionVerification>();
     public DbSet<FeatureDefinition> FeatureDefinitions => Set<FeatureDefinition>();
     public DbSet<PlanPriceFeature> PlanPriceFeatures => Set<PlanPriceFeature>();
     public DbSet<EntitlementFeature> EntitlementFeatures => Set<EntitlementFeature>();
@@ -646,6 +647,16 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.Property(request => request.Status).HasMaxLength(20).IsRequired();
             entity.Property(request => request.IdempotencyKey).HasMaxLength(128).IsRequired();
             entity.Property(request => request.ErrorCode).HasMaxLength(80);
+        });
+        builder.Entity<ExternalDeletionVerification>(entity =>
+        {
+            entity.ToTable("external_deletion_verifications");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => item.TokenHash).IsUnique();
+            entity.HasIndex(item => new { item.UserId, item.ExpiresAt });
+            entity.Property(item => item.TokenHash).HasMaxLength(64).IsRequired();
+            entity.HasOne<Nexora.Data.Identity.ApplicationUser>().WithMany()
+                .HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);
         });
     }
 
