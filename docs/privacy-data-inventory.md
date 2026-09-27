@@ -2,7 +2,7 @@
 
 **Purpose:** technical inventory of data flows visible in the Nexora backend source. This is not a legal assessment, a Play Console declaration, or proof of the settings currently applied by a hosting/provider account.
 
-**Source snapshot:** backend tree at `f7018ba5204990bdf1adad3e0055f09898948a08` (includes ContentReport, external-deletion verification, and the Scenario/STAR deletion corrective). Mobile audit material under `mobile_docs/` was used as a checklist only; backend code below is the evidence for backend behavior.
+**Source snapshot:** backend tree at `47beb26f1de3041a6bf5a3d6d486a8d357122b2a` (includes ContentReport, external-deletion verification, and the Scenario/STAR deletion corrective). Mobile audit material under `mobile_docs/` was used as a checklist only; backend code below is the evidence for backend behavior.
 
 ## Evidence labels
 
