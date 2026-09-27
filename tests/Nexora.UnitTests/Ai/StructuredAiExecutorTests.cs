@@ -731,7 +731,7 @@ public sealed class StructuredAiExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncRecoversPriorSemanticEvaluationWhenRepairRegressesImprovements()
+    public async Task ExecuteAsyncRecoversCurrentSemanticRepairWhenOnlyImprovementsRegress()
     {
         const string candidateAnswer = "Grounded answer";
         var fakeProvider = new MockAiProvider();
@@ -758,8 +758,9 @@ public sealed class StructuredAiExecutorTests
             context,
             CancellationToken.None);
 
-        var expected = AiOperations.InterviewEvaluate.NormalizeAndValidate(firstEvaluation with
+        var expected = AiOperations.InterviewEvaluate.NormalizeAndValidate(TechnicalEvaluation(AiOperations.ScoreScale) with
         {
+            Improvements = ["Nêu trực tiếp câu trả lời cho trọng tâm câu hỏi trước khi bổ sung chi tiết."],
             ImprovedAnswer = candidateAnswer
         }, context);
 
@@ -771,11 +772,11 @@ public sealed class StructuredAiExecutorTests
         Assert.Equal(expected.NormalizedValue.Strengths, result.Value.Strengths);
         Assert.Equal(expected.NormalizedValue.Improvements, result.Value.Improvements);
         Assert.Equal(candidateAnswer, result.Value.ImprovedAnswer);
-        Assert.Equal(firstEvaluation.Feedback, result.Value.Feedback);
+        Assert.Equal(expected.NormalizedValue.Feedback, result.Value.Feedback);
     }
 
     [Fact]
-    public async Task ExecuteAsyncFailsClosedWhenPriorImprovementsAndCurrentAnswerAreInvalid()
+    public async Task ExecuteAsyncRecoversCurrentInvalidImprovementsAndBlankImprovedAnswer()
     {
         var fakeProvider = new MockAiProvider();
         fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale) with
@@ -790,14 +791,15 @@ public sealed class StructuredAiExecutorTests
         });
         var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
 
-        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+        var result = await executor.ExecuteAsync(
             AiOperations.InterviewEvaluate,
             "Grounded answer",
             new AiOperationContext("prior-improvements-invalid", ExpectedStar: false, CandidateAnswer: "Grounded answer"),
-            CancellationToken.None));
+            CancellationToken.None);
 
-        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
         Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Equal("Grounded answer", result.Value.ImprovedAnswer);
+        Assert.Single(result.Value.Improvements!);
     }
 
     [Fact]
@@ -826,23 +828,10 @@ public sealed class StructuredAiExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncFailsClosedWhenPriorRecoveryFailsFullRevalidation()
+    public async Task ExecuteAsyncRecoversCurrentInvalidImprovements()
     {
-        var mutableImprovements = new[] { "Add one concrete example if available" };
-        var firstEvaluation = TechnicalEvaluation(AiOperations.ScoreScale) with
-        {
-            Improvements = mutableImprovements,
-            ImprovedAnswer = "Clear structured response"
-        };
-        var fakeProvider = new MockAiProvider
-        {
-            OnCall = call =>
-            {
-                if (call == 2)
-                    mutableImprovements[0] = " ";
-            }
-        };
-        fakeProvider.EnqueueResult(firstEvaluation);
+        var fakeProvider = new MockAiProvider();
+        fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale) with { ImprovedAnswer = "Clear structured response" });
         fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale) with
         {
             Improvements = [],
@@ -850,14 +839,14 @@ public sealed class StructuredAiExecutorTests
         });
         var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
 
-        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+        var result = await executor.ExecuteAsync(
             AiOperations.InterviewEvaluate,
             "Grounded answer",
             new AiOperationContext("prior-recovery-full-validation", ExpectedStar: false, CandidateAnswer: "Grounded answer"),
-            CancellationToken.None));
+            CancellationToken.None);
 
-        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
         Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Single(result.Value.Improvements!);
     }
 
     [Fact]
@@ -938,7 +927,7 @@ public sealed class StructuredAiExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncDoesNotRecoverPriorOutputWhenImprovementsWereInvalid()
+    public async Task ExecuteAsyncRecoversPriorOutputWhenImprovementsWereInvalid()
     {
         var fakeProvider = new MockAiProvider();
         fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale) with
@@ -949,14 +938,15 @@ public sealed class StructuredAiExecutorTests
         fakeProvider.EnqueueException(new AiProviderException(AiProviderFailureKind.InvalidResponse, "Invalid repair response."));
         var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
 
-        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+        var result = await executor.ExecuteAsync(
             AiOperations.InterviewEvaluate,
             "Grounded answer",
             new AiOperationContext("invalid-improvements-provider-failure", ExpectedStar: false, CandidateAnswer: "Grounded answer"),
-            CancellationToken.None));
+            CancellationToken.None);
 
-        Assert.Equal("AI_OUTPUT_INVALID", exception.Code);
         Assert.Equal(2, fakeProvider.CallCount);
+        Assert.Equal("Grounded answer", result.Value.ImprovedAnswer);
+        Assert.Single(result.Value.Improvements!);
     }
 
     [Fact]

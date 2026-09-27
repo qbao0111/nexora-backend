@@ -85,6 +85,121 @@ public sealed class AsyncInterviewApiTests
             (await GetInterviewAsync(client, interviewId)).GetProperty("status").GetString());
     }
 
+    [PostgresFact]
+    public async Task LowInformationTerminalCoachingRecoveryQueuesOneReportOnPostgres()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = NexoraApiFactory.CreatePostgres(
+            Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!, aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "async-low-info-report-postgres@example.test");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "async-low-info-report-start");
+        await ProcessJobsAsync(factory);
+
+        var q1 = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+        using var first = await SubmitAnswerAsync(client, interviewId, q1, "alo alo", "async-low-info-a1");
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        var firstData = await DataAsync(first);
+        var firstAnswerId = firstData.GetProperty("answer").GetProperty("id").GetGuid();
+        var q2 = firstData.GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, LowInformationNonActionableEvaluation("alo alo"));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, LowInformationNonActionableEvaluation("alo alo"));
+
+        using var second = await SubmitAnswerAsync(
+            client,
+            interviewId,
+            q2,
+            "Tôi phân tích yêu cầu, làm rõ dữ liệu đầu vào và thống nhất tiêu chí nghiệm thu.",
+            "async-low-info-a2");
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+
+        using (var complete = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/complete"))
+        {
+            complete.Headers.Add("Idempotency-Key", "async-low-info-complete");
+            using var completeResponse = await client.SendAsync(complete);
+            Assert.Equal(HttpStatusCode.Accepted, completeResponse.StatusCode);
+        }
+
+        await ProcessJobsAsync(factory);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var answers = await db.InterviewAnswers
+            .Where(item => item.InterviewSessionId == interviewId)
+            .OrderBy(item => item.CreatedAt)
+            .ToArrayAsync();
+        Assert.Equal(2, answers.Length);
+        Assert.All(answers, answer => Assert.Equal(InterviewAnswerEvaluationStates.Ready, answer.EvaluationStatus));
+        Assert.All(answers, answer => Assert.Null(answer.EvaluationErrorCode));
+        Assert.Contains(answers, answer => answer.Id == firstAnswerId && answer.Evaluation!.Contains("Nêu trực tiếp", StringComparison.Ordinal));
+        Assert.Equal(1, await db.OutboxEvents.CountAsync(item =>
+            item.Type == "InterviewReportRequested" && item.AggregateId == interviewId));
+    }
+
+    [PostgresFact]
+    public async Task ResultsRetryRecoversHistoricalLowInformationFailureOnPostgres()
+    {
+        var aiProvider = new TestAiProvider();
+        using var factory = NexoraApiFactory.CreatePostgres(
+            Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!, aiProvider);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client, "async-low-info-retry-postgres@example.test");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "async-low-info-retry-start");
+        await ProcessJobsAsync(factory);
+
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, new AiProviderException(AiProviderFailureKind.Unavailable, "test failure"));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, new AiProviderException(AiProviderFailureKind.Unavailable, "test failure"));
+        var q1 = (await GetInterviewAsync(client, interviewId)).GetProperty("questions")[0].GetProperty("id").GetGuid();
+        using var first = await SubmitAnswerAsync(client, interviewId, q1, "ngại quá", "async-low-info-retry-a1");
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        var q2 = (await DataAsync(first)).GetProperty("nextQuestion").GetProperty("id").GetGuid();
+        await ProcessJobsAsync(factory);
+
+        using var second = await SubmitAnswerAsync(
+            client,
+            interviewId,
+            q2,
+            "Tôi xác định yêu cầu chính, viết acceptance criteria và xác nhận lại với stakeholder.",
+            "async-low-info-retry-a2");
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        await ProcessJobsAsync(factory);
+
+        using (var complete = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/complete"))
+        {
+            complete.Headers.Add("Idempotency-Key", "async-low-info-retry-complete");
+            using var completeResponse = await client.SendAsync(complete);
+            Assert.Equal(HttpStatusCode.Accepted, completeResponse.StatusCode);
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var failed = await db.InterviewAnswers.SingleAsync(item => item.QuestionId == q1);
+            Assert.Equal(InterviewAnswerEvaluationStates.Failed, failed.EvaluationStatus);
+            Assert.Equal("AI_PROVIDER_UNAVAILABLE", failed.EvaluationErrorCode);
+        }
+
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, LowInformationNonActionableEvaluation("ngại quá"));
+        aiProvider.EnqueueResponse(AiPurposes.InterviewEvaluate, LowInformationNonActionableEvaluation("ngại quá"));
+        using var retry = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/interviews/{interviewId}/results/retry");
+        retry.Headers.Add("Idempotency-Key", "async-low-info-retry-results");
+        using var retryResponse = await client.SendAsync(retry);
+        Assert.Equal(HttpStatusCode.Accepted, retryResponse.StatusCode);
+        await ProcessJobsAsync(factory);
+
+        using var retryScope = factory.Services.CreateScope();
+        var retryDb = retryScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var recovered = await retryDb.InterviewAnswers.SingleAsync(item => item.QuestionId == q1);
+        Assert.Equal(InterviewAnswerEvaluationStates.Ready, recovered.EvaluationStatus);
+        Assert.Null(recovered.EvaluationErrorCode);
+        Assert.Equal(1, await retryDb.OutboxEvents.CountAsync(item =>
+            item.Type == "InterviewReportRequested" && item.AggregateId == interviewId));
+    }
+
     [Fact]
     public async Task ResultsRetryRecoversStrandedCompletingSessionWithoutDuplicateReportJob()
     {
@@ -673,6 +788,20 @@ public sealed class AsyncInterviewApiTests
         request.Headers.Add("Idempotency-Key", key);
         return await client.SendAsync(request);
     }
+
+    private static AnswerEvaluation LowInformationNonActionableEvaluation(string candidateAnswer) => new(
+        [
+            new RubricScore("correctness", 20, candidateAnswer),
+            new RubricScore("structure", 10, candidateAnswer),
+            new RubricScore("completeness", 10, candidateAnswer),
+            new RubricScore("clarity", 20, candidateAnswer)
+        ],
+        "Câu trả lời chưa cung cấp đủ bằng chứng để đánh giá cao.",
+        new StarEvaluation(false, null, null, null, null, null, [], [], []),
+        AiOperations.ScoreScale,
+        [],
+        ["Kết quả chưa rõ."],
+        candidateAnswer);
 
     private static async Task<HttpResponseMessage> RetryQuestionAsync(HttpClient client, Guid interviewId, string key)
     {
