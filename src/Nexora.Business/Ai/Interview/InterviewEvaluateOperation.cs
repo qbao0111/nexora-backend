@@ -5,6 +5,11 @@ namespace Nexora.Business.Ai;
 
 public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEvaluation>
 {
+    private static readonly string[] DeterministicLowInformationImprovements =
+    [
+        "Nêu trực tiếp câu trả lời cho trọng tâm câu hỏi trước khi bổ sung chi tiết."
+    ];
+
     public override string Purpose => AiPurposes.InterviewEvaluate;
     public override string PromptVersion => "interview-eval-v11";
     public override string SchemaVersion => "interview-eval-v7";
@@ -123,6 +128,7 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         Return 1-3 modest strengths grounded only in direct evidence from the candidate's submitted answer. Each strength must reuse at least one concrete phrase, technology, action, fact, or result from that answer. The supplied question and context may inform relevance and rubric scoring, but they are not evidence that the candidate stated or performed anything. Prefer wording such as 'Bạn đã nêu rõ...' or 'Bạn mô tả cụ thể...'. Do not infer leadership, ownership, production experience, business impact, mentoring, scale, team size, architecture ownership, deployment success, or measurable outcomes unless the candidate explicitly states them. If no grounded positive evidence is demonstrated, return an empty strengths array, keep rubric scores below 60 where justified, and do not invent a strength.
         Return 1-3 improvements, and make every item a direct action the candidate can take. Start with or clearly include a substantive action verb such as add, include, explain, quantify, clarify, describe, mention, specify, show, provide, use, connect, highlight, focus, compare, give, identify, emphasize, present, tập trung, trình bày, làm nổi bật, liên hệ, đưa ví dụ, chỉ ra, nhấn mạnh, so sánh, giải thích, mô tả, làm rõ, bổ sung, nêu, định lượng, or cụ thể hóa. Directive prefixes such as 'hãy', 'nên', or 'có thể' may introduce an action, but do not count by themselves. Do not return passive observations such as 'the result is unclear'. Return one improvedAnswer.
         Keep improvedAnswer faithful to the candidate answer: do not add metrics, achievements, technologies, roles, or experience that are not explicitly present. When evidence is missing, explain what concrete evidence the candidate could add instead of inventing it. Use the answer's facts; do not call another AI operation to rewrite it.
+        When the submitted answer has little or no usable evidence, treat it as valid interview evidence rather than a system failure: score low where justified, strengths may be [], evidence must quote only the submitted answer, feedback should state that the answer does not provide enough evidence, improvements must remain concrete/actionable, and improvedAnswer must preserve the answer or ask for missing evidence without inventing experience, technology, metrics, roles, impact, or achievements.
         {AiLanguagePolicy.VietnameseUserFacingInstruction}
 
         If the question is technical or non-behavioral:
@@ -460,36 +466,56 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         if (raw is null || string.IsNullOrWhiteSpace(context.CandidateAnswer))
             return null;
 
-        if (terminalResult.FailureReason is "interview.strengths_ungrounded")
+        var recovered = terminalResult;
+        // Three coaching fields can fail in sequence; every mutation must pass full validation.
+        for (var step = 0; step < 3; step++)
         {
-            var answer = context.CandidateAnswer;
-            var strengths = (raw.Strengths ?? [])
-                .Where(item => !string.IsNullOrWhiteSpace(item) &&
-                    AnswerCoachingValidator.IsGroundedReportStrength(item, answer))
-                .ToArray();
-            if (strengths.Length == 0 && raw.Scores is not null && raw.Scores.Any(score => score is not null && score.Score >= 60))
+            switch (recovered.FailureReason)
             {
-                strengths = raw.Scores
-                    .Where(score => score is not null && score.Score >= 60 &&
-                        AnswerCoachingValidator.IsGroundedReportStrength(score.Evidence, answer))
-                    .Select(score => score.Evidence.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Take(3)
-                    .ToArray();
+                case "interview.improvements_invalid":
+                case "interview.improvements_not_actionable":
+                    raw = raw with { Improvements = DeterministicLowInformationImprovements };
+                    break;
+                case "interview.strengths_ungrounded":
+                    raw = raw with { Strengths = RecoverGroundedStrengths(raw, context.CandidateAnswer) };
+                    break;
+                case "interview.improved_answer_blank":
+                case "interview.improved_answer_ungrounded":
+                case "interview.improved_answer_fabricated":
+                case "interview.improved_answer_too_long":
+                    var answer = context.CandidateAnswer.Trim();
+                    raw = raw with { ImprovedAnswer = answer.Length <= 4_000 ? answer : answer[..4_000].TrimEnd() };
+                    break;
+                default:
+                    return step == 0 ? null : recovered;
             }
 
-            return NormalizeAndValidate(raw with { Strengths = strengths }, context);
+            recovered = NormalizeAndValidate(raw, context);
+            if (recovered.IsValid)
+                return recovered;
         }
 
-        if (terminalResult.FailureReason is not ("interview.improved_answer_ungrounded" or "interview.improved_answer_fabricated"))
-            return null;
+        return recovered;
+    }
 
-        var candidateAnswer = context.CandidateAnswer.Trim();
-        var groundedFallback = candidateAnswer.Length <= 4_000
-            ? candidateAnswer
-            : candidateAnswer[..4_000].TrimEnd();
+    private static string[] RecoverGroundedStrengths(AnswerEvaluation raw, string answer)
+    {
+        var strengths = (raw.Strengths ?? [])
+            .Where(item => !string.IsNullOrWhiteSpace(item) &&
+                AnswerCoachingValidator.IsGroundedReportStrength(item, answer))
+            .ToArray();
+        if (strengths.Length == 0 && raw.Scores is not null && raw.Scores.Any(score => score is not null && score.Score >= 60))
+        {
+            strengths = raw.Scores
+                .Where(score => score is not null && score.Score >= 60 &&
+                    AnswerCoachingValidator.IsGroundedReportStrength(score.Evidence, answer))
+                .Select(score => score.Evidence.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .ToArray();
+        }
 
-        return NormalizeAndValidate(raw with { ImprovedAnswer = groundedFallback }, context);
+        return strengths;
     }
 
 }

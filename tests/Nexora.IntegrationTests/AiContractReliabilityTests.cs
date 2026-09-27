@@ -620,7 +620,7 @@ public sealed class AiContractReliabilityTests
         {
             Scores =
             [
-                new RubricScore("correctness", 25, "Repair-attempt correctness evidence."),
+                new RubricScore("correctness", 101, "Repair-attempt correctness evidence."),
                 new RubricScore("structure", 25, "Repair-attempt structure evidence."),
                 new RubricScore("completeness", 25, "Repair-attempt completeness evidence."),
                 new RubricScore("clarity", 25, "Repair-attempt clarity evidence.")

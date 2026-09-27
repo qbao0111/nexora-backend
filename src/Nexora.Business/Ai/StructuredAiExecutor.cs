@@ -147,6 +147,17 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                     var recovery = operation.TryRecoverTerminalValidation(raw, context, validation);
                     if (recovery is { IsValid: true })
                     {
+                        if (IsDeterministicCoachingRecovery(validation.FailureReason))
+                        {
+                            LogDeterministicCoachingFallback(
+                                logger,
+                                operation.Purpose,
+                                validation.FailureReason ?? "unknown",
+                                GetMetadata(context, "answerId"),
+                                GetMetadata(context, "interviewId"),
+                                correlationId);
+                        }
+
                         LogTerminalValidationRecovered(
                             logger,
                             operation.Purpose,
@@ -176,6 +187,17 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                             priorValidation);
                         if (priorRecovery is { IsValid: true })
                         {
+                            if (IsDeterministicCoachingRecovery(priorValidation.FailureReason))
+                            {
+                                LogDeterministicCoachingFallback(
+                                    logger,
+                                    operation.Purpose,
+                                    priorValidation.FailureReason ?? "unknown",
+                                    GetMetadata(context, "answerId"),
+                                    GetMetadata(context, "interviewId"),
+                                    correlationId);
+                            }
+
                             LogTerminalSemanticRepairRecovered(
                                 logger,
                                 operation.Purpose,
@@ -246,6 +268,17 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
                         priorValidation);
                     if (recovery is { IsValid: true })
                     {
+                        if (IsDeterministicCoachingRecovery(priorValidation.FailureReason))
+                        {
+                            LogDeterministicCoachingFallback(
+                                logger,
+                                operation.Purpose,
+                                priorValidation.FailureReason ?? "unknown",
+                                GetMetadata(context, "answerId"),
+                                GetMetadata(context, "interviewId"),
+                                correlationId);
+                        }
+
                         LogSemanticRepairProviderFailureRecovered(
                             logger,
                             operation.Purpose,
@@ -328,6 +361,12 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
     private static string ReasoningMode(AiReasoningEffortOverride? reasoningOverride) =>
         reasoningOverride?.ToString().ToLowerInvariant() ?? "configured";
 
+    private static bool IsDeterministicCoachingRecovery(string? failureReason) =>
+        failureReason is "interview.improvements_invalid" or "interview.improvements_not_actionable";
+
+    private static string GetMetadata(AiOperationContext context, string key) =>
+        context.Metadata is not null && context.Metadata.TryGetValue(key, out var value) ? value : string.Empty;
+
     private static BusinessException MapProviderException(AiProviderException exception) => exception.Kind switch
     {
         AiProviderFailureKind.Authentication => new BusinessException("AI_PROVIDER_AUTH_FAILED", "Không thể xác thực với AI provider.", BusinessErrorKind.ExternalFailure),
@@ -377,6 +416,9 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
     [LoggerMessage(LogLevel.Warning, "AI terminal semantic validation recovered with a contract-safe fallback: purpose={Purpose}, failureReason={FailureReason}, attempt={Attempt}, correlationId={CorrelationId}")]
     private static partial void LogTerminalValidationRecovered(ILogger logger, string purpose, string failureReason, int attempt, string correlationId);
+
+    [LoggerMessage(LogLevel.Warning, "Interview evaluation recovered with deterministic coaching fallback. purpose={Purpose} failureReason={FailureReason} answerId={AnswerId} interviewId={InterviewId} correlationId={CorrelationId}")]
+    private static partial void LogDeterministicCoachingFallback(ILogger logger, string purpose, string failureReason, string answerId, string interviewId, string correlationId);
 
     [LoggerMessage(LogLevel.Warning, "AI semantic repair provider failure recovered from prior validated raw: purpose={Purpose}, priorFailureReason={PriorFailureReason}, providerFailureKind={ProviderFailureKind}, attempt={Attempt}, correlationId={CorrelationId}")]
     private static partial void LogSemanticRepairProviderFailureRecovered(

@@ -83,6 +83,8 @@ public sealed partial class InterviewAnswerEvaluationJobHandler(
                 question.Topic);
             var metadata = new Dictionary<string, string>
             {
+                ["answerId"] = snapshot.Id.ToString("N"),
+                ["interviewId"] = session.Id.ToString("N"),
                 ["questionSequence"] = question.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["isFollowup"] = isFollowUp ? "true" : "false",
                 ["questionTopic"] = question.Topic
