@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Nexora.Business.Ai;
@@ -92,7 +93,7 @@ public sealed class PrivacyPracticeDeletionTests
             Assert.Equal($"private-{other:N}", item.Question);
             Assert.Equal($"private-{other:N}", item.Answer);
         });
-        Assert.All(await db.ContentReports.ToArrayAsync(), item => Assert.Equal($"private-{other:N}", item.ContentSnapshot));
+        Assert.All(await db.ContentReports.ToArrayAsync(), item => Assert.Equal(JsonSerializer.Serialize(new { privateContent = $"private-{other:N}" }), item.ContentSnapshot));
         Assert.Equal(1, await db.Scenarios.CountAsync());
         Assert.All(await db.OutboxEvents.Select(item => item.Payload).ToArrayAsync(), payload => Assert.Contains(other.ToString("N"), payload));
         foreach (var userId in new[] { owner, other })
@@ -197,6 +198,7 @@ public sealed class PrivacyPracticeDeletionTests
                 if (index == 2) await billing.VoidAsync(userId, reservation.EventId, CancellationToken.None);
                 var now = DateTimeOffset.UtcNow;
                 var marker = $"private-{userId:N}";
+                var privateJson = JsonSerializer.Serialize(new { privateContent = marker });
                 if (star)
                     db.StarAttempts.Add(new StarAttempt
                     {
@@ -215,7 +217,7 @@ public sealed class PrivacyPracticeDeletionTests
                 {
                     Id = Guid.NewGuid(), AggregateId = id, AggregateType = star ? "star_attempt" : "scenario_attempt",
                     Type = star ? PracticeFeatureValues.StarEvaluationJob : PracticeFeatureValues.ScenarioEvaluationJob,
-                    Status = index == 0 ? BillingValues.Pending : BillingValues.Processed, Payload = marker, CreatedAt = now
+                    Status = index == 0 ? BillingValues.Pending : BillingValues.Processed, Payload = privateJson, CreatedAt = now
                 });
                 db.RealtimeNotifications.Add(new RealtimeNotification
                 {
@@ -230,7 +232,7 @@ public sealed class PrivacyPracticeDeletionTests
                 {
                     Id = Guid.NewGuid(), ReporterUserId = userId, ContentId = id,
                     ContentType = star ? ContentReportValues.StarEvaluation : ContentReportValues.ScenarioEvaluation,
-                    ReasonCode = ContentReportValues.Inaccurate, Description = marker, ContentSnapshot = marker,
+                    ReasonCode = ContentReportValues.Inaccurate, Description = marker, ContentSnapshot = privateJson,
                     Status = ContentReportValues.Pending, CreatedAt = now
                 });
                 await db.SaveChangesAsync();
