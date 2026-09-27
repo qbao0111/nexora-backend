@@ -98,6 +98,10 @@ public interface IPrivacyService
     Task<CoreDataExport> ExportAsync(Guid userId, CancellationToken cancellationToken);
     Task<DeletionRequestView?> GetCurrentDeletionRequestAsync(Guid userId, CancellationToken cancellationToken);
     Task<DeletionRequestView> RequestDeletionAsync(Guid userId, string idempotencyKey, CancellationToken cancellationToken);
+}
+
+public interface IExternalAccountDeletionService
+{
     Task RequestExternalDeletionAsync(string email, CancellationToken cancellationToken);
     Task<DeletionRequestView> ConfirmExternalDeletionAsync(string token, CancellationToken cancellationToken);
 }
