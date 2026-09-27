@@ -58,6 +58,8 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
         using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         Assert.Contains(login.Headers.GetValues("Set-Cookie"), value => value.StartsWith("nexora.refresh=", StringComparison.Ordinal));
+        using (var loginPayload = JsonDocument.Parse(await login.Content.ReadAsStringAsync()))
+            Assert.False(loginPayload.RootElement.GetProperty("data").TryGetProperty("refreshToken", out _));
 
         var accessToken = await ReadAccessTokenAsync(login);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
@@ -259,11 +261,17 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
         var email = $"rotate-{Guid.NewGuid():N}@example.test";
         await RegisterAndVerifyAsync(client, email);
         using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        var userId = await ReadUserIdAsync(login);
         var oldToken = ExtractRefreshToken(Assert.Single(login.Headers.GetValues("Set-Cookie")));
         using var refresh = await client.PostAsync("/api/v1/auth/refresh", null);
         Assert.Equal(HttpStatusCode.OK, refresh.StatusCode);
+        using (var refreshPayload = JsonDocument.Parse(await refresh.Content.ReadAsStringAsync()))
+            Assert.False(refreshPayload.RootElement.GetProperty("data").TryGetProperty("refreshToken", out _));
         var newToken = ExtractRefreshToken(Assert.Single(refresh.Headers.GetValues("Set-Cookie")));
         Assert.NotEqual(oldToken, newToken);
+
+        using var otherLogin = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        var otherDeviceToken = ExtractRefreshToken(Assert.Single(otherLogin.Headers.GetValues("Set-Cookie")));
 
         using var replayClient = _factory.CreateHttpsClient(handleCookies: false);
         using var replayRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/refresh");
@@ -272,9 +280,107 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
         Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
 
         using var scope = _factory.Services.CreateScope();
-        var tokens = await scope.ServiceProvider.GetRequiredService<NexoraDbContext>().RefreshTokens.ToListAsync();
-        Assert.Contains(tokens, token => token.RevokedAt is not null && token.ReplacedByTokenHash is not null);
-        Assert.Contains(tokens, token => token.RevokedAt is null);
+        var tokens = await scope.ServiceProvider.GetRequiredService<NexoraDbContext>().RefreshTokens
+            .Where(token => token.UserId == userId).ToListAsync();
+        Assert.Equal(3, tokens.Count);
+        Assert.Equal(2, tokens.Count(token => token.RevokedAt is not null));
+        Assert.Single(tokens, token => token.RevokedAt is null);
+
+        using var otherDeviceRefresh = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/refresh");
+        otherDeviceRefresh.Headers.Add("Cookie", $"nexora.refresh={otherDeviceToken}");
+        using var otherDeviceResponse = await replayClient.SendAsync(otherDeviceRefresh);
+        Assert.Equal(HttpStatusCode.OK, otherDeviceResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task NativeLoginAndRefreshReturnRefreshTokenInBodyWithoutSettingCookie()
+    {
+        using var client = _factory.CreateHttpsClient(handleCookies: false);
+        var email = $"mobile-auth-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/mobile/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        Assert.False(login.Headers.Contains("Set-Cookie"));
+        var oldToken = await ReadMobileRefreshTokenAsync(login);
+
+        using var refresh = await client.PostAsJsonAsync("/api/v1/auth/mobile/refresh", new { refreshToken = oldToken });
+        Assert.Equal(HttpStatusCode.OK, refresh.StatusCode);
+        Assert.False(refresh.Headers.Contains("Set-Cookie"));
+        var newToken = await ReadMobileRefreshTokenAsync(refresh);
+        Assert.NotEqual(oldToken, newToken);
+
+        using var replay = await client.PostAsJsonAsync("/api/v1/auth/mobile/refresh", new { refreshToken = oldToken });
+        Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
+        using var revokedDescendant = await client.PostAsJsonAsync("/api/v1/auth/mobile/refresh", new { refreshToken = newToken });
+        Assert.Equal(HttpStatusCode.Unauthorized, revokedDescendant.StatusCode);
+    }
+
+    [Fact]
+    public async Task NativeLoginRejectsInvalidCredentialsAndNativeRefreshRejectsMalformedToken()
+    {
+        using var client = _factory.CreateHttpsClient(handleCookies: false);
+        using var invalidLogin = await client.PostAsJsonAsync("/api/v1/auth/mobile/login", new
+        {
+            email = $"mobile-invalid-{Guid.NewGuid():N}@example.test",
+            password = "Strong!Pass123"
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, invalidLogin.StatusCode);
+        Assert.False(invalidLogin.Headers.Contains("Set-Cookie"));
+
+        using var malformed = await client.PostAsJsonAsync("/api/v1/auth/mobile/refresh", new { refreshToken = "not-a-refresh-token" });
+        Assert.Equal(HttpStatusCode.Unauthorized, malformed.StatusCode);
+        Assert.False(malformed.Headers.Contains("Set-Cookie"));
+    }
+
+    [Fact]
+    public async Task NativeRefreshRejectsExpiredRefreshToken()
+    {
+        using var client = _factory.CreateHttpsClient(handleCookies: false);
+        var email = $"mobile-expired-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/mobile/login", new { email, password = "Strong!Pass123" });
+        var refreshToken = await ReadMobileRefreshTokenAsync(login);
+        var tokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(refreshToken)));
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var token = await db.RefreshTokens.SingleAsync(item => item.TokenHash == tokenHash);
+            token.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+
+        using var expired = await client.PostAsJsonAsync("/api/v1/auth/mobile/refresh", new { refreshToken });
+        Assert.Equal(HttpStatusCode.Unauthorized, expired.StatusCode);
+        Assert.False(expired.Headers.Contains("Set-Cookie"));
+    }
+
+    [Fact]
+    public async Task NativeLogoutRevokesOnlyPresentedOwnersSessionChain()
+    {
+        using var client = _factory.CreateHttpsClient(handleCookies: false);
+        var emailA = $"mobile-logout-a-{Guid.NewGuid():N}@example.test";
+        var emailB = $"mobile-logout-b-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, emailA);
+        await RegisterAndVerifyAsync(client, emailB);
+
+        using var loginA = await client.PostAsJsonAsync("/api/v1/auth/mobile/login", new { email = emailA, password = "Strong!Pass123" });
+        using var loginB = await client.PostAsJsonAsync("/api/v1/auth/mobile/login", new { email = emailB, password = "Strong!Pass123" });
+        var refreshA = await ReadMobileRefreshTokenAsync(loginA);
+        var refreshB = await ReadMobileRefreshTokenAsync(loginB);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await ReadAccessTokenAsync(loginA));
+
+        using var mismatchedLogout = await client.PostAsJsonAsync("/api/v1/auth/mobile/logout", new { refreshToken = refreshB });
+        Assert.Equal(HttpStatusCode.NoContent, mismatchedLogout.StatusCode);
+        Assert.False(mismatchedLogout.Headers.Contains("Set-Cookie"));
+        using var stillValidB = await client.PostAsJsonAsync("/api/v1/auth/mobile/refresh", new { refreshToken = refreshB });
+        Assert.Equal(HttpStatusCode.OK, stillValidB.StatusCode);
+
+        using var logoutA = await client.PostAsJsonAsync("/api/v1/auth/mobile/logout", new { refreshToken = refreshA });
+        Assert.Equal(HttpStatusCode.NoContent, logoutA.StatusCode);
+        using var revokedA = await client.PostAsJsonAsync("/api/v1/auth/mobile/refresh", new { refreshToken = refreshA });
+        Assert.Equal(HttpStatusCode.Unauthorized, revokedA.StatusCode);
     }
 
     [Fact]
@@ -1196,6 +1302,18 @@ public sealed class AuthApiTests : IClassFixture<NexoraApiFactory>
     {
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         return json.RootElement.GetProperty("data").GetProperty("accessToken").GetString()!;
+    }
+
+    private static async Task<Guid> ReadUserIdAsync(HttpResponseMessage response)
+    {
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return json.RootElement.GetProperty("data").GetProperty("user").GetProperty("id").GetGuid();
+    }
+
+    private static async Task<string> ReadMobileRefreshTokenAsync(HttpResponseMessage response)
+    {
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return json.RootElement.GetProperty("data").GetProperty("refreshToken").GetString()!;
     }
 
     private static async Task<string> ReadSessionEmailAsync(HttpResponseMessage response)

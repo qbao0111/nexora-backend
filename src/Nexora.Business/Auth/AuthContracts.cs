@@ -28,6 +28,7 @@ public interface IAuthService
     Task<AuthSession> LoginAsync(LoginUserCommand command, CancellationToken cancellationToken);
     Task<AuthSession> RefreshAsync(string refreshToken, CancellationToken cancellationToken);
     Task RevokeRefreshTokenAsync(string refreshToken, CancellationToken cancellationToken);
+    Task RevokeRefreshTokenAsync(Guid userId, string refreshToken, CancellationToken cancellationToken);
     Task RevokeAllSessionsAsync(Guid userId, CancellationToken cancellationToken);
     Task<AuthenticatedUser> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken);
     Task<AuthenticatedUser> UpdateProfileAsync(

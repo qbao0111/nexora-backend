@@ -27,6 +27,9 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/auth/reset-password` | Đặt lại mật khẩu bằng `userId` + Identity token; revoke toàn bộ session sau khi thành công. |
 | POST | `/auth/login` | Tạo session sau khi credentials hợp lệ và email đã xác minh. |
 | POST | `/auth/refresh` | Xoay refresh token trong cookie. |
+| POST | `/auth/mobile/login` | Tạo session native; trả refresh token trong response body, không dùng cookie. |
+| POST | `/auth/mobile/refresh` | Xoay refresh token native gửi trong request body và trả token mới trong body. |
+| POST | `/auth/mobile/logout` | Thu hồi session-token chain tương ứng với refresh token được gửi; yêu cầu Bearer của cùng user. |
 | POST | `/me/password` | Đổi mật khẩu với current password; yêu cầu Bearer và revoke toàn bộ session sau khi thành công. |
 | GET | `/me` | Profile và entitlement hiện hành. |
 | GET | `/me/orders` | Archive đơn hàng của owner, keyset cursor; `/me.billing.orders` vẫn chỉ là 20 đơn gần nhất. |
@@ -163,6 +166,12 @@ không trả checkout URL, snapshot hay provider payload.
 `POST /api/v1/auth/register` trả `201` với `{ "data": { "email": "...", "verificationRequired": true } }` và không đặt refresh cookie. Email chứa link frontend dạng `/verify-email?userId={guid}&token={IdentityToken}`; frontend gửi hai giá trị đó tới `POST /api/v1/auth/verify-email`.
 
 Tài khoản chưa xác minh không thể login và không được cấp access/refresh session; login trả `401 EMAIL_NOT_VERIFIED`. Verify thành công đặt `EmailConfirmed=true` và provision Free entitlement trong cùng transaction theo cách idempotent. Gửi lại qua `POST /api/v1/auth/resend-verification` luôn trả thông điệp generic để không tiết lộ email có tồn tại hay không và bị rate limit theo email chuẩn hoá.
+
+### Native mobile authentication
+
+`POST /api/v1/auth/mobile/login` dùng cùng email/password validation, Identity session creation và login rate limits như browser login. Thành công trả `accessToken`, `accessTokenExpiresAt`, `refreshToken`, `refreshTokenExpiresAt` và `user` trong `data`; endpoint không đặt cookie. `POST /api/v1/auth/mobile/refresh` nhận `{ "refreshToken": "..." }`, dùng cùng transaction/rotation service và trả access + refresh token mới trong body, không đọc hoặc ghi cookie. `POST /api/v1/auth/mobile/logout` yêu cầu Bearer token cùng user với `{ "refreshToken": "..." }`; endpoint chỉ thu hồi chain đó, không thay thế `logout-all`.
+
+Browser `/auth/login`, `/auth/refresh` và `/auth/logout` giữ nguyên refresh token trong cookie `HttpOnly`, `Secure`, `SameSite` đã cấu hình; browser response body không chứa refresh token. Token lưu trong database là SHA-256 hash. Token cũ đã được rotate mà xuất hiện lại bị từ chối và các descendants của đúng chain bị revoke trong cùng transaction; một session chain độc lập không bị ảnh hưởng.
 
 ### Khôi phục mật khẩu
 

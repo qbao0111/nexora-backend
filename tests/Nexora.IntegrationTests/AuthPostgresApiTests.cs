@@ -194,6 +194,79 @@ public sealed class AuthPostgresApiTests
     }
 
     [PostgresFact]
+    public async Task NativeRefreshReplayRevokesAllDescendantsButNotAnotherSessionOnPostgres()
+    {
+        await using var factory = NexoraApiFactory.CreatePostgres(Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient(handleCookies: false);
+        var email = $"postgres-mobile-chain-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/mobile/login", new { email, password = "Strong!Pass123" });
+        using var otherLogin = await client.PostAsJsonAsync("/api/v1/auth/mobile/login", new { email, password = "Strong!Pass123" });
+        var tokenA = await ReadMobileRefreshTokenAsync(login);
+        var otherSessionToken = await ReadMobileRefreshTokenAsync(otherLogin);
+
+        using var firstRotation = await MobileRefreshAsync(client, tokenA);
+        Assert.Equal(HttpStatusCode.OK, firstRotation.StatusCode);
+        var tokenB = await ReadMobileRefreshTokenAsync(firstRotation);
+        using var secondRotation = await MobileRefreshAsync(client, tokenB);
+        Assert.Equal(HttpStatusCode.OK, secondRotation.StatusCode);
+        var tokenC = await ReadMobileRefreshTokenAsync(secondRotation);
+
+        using var replay = await MobileRefreshAsync(client, tokenA);
+        await AssertInvalidRefreshAsync(replay);
+        using var revokedB = await MobileRefreshAsync(client, tokenB);
+        await AssertInvalidRefreshAsync(revokedB);
+        using var revokedC = await MobileRefreshAsync(client, tokenC);
+        await AssertInvalidRefreshAsync(revokedC);
+        using var otherSession = await MobileRefreshAsync(client, otherSessionToken);
+        Assert.Equal(HttpStatusCode.OK, otherSession.StatusCode);
+        Assert.False(otherSession.Headers.Contains("Set-Cookie"));
+    }
+
+    [PostgresFact]
+    public async Task ConcurrentNativeRefreshReplayRevokesOnlyThatChainOnPostgres()
+    {
+        await using var factory = NexoraApiFactory.CreatePostgres(Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!);
+        factory.InitializeDatabase();
+        using var setupClient = factory.CreateHttpsClient(handleCookies: false);
+        var email = $"postgres-mobile-replay-{Guid.NewGuid():N}@example.test";
+        await RegisterAndVerifyAsync(setupClient, email);
+        using var login = await setupClient.PostAsJsonAsync("/api/v1/auth/mobile/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        Assert.False(login.Headers.Contains("Set-Cookie"));
+        var replayedToken = await ReadMobileRefreshTokenAsync(login);
+
+        using var independentLogin = await setupClient.PostAsJsonAsync("/api/v1/auth/mobile/login", new { email, password = "Strong!Pass123" });
+        Assert.Equal(HttpStatusCode.OK, independentLogin.StatusCode);
+        var independentToken = await ReadMobileRefreshTokenAsync(independentLogin);
+        using var firstClient = factory.CreateHttpsClient(handleCookies: false);
+        using var replayClient = factory.CreateHttpsClient(handleCookies: false);
+
+        var attempts = await Task.WhenAll(
+            MobileRefreshAsync(firstClient, replayedToken),
+            MobileRefreshAsync(replayClient, replayedToken));
+        try
+        {
+            Assert.Single(attempts, response => response.StatusCode == HttpStatusCode.OK);
+            Assert.Single(attempts, response => response.StatusCode == HttpStatusCode.Unauthorized);
+            var winningResponse = attempts.Single(response => response.StatusCode == HttpStatusCode.OK);
+            var descendant = await ReadMobileRefreshTokenAsync(winningResponse);
+            using var revokedDescendant = await MobileRefreshAsync(setupClient, descendant);
+            await AssertInvalidRefreshAsync(revokedDescendant);
+
+            using var independentSession = await MobileRefreshAsync(setupClient, independentToken);
+            Assert.Equal(HttpStatusCode.OK, independentSession.StatusCode);
+            Assert.False(independentSession.Headers.Contains("Set-Cookie"));
+        }
+        finally
+        {
+            foreach (var response in attempts)
+                response.Dispose();
+        }
+    }
+
+    [PostgresFact]
     public async Task LogoutBeforeRefreshRejectsPresentedToken()
     {
         await using var factory = NexoraApiFactory.CreatePostgres(Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!);
@@ -248,6 +321,9 @@ public sealed class AuthPostgresApiTests
         return await client.SendAsync(request);
     }
 
+    private static Task<HttpResponseMessage> MobileRefreshAsync(HttpClient client, string token) =>
+        client.PostAsJsonAsync("/api/v1/auth/mobile/refresh", new { refreshToken = token });
+
     private static async Task<HttpResponseMessage> LogoutAsync(HttpClient client, string token, string accessToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/logout");
@@ -285,6 +361,12 @@ public sealed class AuthPostgresApiTests
     {
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         return json.RootElement.GetProperty("data").GetProperty("accessToken").GetString()!;
+    }
+
+    private static async Task<string> ReadMobileRefreshTokenAsync(HttpResponseMessage response)
+    {
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return json.RootElement.GetProperty("data").GetProperty("refreshToken").GetString()!;
     }
 
     private static async Task<string> ReadSessionEmailAsync(HttpResponseMessage response)

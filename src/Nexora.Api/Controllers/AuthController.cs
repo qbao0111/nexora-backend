@@ -80,6 +80,19 @@ public sealed class AuthController(
         return Ok(new ApiResponse<AuthSessionResponse>(MapSession(session)));
     }
 
+    [AllowAnonymous, HttpPost("mobile/login"), EnableRateLimiting(RateLimitPolicies.Authentication)]
+    public async Task<ActionResult<ApiResponse<MobileAuthSessionResponse>>> MobileLogin(
+        LoginRequest request,
+        CancellationToken cancellationToken)
+    {
+        using var lease = loginEmailRateLimiter.Acquire(request.Email);
+        if (!lease.IsAcquired)
+            return RateLimited(lease);
+
+        var session = await authService.LoginAsync(new LoginUserCommand(request.Email, request.Password), cancellationToken);
+        return Ok(new ApiResponse<MobileAuthSessionResponse>(MapMobileSession(session)));
+    }
+
     [AllowAnonymous, HttpPost("refresh"), EnableRateLimiting(RateLimitPolicies.Refresh)]
     public async Task<ActionResult<ApiResponse<AuthSessionResponse>>> Refresh(CancellationToken cancellationToken)
     {
@@ -92,6 +105,15 @@ public sealed class AuthController(
         return Ok(new ApiResponse<AuthSessionResponse>(MapSession(session)));
     }
 
+    [AllowAnonymous, HttpPost("mobile/refresh"), EnableRateLimiting(RateLimitPolicies.Refresh)]
+    public async Task<ActionResult<ApiResponse<MobileAuthSessionResponse>>> MobileRefresh(
+        MobileRefreshRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await authService.RefreshAsync(request.RefreshToken, cancellationToken);
+        return Ok(new ApiResponse<MobileAuthSessionResponse>(MapMobileSession(session)));
+    }
+
     [Authorize, HttpPost("logout")]
     public async Task<IActionResult> Logout(CancellationToken cancellationToken)
     {
@@ -99,6 +121,15 @@ public sealed class AuthController(
         var token = Request.Cookies[RefreshCookieName];
         if (!string.IsNullOrWhiteSpace(token)) await authService.RevokeRefreshTokenAsync(token, cancellationToken);
         DeleteRefreshCookie();
+        return NoContent();
+    }
+
+    [Authorize, HttpPost("mobile/logout")]
+    public async Task<IActionResult> MobileLogout(
+        MobileLogoutRequest request,
+        CancellationToken cancellationToken)
+    {
+        await authService.RevokeRefreshTokenAsync(User.GetRequiredUserId(), request.RefreshToken, cancellationToken);
         return NoContent();
     }
 
@@ -165,4 +196,9 @@ public sealed class AuthController(
         new(session.AccessToken, session.AccessTokenExpiresAt, new UserResponse(session.User.Id, session.User.Email,
             session.User.DisplayName, session.User.Roles, YearsOfExperience: session.User.YearsOfExperience,
             AvatarUrl: AvatarUrls.For(session.User.AvatarId)));
+
+    private static MobileAuthSessionResponse MapMobileSession(AuthSession session) =>
+        new(session.AccessToken, session.AccessTokenExpiresAt, session.RefreshToken, session.RefreshTokenExpiresAt,
+            new UserResponse(session.User.Id, session.User.Email, session.User.DisplayName, session.User.Roles,
+                YearsOfExperience: session.User.YearsOfExperience, AvatarUrl: AvatarUrls.For(session.User.AvatarId)));
 }
