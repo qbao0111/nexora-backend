@@ -136,9 +136,9 @@ public sealed class AsyncInterviewApiTests
         Assert.Contains(answers, answer => answer.Id == firstAnswerId && answer.Evaluation!.Contains("Nêu trực tiếp", StringComparison.Ordinal));
         Assert.Equal(1, await db.OutboxEvents.CountAsync(item =>
             item.Type == "InterviewReportRequested" && item.AggregateId == interviewId));
+        await ProcessJobsAsync(factory);
         Assert.Equal(PracticeValues.Completed,
             (await GetInterviewAsync(client, interviewId)).GetProperty("status").GetString());
-        await ProcessJobsAsync(factory);
         Assert.Equal(1, await db.OutboxEvents.CountAsync(item =>
             item.Type == "InterviewReportRequested" && item.AggregateId == interviewId));
     }
