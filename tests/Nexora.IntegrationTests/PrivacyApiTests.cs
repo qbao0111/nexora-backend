@@ -6,10 +6,12 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Nexora.Business.Billing;
+using Nexora.Business.ContentReports;
 using Nexora.Business.Practice;
 using Nexora.Business.Privacy;
 using Nexora.Business.Storage;
 using Nexora.Data.Billing;
+using Nexora.Data.ContentReports;
 using Nexora.Data.Persistence;
 using Nexora.Data.Practice;
 
@@ -66,6 +68,18 @@ public sealed class PrivacyApiTests
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow
             });
+            db.ContentReports.Add(new ContentReport
+            {
+                Id = Guid.NewGuid(),
+                ReporterUserId = account.UserId,
+                ContentType = ContentReportValues.StarEvaluation,
+                ContentId = Guid.NewGuid(),
+                ReasonCode = ContentReportValues.Inaccurate,
+                Description = "My submitted moderation report.",
+                ContentSnapshot = "{\"evaluation\":\"private moderation snapshot\"}",
+                Status = ContentReportValues.Pending,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
             await db.SaveChangesAsync();
         }
 
@@ -77,6 +91,8 @@ public sealed class PrivacyApiTests
         Assert.Equal("Private role", exported.GetProperty("jobDescriptions")[0].GetProperty("title").GetString());
         Assert.Equal("Backend Developer", exported.GetProperty("careerGoals")[0].GetProperty("targetRole").GetString());
         Assert.Equal(5, exported.GetProperty("feedback")[0].GetProperty("rating").GetInt32());
+        Assert.Equal(ContentReportValues.Inaccurate, exported.GetProperty("contentReports")[0].GetProperty("reasonCode").GetString());
+        Assert.DoesNotContain("contentSnapshot", exported.GetProperty("contentReports")[0].GetRawText(), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("moderationStatus", exported.GetProperty("feedback")[0].GetRawText(), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("storageKey", exported.GetRawText(), StringComparison.OrdinalIgnoreCase);
         using (var publicFeedback = await client.GetAsync("/api/v1/feedback/public"))
@@ -107,6 +123,7 @@ public sealed class PrivacyApiTests
             Assert.Equal(0, await db.RefreshTokens.CountAsync(item => item.UserId == account.UserId));
             Assert.Equal(0, await db.RealtimeNotifications.CountAsync(item => item.UserId == account.UserId));
             Assert.Equal(0, await db.ProductFeedbacks.CountAsync(item => item.UserId == account.UserId));
+            Assert.Equal(0, await db.ContentReports.CountAsync(item => item.ReporterUserId == account.UserId));
             Assert.Equal(0, (await db.Entitlements.SingleAsync(item => item.UserId == account.UserId)).Reserved);
             Assert.Equal(1, await db.UsageEvents.CountAsync(item => item.UserId == account.UserId && item.Action == BillingValues.Void));
             var user = await db.Users.SingleAsync(item => item.Id == account.UserId);

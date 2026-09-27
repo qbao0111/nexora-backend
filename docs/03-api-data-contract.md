@@ -39,6 +39,7 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | GET | `/me/feedback` | Đọc feedback hiện hành của owner. |
 | PUT | `/me/feedback` | Tạo/cập nhật một feedback hiện hành; edit reset moderation về `pending`. |
 | DELETE | `/me/feedback` | Soft-delete feedback hiện hành và thu hồi consent/publication. |
+| POST | `/content-reports` | Báo cáo nội dung AI đã xem; server xác minh quyền sở hữu và chụp snapshot cần thiết. |
 | GET | `/me/export` | Export allowlisted core profile/billing/practice data của owner; không trả storage key, credential hoặc provider secret. |
 | POST | `/me/deletion-requests` | Yêu cầu xoá bất đồng bộ; bắt buộc `Idempotency-Key`, revoke session ngay và trả `202`. |
 | GET | `/plans` | Gói, giá, quyền lợi từ server. |
@@ -137,6 +138,10 @@ Tất cả route dưới đây yêu cầu policy `Admin`, reason code đối v�
 | POST | `/admin/feedback/:id/reject` | Reject feedback và audit action. |
 | POST | `/admin/feedback/:id/feature` | Feature feedback đã publishable và audit action. |
 | POST | `/admin/feedback/:id/unfeature` | Bỏ feature và audit action. |
+| GET | `/admin/content-reports` | Queue báo cáo AI có filter và page/pageSize; không chứa mô tả hay snapshot. |
+| GET | `/admin/content-reports/:id` | Chi tiết report và moderation snapshot, chỉ Admin. |
+| POST | `/admin/content-reports/:id/review` | Nhận xử lý report đang pending; audit action. |
+| POST | `/admin/content-reports/:id/resolve` | Resolve/dismiss report đang assigned cho chính admin; audit action. |
 
 `GET /api/v1/admin/dashboard` nhận `granularity=day|month|year`, `from`, `to`
 (ISO date) và `currency`. Mặc định lần lượt là 30 ngày, 12 tháng hoặc 5 năm;
@@ -172,6 +177,52 @@ Frontend gửi `userId`, `token` và `newPassword` tới `POST /api/v1/auth/rese
 ### Export và xoá dữ liệu cá nhân
 
 `GET /api/v1/me/export` chỉ trả core data thuộc owner; danh sách resume phản ánh library hiện hành và bỏ qua resume đã soft-delete, còn analysis/interview history vẫn được export. `POST /api/v1/me/deletion-requests` tạo audit state `queued → processing → completed|failed`; cùng user và `Idempotency-Key` trả request gốc. Sau khi accepted, access/refresh session hiện tại không còn hợp lệ. Worker xoá private object và personal practice records rồi anonymize Identity account; billing/usage ledger được giữ làm audit theo retention được phê duyệt. Thời hạn retention production vẫn do DEC-03 quyết định.
+
+`GET /api/v1/me/export` includes the caller's submitted AI content reports
+(content type/ID, reason, description and status) but not the moderation
+snapshot or admin notes. Account deletion removes those reports and snapshots
+explicitly; they are treated as personal user data, not retained as anonymous
+moderation evidence.
+
+### AI content reports
+
+`POST /api/v1/content-reports` requires authentication and is rate limited per
+user. Request fields are `contentType`, `contentId` (UUID), `reasonCode` and
+optional `description` (maximum 1,000 characters). The public request does not
+accept a reporter ID or content snapshot. It returns `202` with
+`{ reportId, receivedAt }`. Supported canonical resource mappings are:
+
+| Content type | ID resolves to | Ownership/availability check |
+| --- | --- | --- |
+| `interview_question` | `interview_questions.Id` | Parent session belongs to caller and question was released. |
+| `interview_answer_evaluation` | `interview_answers.Id` | Answer belongs to caller, evaluation is ready and present. |
+| `interview_report` | `interview_reports.Id` | Report belongs to caller. Snapshot excludes transcript/answers. |
+| `resume_analysis` | `resume_analyses.Id` | Analysis belongs to caller and has a result. |
+| `scenario_evaluation` | `scenario_attempts.Id` | Attempt belongs to caller, is completed and has an evaluation. |
+| `star_evaluation` | `star_attempts.Id` | Attempt belongs to caller, is completed and has an evaluation. |
+
+The server resolves the snapshot from persisted output after the owner check;
+the original CV, JD, candidate answer and source prompt are not copied into the
+snapshot. Unsupported types and missing/foreign content fail closed with a
+validation error or the same 404. Queue pagination uses `page` (1-based,
+maximum 100,000) and `pageSize` (default 20, maximum 100), ordered by
+`createdAt DESC, id DESC`; optional filters are `status`, `contentType`,
+`reasonCode`, `from` and `to`.
+
+All moderation routes use the existing `Admin` policy. Queue rows contain only
+report/resource IDs, reason, status and timestamps. Detail is a separate
+explicit admin read and contains the bounded report description and server
+snapshot. States are `pending → reviewing → resolved|dismissed`; review
+assigns the report to that admin, and only that moderator can resolve/dismiss
+it. Terminal reports cannot be reopened. Mutations are concurrency guarded and
+write safe metadata to `AdminAuditEvent`; free-text report/snapshot/resolution
+content is not written to logs or audit metadata. `ContentReport` remains
+separate from public `ProductFeedback` and cannot publish testimonials. Resolve
+body is `{ outcome, resolutionCode, resolutionNote? }`; outcomes are
+`resolved|dismissed` and resolution codes are `content_corrected`,
+`content_removed`, `no_action` or `other`. See
+[`moderation-process.md`](moderation-process.md) for the implemented review and
+retention flow.
 
 ### Candidate practice loop navigation
 

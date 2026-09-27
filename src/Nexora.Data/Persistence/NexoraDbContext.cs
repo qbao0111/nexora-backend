@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Nexora.Business.Practice;
 using Nexora.Data.Billing;
 using Nexora.Data.Career;
+using Nexora.Data.ContentReports;
 using Nexora.Data.Feedback;
 using Nexora.Data.Identity;
 using Nexora.Data.Learning;
@@ -54,6 +55,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<LearningPathMilestone> LearningPathMilestones => Set<LearningPathMilestone>();
     public DbSet<LearningPathActivity> LearningPathActivities => Set<LearningPathActivity>();
     public DbSet<ProductFeedback> ProductFeedbacks => Set<ProductFeedback>();
+    public DbSet<ContentReport> ContentReports => Set<ContentReport>();
     public DbSet<Nexora.Data.Realtime.RealtimeNotification> RealtimeNotifications => Set<Nexora.Data.Realtime.RealtimeNotification>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -128,6 +130,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
         ConfigureCareerGoals(builder);
         ConfigureLearningPaths(builder);
         ConfigureFeedback(builder);
+        ConfigureContentReports(builder);
         builder.Entity<Nexora.Data.Realtime.RealtimeNotification>(entity =>
         {
             entity.ToTable("realtime_notifications");
@@ -753,6 +756,38 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.Property(item => item.UpdatedAt).IsRequired();
             entity.HasOne(item => item.User).WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(item => item.ModeratedByUser).WithMany().HasForeignKey(item => item.ModeratedByUserId).OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigureContentReports(ModelBuilder builder)
+    {
+        builder.Entity<ContentReport>(entity =>
+        {
+            entity.ToTable("content_reports", table =>
+            {
+                table.HasCheckConstraint("CK_content_reports_content_type",
+                    "\"ContentType\" IN ('interview_question', 'interview_answer_evaluation', 'interview_report', 'resume_analysis', 'scenario_evaluation', 'star_evaluation')");
+                table.HasCheckConstraint("CK_content_reports_reason_code",
+                    "\"ReasonCode\" IN ('offensive', 'inaccurate', 'irrelevant', 'privacy_violation', 'discriminatory', 'other')");
+                table.HasCheckConstraint("CK_content_reports_status",
+                    "\"Status\" IN ('pending', 'reviewing', 'resolved', 'dismissed')");
+            });
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.Status, item.CreatedAt, item.Id });
+            entity.HasIndex(item => new { item.ReporterUserId, item.CreatedAt });
+            entity.HasIndex(item => new { item.ContentType, item.ContentId });
+            entity.Property(item => item.ContentType).HasMaxLength(40).IsRequired();
+            entity.Property(item => item.ReasonCode).HasMaxLength(40).IsRequired();
+            entity.Property(item => item.Description).HasMaxLength(1_000);
+            entity.Property(item => item.ContentSnapshot).HasColumnType("jsonb").HasMaxLength(40_000);
+            entity.Property(item => item.Status).HasMaxLength(20).IsRequired();
+            entity.Property(item => item.ResolutionCode).HasMaxLength(40);
+            entity.Property(item => item.ResolutionNote).HasMaxLength(1_000);
+            entity.Property(item => item.Version).IsConcurrencyToken();
+            entity.HasOne(item => item.Reporter).WithMany().HasForeignKey(item => item.ReporterUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(item => item.Moderator).WithMany().HasForeignKey(item => item.ModeratorUserId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }
