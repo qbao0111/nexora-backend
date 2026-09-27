@@ -2,7 +2,7 @@
 
 **Purpose:** technical inventory of data flows visible in the Nexora backend source. This is not a legal assessment, a Play Console declaration, or proof of the settings currently applied by a hosting/provider account.
 
-**Source snapshot:** backend tree at `47beb26f1de3041a6bf5a3d6d486a8d357122b2a` (includes ContentReport, external-deletion verification, and the Scenario/STAR deletion corrective). Mobile audit material under `mobile_docs/` was used as a checklist only; backend code below is the evidence for backend behavior.
+**Source snapshot:** implementation tree in landing merge `05f1f10eece4b55f78a033325341cd3d67d4c548` on `fix/land-mobile-compliance-backend`, integrating current main `b8ab2bef186308914d321c55d6717dc85520c547` with final reviewed stack `4a9b807cffb62fe4d4e501a18b6892f79aa38b41`. This includes native mobile authentication, ContentReport, external-deletion verification, and the Scenario/STAR deletion corrective. The following inventory-only commit updates this source reference without changing implementation. Mobile audit material under `mobile_docs/` was used as a checklist only; backend code below is the evidence for backend behavior.
 
 ## Evidence labels
 
