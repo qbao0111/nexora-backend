@@ -1,11 +1,17 @@
 using System.Data;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Nexora.Business.Auth;
 using Nexora.Business.Billing;
 using Nexora.Business.Common;
+using Nexora.Business.Email;
 using Nexora.Business.Practice;
 using Nexora.Business.Privacy;
 using Nexora.Business.Storage;
@@ -19,12 +25,17 @@ public sealed partial class PrivacyService(
     NexoraDbContext dbContext,
     IBillingService billingService,
     IStorageProvider storageProvider,
+    UserManager<ApplicationUser> userManager,
+    IEmailSender emailSender,
+    IOptions<EmailVerificationOptions> emailVerificationOptions,
     TimeProvider timeProvider,
     ILogger<PrivacyService> logger) : IPrivacyService, IPrivacyJobProcessor
 {
     private const string DeletionType = "account_deletion";
+    private static readonly TimeSpan ExternalVerificationLifetime = TimeSpan.FromMinutes(30);
     private const int MaxAttempts = 3;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly EmailVerificationOptions _emailVerificationOptions = emailVerificationOptions.Value;
 
     public async Task<CoreDataExport> ExportAsync(Guid userId, CancellationToken cancellationToken)
     {
@@ -153,6 +164,95 @@ public sealed partial class PrivacyService(
         dbContext.DataPrivacyRequests.Add(request);
         await dbContext.SaveChangesAsync(cancellationToken);
         return Map(request);
+    }
+
+    public async Task<DeletionRequestView?> GetCurrentDeletionRequestAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var query = dbContext.DataPrivacyRequests.AsNoTracking()
+            .Where(item => item.UserId == userId && item.Type == DeletionType);
+        var request = dbContext.Database.IsNpgsql()
+            ? await query.OrderByDescending(item => item.RequestedAt).ThenByDescending(item => item.Id)
+                .FirstOrDefaultAsync(cancellationToken)
+            : (await query.ToArrayAsync(cancellationToken))
+                .OrderByDescending(item => item.RequestedAt).ThenByDescending(item => item.Id).FirstOrDefault();
+        return request is null ? null : Map(request);
+    }
+
+    public async Task RequestExternalDeletionAsync(string email, CancellationToken cancellationToken)
+    {
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+        var user = await userManager.FindByEmailAsync(normalizedEmail);
+        if (user is null || !user.IsActive || user.DeletionRequestedAt is not null || user.DeletedAt is not null ||
+            string.IsNullOrWhiteSpace(user.Email))
+            return;
+
+        var now = timeProvider.GetUtcNow();
+        var priorVerifications = await dbContext.ExternalDeletionVerifications
+            .Where(item => item.UserId == user.Id).ToArrayAsync(cancellationToken);
+        dbContext.ExternalDeletionVerifications.RemoveRange(priorVerifications.Where(item =>
+            item.ConsumedAt is not null || item.ExpiresAt <= now));
+
+        var rawToken = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+        var verification = new ExternalDeletionVerification
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            TokenHash = HashExternalDeletionToken(rawToken),
+            CreatedAt = now,
+            ExpiresAt = now.Add(ExternalVerificationLifetime)
+        };
+        dbContext.ExternalDeletionVerifications.Add(verification);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var baseUrl = _emailVerificationOptions.PublicUrl.TrimEnd('/');
+        var link = new Uri($"{baseUrl}/account-deletion/confirm?token={Uri.EscapeDataString(rawToken)}", UriKind.Absolute);
+        try
+        {
+            await emailSender.SendAccountDeletionVerificationAsync(
+                new AccountDeletionVerificationEmail(new EmailRecipient(user.Email), link), cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            ExternalDeletionEmailFailed(logger, user.Id);
+        }
+    }
+
+    public async Task<DeletionRequestView> ConfirmExternalDeletionAsync(string token, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(token) || token.Length > 128)
+            throw InvalidExternalDeletionVerification();
+
+        var now = timeProvider.GetUtcNow();
+        var tokenHash = HashExternalDeletionToken(token);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+        var verification = await dbContext.ExternalDeletionVerifications.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.TokenHash == tokenHash, cancellationToken);
+        if (verification is null || verification.ConsumedAt is not null || verification.ExpiresAt <= now)
+            throw InvalidExternalDeletionVerification();
+
+        var claimQuery = dbContext.ExternalDeletionVerifications
+            .Where(item => item.Id == verification.Id && item.ConsumedAt == null);
+        if (dbContext.Database.IsNpgsql())
+            claimQuery = claimQuery.Where(item => item.ExpiresAt > now);
+        var consumed = await claimQuery
+            .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.ConsumedAt, now), cancellationToken);
+        if (consumed != 1) throw InvalidExternalDeletionVerification();
+
+        var user = dbContext.Database.IsNpgsql()
+            ? await dbContext.Users.FromSqlInterpolated($"SELECT * FROM asp_net_users WHERE \"Id\" = {verification.UserId} FOR UPDATE")
+                .SingleOrDefaultAsync(cancellationToken)
+            : await dbContext.Users.SingleOrDefaultAsync(item => item.Id == verification.UserId, cancellationToken);
+        if (user is null) throw InvalidExternalDeletionVerification();
+
+        var current = await GetCurrentDeletionRequestAsync(user.Id, cancellationToken);
+        var request = current ?? await RequestDeletionAsync(
+            user.Id, $"external-deletion:{user.Id:N}", cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return request;
     }
 
     public async Task<int> ProcessPendingAsync(CancellationToken cancellationToken)
@@ -290,6 +390,8 @@ public sealed partial class PrivacyService(
         dbContext.InterviewAnswers.RemoveRange(dbContext.InterviewAnswers.Where(item => item.UserId == request.UserId));
         dbContext.ProductFeedbacks.RemoveRange(dbContext.ProductFeedbacks.Where(item => item.UserId == request.UserId));
         dbContext.ContentReports.RemoveRange(dbContext.ContentReports.Where(item => item.ReporterUserId == request.UserId));
+        dbContext.ExternalDeletionVerifications.RemoveRange(
+            dbContext.ExternalDeletionVerifications.Where(item => item.UserId == request.UserId));
         dbContext.InterviewQuestions.RemoveRange(dbContext.InterviewQuestions.Where(item => sessionIds.Contains(item.InterviewSessionId)));
         // Practice-again sessions use restrictive self-references so normal
         // history cannot be deleted accidentally. Clear those links first as
@@ -396,11 +498,17 @@ public sealed partial class PrivacyService(
         ? throw new BusinessException("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key hợp lệ là bắt buộc.", BusinessErrorKind.Validation)
         : value.Trim();
 
+    private static string HashExternalDeletionToken(string token) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+
     private static DeletionRequestView Map(DataPrivacyRequest request) =>
         new(request.Id, request.Status, request.Attempts, request.RequestedAt, request.CompletedAt);
 
     private static BusinessException NotFound() =>
         new("RESOURCE_NOT_FOUND", "Không tìm thấy tài nguyên.", BusinessErrorKind.NotFound);
+
+    private static BusinessException InvalidExternalDeletionVerification() =>
+        new("DELETION_VERIFICATION_INVALID", "Liên kết xác minh không hợp lệ hoặc đã hết hạn.", BusinessErrorKind.Validation);
 
     [LoggerMessage(LogLevel.Information, "Deletion request {RequestId} completed in {DurationMs} ms")]
     private static partial void DeletionCompleted(ILogger logger, Guid requestId, double durationMs);
@@ -409,4 +517,7 @@ public sealed partial class PrivacyService(
         "Deletion request {RequestId} attempt {Attempt} ended as {Status} with {ExceptionType} in {DurationMs} ms")]
     private static partial void DeletionFailed(
         ILogger logger, Guid requestId, int attempt, string status, string exceptionType, double durationMs);
+
+    [LoggerMessage(LogLevel.Warning, "Account deletion verification email could not be delivered for user {UserId}")]
+    private static partial void ExternalDeletionEmailFailed(ILogger logger, Guid userId);
 }

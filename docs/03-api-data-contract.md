@@ -42,6 +42,9 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 | POST | `/content-reports` | Báo cáo nội dung AI đã xem; server xác minh quyền sở hữu và chụp snapshot cần thiết. |
 | GET | `/me/export` | Export allowlisted core profile/billing/practice data của owner; không trả storage key, credential hoặc provider secret. |
 | POST | `/me/deletion-requests` | Yêu cầu xoá bất đồng bộ; bắt buộc `Idempotency-Key`, revoke session ngay và trả `202`. |
+| GET | `/me/deletion-requests/current` | Trạng thái yêu cầu xóa gần nhất của user; trả `data: null` nếu chưa có. |
+| POST | `/account-deletion/external/request` | Public, enumeration-safe; gửi email xác minh nếu account tồn tại và đang hoạt động. Giới hạn theo IP. |
+| POST | `/account-deletion/external/confirm` | Public; token một lần/30 phút xác nhận yêu cầu xóa qua cùng privacy service, trả `202`. Giới hạn theo IP. |
 | GET | `/plans` | Gói, giá, quyền lợi từ server. |
 | POST | `/checkout-sessions` | Tạo order và checkout action (redirect hoặc form POST của payment provider). |
 | GET | `/checkout-sessions/:id` | Đọc trạng thái checkout của owner. |
@@ -176,7 +179,11 @@ Frontend gửi `userId`, `token` và `newPassword` tới `POST /api/v1/auth/rese
 
 ### Export và xoá dữ liệu cá nhân
 
-`GET /api/v1/me/export` chỉ trả core data thuộc owner; danh sách resume phản ánh library hiện hành và bỏ qua resume đã soft-delete, còn analysis/interview history vẫn được export. `POST /api/v1/me/deletion-requests` tạo audit state `queued → processing → completed|failed`; cùng user và `Idempotency-Key` trả request gốc. Sau khi accepted, access/refresh session hiện tại không còn hợp lệ. Worker xoá private object và personal practice records rồi anonymize Identity account; billing/usage ledger được giữ làm audit theo retention được phê duyệt. Thời hạn retention production vẫn do DEC-03 quyết định.
+`GET /api/v1/me/export` chỉ trả core data thuộc owner; danh sách resume phản ánh library hiện hành và bỏ qua resume đã soft-delete, còn analysis/interview history vẫn được export. `POST /api/v1/me/deletion-requests` tạo audit state `queued → processing → completed|failed`; cùng user và `Idempotency-Key` trả request gốc. `GET /api/v1/me/deletion-requests/current` chỉ trả id, status, requestedAt và completedAt, không lộ worker attempts. Sau khi accepted, access/refresh session hiện tại không còn hợp lệ. Worker xoá private object và personal practice records rồi anonymize Identity account; billing/usage ledger được giữ làm audit theo retention được phê duyệt. Thời hạn retention production vẫn do DEC-03 quyết định. Hiện không có grace period bảo đảm: xử lý bất đồng bộ không đồng nghĩa với khả năng hủy, vì vậy API không khai báo `scheduledHardDeleteAt` và không cung cấp endpoint cancel.
+
+Luồng public yêu cầu xóa nhận `{ "email": "..." }` và luôn trả cùng HTTP `202`/message chung cho tài khoản không tồn tại, không hoạt động, đã yêu cầu xóa hoặc đang hoạt động. Với tài khoản hoạt động, backend gửi link xác minh; token ngẫu nhiên 256-bit chỉ lưu dưới dạng SHA-256 hash, hết hạn sau 30 phút và được consume atomically trước khi gọi cùng `IPrivacyService.RequestDeletionAsync` như luồng đăng nhập. Confirmation trả trạng thái `queued`; phiên đăng nhập bị thu hồi ngay và worker xóa dữ liệu bất đồng bộ. Token sai, hết hạn hoặc đã dùng trả lỗi validation chung; raw token không được ghi log. Cả request và confirm được rate-limit theo IP.
+
+`POST /api/v1/account-deletion/external/request` nhận `email`; luôn trả cùng envelope/message `202` bất kể có account phù hợp hay không. Link gửi qua email dùng `Authentication:EmailVerification:PublicUrl` làm origin và route frontend `/account-deletion/confirm?token=...`; trang công khai phải POST token trong body tới `/api/v1/account-deletion/external/confirm`, không gửi email/user ID làm bằng chứng xác minh. Confirmation trả `202` với cùng trường status an toàn như GET current (`id`, `status`, `requestedAt`, `completedAt`). Yêu cầu email được giới hạn 5 lần/IP/60 phút; confirmation 10 lần/IP/15 phút.
 
 `GET /api/v1/me/export` includes the caller's submitted AI content reports
 (content type/ID, reason, description and status) but not the moderation

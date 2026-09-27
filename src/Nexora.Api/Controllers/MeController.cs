@@ -58,6 +58,14 @@ public sealed class MeController(IAuthService authService, IBillingService billi
         Accepted(new ApiResponse<DeletionRequestView>(await privacyService.RequestDeletionAsync(
             User.GetRequiredUserId(), Request.Headers["Idempotency-Key"].ToString(), cancellationToken)));
 
+    [HttpGet("deletion-requests/current")]
+    public async Task<ActionResult<ApiResponse<DeletionRequestStatusResponse?>>> GetCurrentDeletionRequest(CancellationToken cancellationToken)
+    {
+        var request = await privacyService.GetCurrentDeletionRequestAsync(User.GetRequiredUserId(), cancellationToken);
+        return Ok(new ApiResponse<DeletionRequestStatusResponse?>(request is null ? null : new DeletionRequestStatusResponse(
+            request.Id, request.Status, request.RequestedAt, request.CompletedAt)));
+    }
+
     private static UserResponse Map(AuthenticatedUser user, BillingSummaryResponse? billing = null) =>
         new(user.Id, user.Email, user.DisplayName, user.Roles, billing, user.YearsOfExperience, AvatarUrls.For(user.AvatarId));
 
