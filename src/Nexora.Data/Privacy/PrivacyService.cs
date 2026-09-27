@@ -24,6 +24,7 @@ namespace Nexora.Data.Privacy;
 public sealed partial class PrivacyService(
     NexoraDbContext dbContext,
     IBillingService billingService,
+    IFeatureEntitlementService featureEntitlementService,
     IStorageProvider storageProvider,
     UserManager<ApplicationUser> userManager,
     IEmailSender emailSender,
@@ -342,7 +343,11 @@ public sealed partial class PrivacyService(
 
         dbContext.ChangeTracker.Clear();
         await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        var user = await dbContext.Users.SingleAsync(item => item.Id == request.UserId, cancellationToken);
+        // Serialize practice-worker persistence with the canonical privacy purge.
+        var user = dbContext.Database.IsNpgsql()
+            ? await dbContext.Users.FromSqlInterpolated($"SELECT * FROM asp_net_users WHERE \"Id\" = {request.UserId} FOR UPDATE")
+                .SingleAsync(cancellationToken)
+            : await dbContext.Users.SingleAsync(item => item.Id == request.UserId, cancellationToken);
         var sessions = await dbContext.InterviewSessions.Include(item => item.ReservationEvent)
             .Where(item => item.UserId == request.UserId).ToArrayAsync(cancellationToken);
         var sessionIds = sessions.Select(item => item.Id).ToArray();
@@ -354,7 +359,20 @@ public sealed partial class PrivacyService(
             .Select(item => item.Id).ToArrayAsync(cancellationToken);
         var learningPathIds = await dbContext.LearningPaths.Where(item => item.UserId == request.UserId)
             .Select(item => item.Id).ToArrayAsync(cancellationToken);
-        var personalAggregateIds = sessionIds.Concat(resumeIds).Concat(jdIds).Concat(analysisIds).ToHashSet();
+        var scenarioAttempts = await dbContext.ScenarioAttempts.Where(item => item.UserId == request.UserId).ToArrayAsync(cancellationToken);
+        var starAttempts = await dbContext.StarAttempts.Where(item => item.UserId == request.UserId).ToArrayAsync(cancellationToken);
+        var personalAggregateIds = sessionIds.Concat(resumeIds).Concat(jdIds).Concat(analysisIds)
+            .Concat(scenarioAttempts.Select(item => item.Id)).Concat(starAttempts.Select(item => item.Id)).ToHashSet();
+        var practiceReservations = scenarioAttempts.Select(item => item.UsageReservationId)
+            .Concat(starAttempts.Select(item => item.UsageReservationId)).OfType<Guid>().Distinct().ToArray();
+        foreach (var reservationId in practiceReservations)
+        {
+            var sourceId = reservationId.ToString("N");
+            var isFinalized = await dbContext.FeatureUsageEvents.AnyAsync(item => item.UserId == request.UserId &&
+                item.SourceId == sourceId && (item.Action == FeatureValues.Consume || item.Action == FeatureValues.Void), cancellationToken);
+            if (!isFinalized)
+                await featureEntitlementService.VoidAsync(request.UserId, reservationId, cancellationToken);
+        }
 
         var reservationSourceIds = sessions.Select(item => item.ReservationEventId.ToString("N")).ToArray();
         var finalized = await dbContext.UsageEvents.Where(item => reservationSourceIds.Contains(item.SourceId) &&
@@ -387,6 +405,8 @@ public sealed partial class PrivacyService(
         }
 
         dbContext.InterviewReports.RemoveRange(dbContext.InterviewReports.Where(item => item.UserId == request.UserId));
+        dbContext.ScenarioAttempts.RemoveRange(scenarioAttempts);
+        dbContext.StarAttempts.RemoveRange(starAttempts);
         dbContext.InterviewAnswers.RemoveRange(dbContext.InterviewAnswers.Where(item => item.UserId == request.UserId));
         dbContext.ProductFeedbacks.RemoveRange(dbContext.ProductFeedbacks.Where(item => item.UserId == request.UserId));
         dbContext.ContentReports.RemoveRange(dbContext.ContentReports.Where(item => item.ReporterUserId == request.UserId));
