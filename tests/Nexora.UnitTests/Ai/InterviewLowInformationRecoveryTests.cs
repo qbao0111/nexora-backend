@@ -8,6 +8,50 @@ public sealed class InterviewLowInformationRecoveryTests
     [InlineData("alo alo")]
     [InlineData("tôi không biết")]
     [InlineData("ngại quá")]
+    public void MultipleCoachingDefectsConvergeInOneTerminalRecovery(string candidateAnswer)
+    {
+        var operation = AiOperations.InterviewEvaluate;
+        var context = new AiOperationContext("multi-coaching", ExpectedStar: false, CandidateAnswer: candidateAnswer);
+        var raw = LowInformationEvaluation(candidateAnswer) with
+        {
+            Strengths = ["Bạn thể hiện khả năng lãnh đạo và dẫn dắt dự án tốt."],
+            ImprovedAnswer = "Tôi đã dẫn dắt đội ngũ triển khai hệ thống production thành công."
+        };
+        var invalid = operation.NormalizeAndValidate(raw, context);
+        Assert.False(invalid.IsValid);
+        var recovery = operation.TryRecoverTerminalValidation(raw, context, invalid);
+        Assert.NotNull(recovery);
+        Assert.True(recovery.IsValid, recovery.FailureReason);
+        Assert.Empty(recovery.NormalizedValue!.Strengths!);
+        Assert.Single(recovery.NormalizedValue.Improvements!);
+        Assert.Contains("Nêu trực tiếp", recovery.NormalizedValue.Improvements!.Single(), StringComparison.Ordinal);
+        Assert.Equal(candidateAnswer, recovery.NormalizedValue.ImprovedAnswer);
+        Assert.Equal(raw.Scores, recovery.NormalizedValue.Scores);
+        Assert.Equal(raw.Feedback, recovery.NormalizedValue.Feedback);
+        Assert.False(recovery.NormalizedValue.Star!.Applicable);
+
+    }
+
+    [Fact]
+    public void OversizedTypedImprovedAnswerUsesBoundedOriginalAnswer()
+    {
+        var context = new AiOperationContext("oversized", ExpectedStar: false, CandidateAnswer: "alo alo");
+        var raw = LowInformationEvaluation("alo alo") with
+        {
+            Improvements = ["Nêu trực tiếp câu trả lời."],
+            ImprovedAnswer = new string('a', 4_001)
+        };
+        var invalid = AiOperations.InterviewEvaluate.NormalizeAndValidate(raw, context);
+        Assert.Equal("interview.improved_answer_too_long", invalid.FailureReason);
+        var recovery = AiOperations.InterviewEvaluate.TryRecoverTerminalValidation(raw, context, invalid);
+        Assert.True(recovery!.IsValid, recovery.FailureReason);
+        Assert.Equal("alo alo", recovery.NormalizedValue!.ImprovedAnswer);
+    }
+
+    [Theory]
+    [InlineData("alo alo")]
+    [InlineData("tôi không biết")]
+    [InlineData("ngại quá")]
     public void TerminalImprovementsFailureUsesDeterministicActionableAdvice(string candidateAnswer)
     {
         var recovery = AiOperations.InterviewEvaluate.TryRecoverTerminalValidation(

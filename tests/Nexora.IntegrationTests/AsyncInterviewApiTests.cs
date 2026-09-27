@@ -136,6 +136,11 @@ public sealed class AsyncInterviewApiTests
         Assert.Contains(answers, answer => answer.Id == firstAnswerId && answer.Evaluation!.Contains("Nêu trực tiếp", StringComparison.Ordinal));
         Assert.Equal(1, await db.OutboxEvents.CountAsync(item =>
             item.Type == "InterviewReportRequested" && item.AggregateId == interviewId));
+        Assert.Equal(PracticeValues.Completed,
+            (await GetInterviewAsync(client, interviewId)).GetProperty("status").GetString());
+        await ProcessJobsAsync(factory);
+        Assert.Equal(1, await db.OutboxEvents.CountAsync(item =>
+            item.Type == "InterviewReportRequested" && item.AggregateId == interviewId));
     }
 
     [PostgresFact]
@@ -799,9 +804,9 @@ public sealed class AsyncInterviewApiTests
         "Câu trả lời chưa cung cấp đủ bằng chứng để đánh giá cao.",
         new StarEvaluation(false, null, null, null, null, null, [], [], []),
         AiOperations.ScoreScale,
-        [],
+        ["Bạn thể hiện khả năng lãnh đạo và dẫn dắt dự án tốt."],
         ["Kết quả chưa rõ."],
-        candidateAnswer);
+        "Tôi đã dẫn dắt đội ngũ triển khai hệ thống production thành công.");
 
     private static async Task<HttpResponseMessage> RetryQuestionAsync(HttpClient client, Guid interviewId, string key)
     {

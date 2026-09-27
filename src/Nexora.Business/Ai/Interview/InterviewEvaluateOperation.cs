@@ -466,54 +466,56 @@ public sealed class InterviewEvaluateOperation : AiOperationDefinition<AnswerEva
         if (raw is null || string.IsNullOrWhiteSpace(context.CandidateAnswer))
             return null;
 
-        if (terminalResult.FailureReason is "interview.strengths_ungrounded")
+        var recovered = terminalResult;
+        // Three coaching fields can fail in sequence; every mutation must pass full validation.
+        for (var step = 0; step < 3; step++)
         {
-            var answer = context.CandidateAnswer;
-            var strengths = (raw.Strengths ?? [])
-                .Where(item => !string.IsNullOrWhiteSpace(item) &&
-                    AnswerCoachingValidator.IsGroundedReportStrength(item, answer))
-                .ToArray();
-            if (strengths.Length == 0 && raw.Scores is not null && raw.Scores.Any(score => score is not null && score.Score >= 60))
+            switch (recovered.FailureReason)
             {
-                strengths = raw.Scores
-                    .Where(score => score is not null && score.Score >= 60 &&
-                        AnswerCoachingValidator.IsGroundedReportStrength(score.Evidence, answer))
-                    .Select(score => score.Evidence.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Take(3)
-                    .ToArray();
+                case "interview.improvements_invalid":
+                case "interview.improvements_not_actionable":
+                    raw = raw with { Improvements = DeterministicLowInformationImprovements };
+                    break;
+                case "interview.strengths_ungrounded":
+                    raw = raw with { Strengths = RecoverGroundedStrengths(raw, context.CandidateAnswer) };
+                    break;
+                case "interview.improved_answer_blank":
+                case "interview.improved_answer_ungrounded":
+                case "interview.improved_answer_fabricated":
+                case "interview.improved_answer_too_long":
+                    var answer = context.CandidateAnswer.Trim();
+                    raw = raw with { ImprovedAnswer = answer.Length <= 4_000 ? answer : answer[..4_000].TrimEnd() };
+                    break;
+                default:
+                    return step == 0 ? null : recovered;
             }
 
-            return NormalizeAndValidate(raw with { Strengths = strengths }, context);
-        }
-
-        if (terminalResult.FailureReason is "interview.improvements_invalid" or "interview.improvements_not_actionable")
-        {
-            var recovered = NormalizeAndValidate(raw with { Improvements = DeterministicLowInformationImprovements }, context);
-            if (recovered is { IsValid: true } ||
-                recovered.FailureReason is not ("interview.improved_answer_ungrounded" or "interview.improved_answer_fabricated" or "interview.improved_answer_blank"))
-            {
+            recovered = NormalizeAndValidate(raw, context);
+            if (recovered.IsValid)
                 return recovered;
-            }
-
-            var answer = context.CandidateAnswer.Trim();
-            var safeImprovedAnswer = answer.Length <= 4_000 ? answer : answer[..4_000].TrimEnd();
-            return NormalizeAndValidate(raw with
-            {
-                Improvements = DeterministicLowInformationImprovements,
-                ImprovedAnswer = safeImprovedAnswer
-            }, context);
         }
 
-        if (terminalResult.FailureReason is not ("interview.improved_answer_ungrounded" or "interview.improved_answer_fabricated"))
-            return null;
+        return recovered;
+    }
 
-        var candidateAnswer = context.CandidateAnswer.Trim();
-        var groundedFallback = candidateAnswer.Length <= 4_000
-            ? candidateAnswer
-            : candidateAnswer[..4_000].TrimEnd();
+    private static string[] RecoverGroundedStrengths(AnswerEvaluation raw, string answer)
+    {
+        var strengths = (raw.Strengths ?? [])
+            .Where(item => !string.IsNullOrWhiteSpace(item) &&
+                AnswerCoachingValidator.IsGroundedReportStrength(item, answer))
+            .ToArray();
+        if (strengths.Length == 0 && raw.Scores is not null && raw.Scores.Any(score => score is not null && score.Score >= 60))
+        {
+            strengths = raw.Scores
+                .Where(score => score is not null && score.Score >= 60 &&
+                    AnswerCoachingValidator.IsGroundedReportStrength(score.Evidence, answer))
+                .Select(score => score.Evidence.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .ToArray();
+        }
 
-        return NormalizeAndValidate(raw with { ImprovedAnswer = groundedFallback }, context);
+        return strengths;
     }
 
 }

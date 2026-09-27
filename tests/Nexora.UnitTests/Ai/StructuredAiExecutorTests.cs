@@ -7,6 +7,51 @@ namespace Nexora.UnitTests.Ai;
 
 public sealed class StructuredAiExecutorTests
 {
+    [Theory]
+    [InlineData(AiProviderFailureKind.Authentication)]
+    [InlineData(AiProviderFailureKind.Configuration)]
+    [InlineData(AiProviderFailureKind.RateLimited)]
+    [InlineData(AiProviderFailureKind.Timeout)]
+    [InlineData(AiProviderFailureKind.Unavailable)]
+    public async Task CoachingDefectDoesNotMaskTerminalProviderFailure(AiProviderFailureKind failureKind)
+    {
+        var provider = new MockAiProvider();
+        provider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale) with { Improvements = [] });
+        provider.EnqueueException(new AiProviderException(failureKind, "Safe provider failure"));
+        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+        var exception = await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(
+            AiOperations.InterviewEvaluate, "Grounded answer",
+            new AiOperationContext("provider-failure", ExpectedStar: false, CandidateAnswer: "Grounded answer"),
+            CancellationToken.None));
+        Assert.NotEqual("AI_OUTPUT_INVALID", exception.Code);
+        Assert.Equal(2, provider.CallCount);
+    }
+
+    [Fact]
+    public async Task MultipleTerminalCoachingDefectsRecoverWithinTwoProviderCalls()
+    {
+        const string answer = "alo alo";
+        var raw = TechnicalEvaluation(AiOperations.ScoreScale) with
+        {
+            Scores = [new("correctness", 20, answer), new("structure", 10, answer),
+                new("completeness", 10, answer), new("clarity", 20, answer)],
+            Strengths = ["Bạn thể hiện khả năng lãnh đạo và dẫn dắt dự án tốt."],
+            Improvements = ["Kết quả chưa rõ."],
+            ImprovedAnswer = "Tôi đã dẫn dắt đội ngũ triển khai hệ thống production thành công."
+        };
+        var provider = new MockAiProvider();
+        provider.EnqueueResult(raw);
+        provider.EnqueueResult(raw);
+        var context = new AiOperationContext("multi-coaching", ExpectedStar: false, CandidateAnswer: answer);
+        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+        var result = await executor.ExecuteAsync(AiOperations.InterviewEvaluate, answer, context, CancellationToken.None);
+        Assert.Equal(2, provider.CallCount);
+        Assert.True(AiOperations.InterviewEvaluate.NormalizeAndValidate(result.Value, context).IsValid);
+        Assert.Empty(result.Value.Strengths!);
+        Assert.Single(result.Value.Improvements!);
+        Assert.Equal(answer, result.Value.ImprovedAnswer);
+    }
+
     [Fact]
     public async Task RepeatedQuestionRepairsWithinTwoProviderCalls()
     {
@@ -803,7 +848,7 @@ public sealed class StructuredAiExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncFailsClosedWhenPriorRubricAndCurrentAnswerAreInvalid()
+    public async Task ExecuteAsyncFailsClosedWhenBothAttemptsHaveInvalidRubric()
     {
         var fakeProvider = new MockAiProvider();
         fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale) with
@@ -813,6 +858,7 @@ public sealed class StructuredAiExecutorTests
         });
         fakeProvider.EnqueueResult(TechnicalEvaluation(AiOperations.ScoreScale) with
         {
+            Scores = [],
             ImprovedAnswer = ""
         });
         var executor = new StructuredAiExecutor(fakeProvider, NullLogger<StructuredAiExecutor>.Instance);
@@ -954,6 +1000,7 @@ public sealed class StructuredAiExecutorTests
     {
         var invalidRaw = TechnicalEvaluation(AiOperations.ScoreScale) with
         {
+            Scores = [],
             Improvements = [],
             ImprovedAnswer = "Clear structured response"
         };
@@ -974,7 +1021,7 @@ public sealed class StructuredAiExecutorTests
 
         Assert.NotNull(recovery);
         Assert.False(recovery.IsValid);
-        Assert.Equal("interview.improvements_invalid", recovery.FailureReason);
+        Assert.Equal("rubric.criteria_missing", recovery.FailureReason);
     }
 
     [Fact]
