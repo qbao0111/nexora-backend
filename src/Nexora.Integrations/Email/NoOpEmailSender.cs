@@ -16,6 +16,12 @@ public sealed class NoOpEmailSender : IEmailSender
         return Task.CompletedTask;
     }
 
+    public Task SendAccountDeletionVerificationAsync(AccountDeletionVerificationEmail message, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    }
+
     public Task SendReminderAsync(ReminderEmail message, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

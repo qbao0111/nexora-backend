@@ -82,6 +82,31 @@ public sealed class ResendEmailSenderTests
     }
 
     [Fact]
+    public async Task AccountDeletionVerificationUsesSafeVietnameseEmailTemplate()
+    {
+        string? requestBody = null;
+        var handler = new StubHandler(async (request, cancellationToken) =>
+        {
+            requestBody = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return Json(HttpStatusCode.OK, "{}");
+        });
+        using var httpClient = new HttpClient(handler);
+        var sender = CreateSender(httpClient);
+        const string verificationToken = "short-lived-one-time-token";
+
+        await sender.SendAccountDeletionVerificationAsync(
+            new AccountDeletionVerificationEmail(
+                new EmailRecipient("candidate@example.test"),
+                new Uri($"https://frontend.example/account-deletion/confirm?token={verificationToken}")),
+            CancellationToken.None);
+
+        using var body = JsonDocument.Parse(requestBody!);
+        Assert.Equal("Xác minh yêu cầu xóa tài khoản Nexora", body.RootElement.GetProperty("subject").GetString());
+        Assert.Contains("xóa tài khoản", body.RootElement.GetProperty("html").GetString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(verificationToken, body.RootElement.GetProperty("text").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ProviderFailuresAreNormalizedWithoutProviderBodyOrSecret()
     {
         const string providerSecret = "provider-secret-must-not-leak";
