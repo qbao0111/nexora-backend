@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -14,6 +15,127 @@ namespace Nexora.IntegrationTests.Observability;
 
 public sealed class SentryApiObservabilityTests
 {
+    [Theory]
+    [InlineData(400)]
+    [InlineData(413)]
+    public async Task BadRequestKeepsFrameworkStatusAndSafeEnvelopeWithoutCapture(int status)
+    {
+        var reporter = new RecordingApiReporter();
+        var context = CreateContext();
+        var middleware = new ExceptionHandlingMiddleware(
+            _ => throw new BadHttpRequestException("Unexpected end of request content. PRIVATE_TOKEN", status),
+            NullLogger<ExceptionHandlingMiddleware>.Instance, reporter);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(status, context.Response.StatusCode);
+        Assert.Empty(reporter.Captures);
+        var response = await ReadResponseAsync(context);
+        Assert.Contains("BAD_HTTP_REQUEST", response, StringComparison.Ordinal);
+        Assert.Contains("req-api-123", response, StringComparison.Ordinal);
+        Assert.DoesNotContain("INTERNAL_ERROR", response, StringComparison.Ordinal);
+        Assert.DoesNotContain("PRIVATE_TOKEN", response, StringComparison.Ordinal);
+        Assert.DoesNotContain("Unexpected end", response, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AbortedBadRequestDoesNotAttemptResponseWrite()
+    {
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+        var context = CreateContext();
+        context.RequestAborted = cancellation.Token;
+        var body = new FailingResponseStream();
+        context.Response.Body = body;
+        var reporter = new RecordingApiReporter();
+        var middleware = new ExceptionHandlingMiddleware(
+            _ => throw new BadHttpRequestException("Unexpected end of request content."),
+            NullLogger<ExceptionHandlingMiddleware>.Instance, reporter);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Empty(reporter.Captures);
+        Assert.Equal(0, body.WriteAttempts);
+        Assert.Null(context.Response.ContentType);
+    }
+
+    [Fact]
+    public async Task StartedBadRequestAbortsWithoutOverwritingResponse()
+    {
+        var context = CreateContext();
+        var response = new HttpResponseFeature { StatusCode = 202 };
+        response.Headers["X-Original"] = "preserved";
+        context.Features.Set<IHttpResponseFeature>(new StartedResponseFeature(response));
+        var body = new FailingResponseStream();
+        context.Response.Body = body;
+        var reporter = new RecordingApiReporter();
+        var middleware = new ExceptionHandlingMiddleware(
+            _ => throw new BadHttpRequestException("Unexpected end of request content."),
+            NullLogger<ExceptionHandlingMiddleware>.Instance, reporter);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(202, context.Response.StatusCode);
+        Assert.Equal("preserved", context.Response.Headers["X-Original"].ToString());
+        Assert.Equal(0, body.WriteAttempts);
+        Assert.Empty(reporter.Captures);
+    }
+
+    [Fact]
+    public async Task DisconnectDuringBadRequestResponseWriteDoesNotEscapeOrCapture()
+    {
+        var context = CreateContext();
+        var body = new FailingResponseStream();
+        context.Response.Body = body;
+        var reporter = new RecordingApiReporter();
+        var middleware = new ExceptionHandlingMiddleware(
+            _ => throw new BadHttpRequestException("Unexpected end of request content."),
+            NullLogger<ExceptionHandlingMiddleware>.Instance, reporter);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(body.WriteAttempts > 0);
+        Assert.Empty(reporter.Captures);
+    }
+
+    private sealed class FailingResponseStream : MemoryStream
+    {
+        public int WriteAttempts { get; private set; }
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            WriteAttempts++;
+            throw new IOException("Disconnected response transport");
+        }
+    }
+
+    [Fact]
+    public async Task BadHttpExceptionWithServerStatusStillCapturesUnexpectedFailure()
+    {
+        var reporter = new RecordingApiReporter();
+        var context = CreateContext();
+        var middleware = new ExceptionHandlingMiddleware(
+            _ => throw new BadHttpRequestException("Unexpected server failure", 500),
+            NullLogger<ExceptionHandlingMiddleware>.Instance, reporter);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(500, context.Response.StatusCode);
+        Assert.Single(reporter.Captures);
+        Assert.Contains("INTERNAL_ERROR", await ReadResponseAsync(context), StringComparison.Ordinal);
+    }
+
+    private sealed class StartedResponseFeature(HttpResponseFeature response) : IHttpResponseFeature
+    {
+        public int StatusCode { get => response.StatusCode; set => response.StatusCode = value; }
+        public string? ReasonPhrase { get => response.ReasonPhrase; set => response.ReasonPhrase = value; }
+        public IHeaderDictionary Headers { get => response.Headers; set => response.Headers = value; }
+        public Stream Body { get => response.Body; set => response.Body = value; }
+        public bool HasStarted => true;
+        public void OnStarting(Func<object, Task> callback, object state) { }
+        public void OnCompleted(Func<object, Task> callback, object state) { }
+    }
+
     [Fact]
     public async Task UnexpectedExceptionIsCapturedOnceAndReturnsSafeEnvelope()
     {

@@ -807,6 +807,7 @@ POST /api/v1/scenarios/{scenarioId}/retry
 | HTTP | Code | Client action |
 | --- | --- | --- |
 | 400 | `VALIDATION_ERROR` | Hiển thị lỗi field, không retry. |
+| 4xx (framework status, ví dụ 400/413) | `BAD_HTTP_REQUEST` | Request framing/body transport không hợp lệ; trả envelope chỉ khi response chưa bắt đầu và kết nối còn ghi được. Client disconnect không được bảo đảm nhận response; không tự retry refresh-token rotation. |
 | 401 | `UNAUTHENTICATED` | Mở login, giữ `next` URL an toàn. |
 | 403 | `FORBIDDEN` / `QUOTA_EXCEEDED` | Không retry; đề nghị quyền/gói phù hợp. |
 | 404 | `NOT_FOUND` | Không tiết lộ tài nguyên của user khác. |
