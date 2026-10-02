@@ -38,6 +38,31 @@ public sealed partial class ExceptionHandlingMiddleware(
         {
             ClientCancelled(logger, context.TraceIdentifier);
         }
+        catch (BadHttpRequestException exception) when (exception.StatusCode is >= 400 and < 500)
+        {
+            InvalidRequest(logger, context.TraceIdentifier, exception.StatusCode);
+            if (context.RequestAborted.IsCancellationRequested)
+                return;
+            if (context.Response.HasStarted)
+            {
+                context.Abort();
+                return;
+            }
+
+            try
+            {
+                await ApiErrorWriter.WriteAsync(context, exception.StatusCode, "BAD_HTTP_REQUEST", "Yêu cầu HTTP không hợp lệ.");
+            }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                ClientCancelled(logger, context.TraceIdentifier);
+            }
+            catch (IOException)
+            {
+                ClientCancelled(logger, context.TraceIdentifier);
+                context.Abort();
+            }
+        }
         catch (Exception exception)
         {
             UnhandledFailure(logger, exception, context.TraceIdentifier);
@@ -56,6 +81,9 @@ public sealed partial class ExceptionHandlingMiddleware(
 
     [LoggerMessage(LogLevel.Information, "Request {RequestId} was cancelled by the client")]
     private static partial void ClientCancelled(ILogger logger, string requestId);
+
+    [LoggerMessage(LogLevel.Information, "Request {RequestId} rejected with HTTP status {StatusCode}")]
+    private static partial void InvalidRequest(ILogger logger, string requestId, int statusCode);
 
     [LoggerMessage(LogLevel.Error, "Unhandled error for request {RequestId}")]
     private static partial void UnhandledFailure(ILogger logger, Exception exception, string requestId);
