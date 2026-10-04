@@ -5,13 +5,19 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Nexora.Business.Ai;
 using Nexora.Business.Authorization;
 using Nexora.Business.Billing;
 using Nexora.Business.ContentReports;
+using Nexora.Business.Learning;
 using Nexora.Business.Practice;
+using Nexora.Business.Privacy;
+using Nexora.Business.Skills;
 using Nexora.Data.Billing;
+using Nexora.Data.Career;
 using Nexora.Data.ContentReports;
 using Nexora.Data.Identity;
+using Nexora.Data.Learning;
 using Nexora.Data.Persistence;
 using Nexora.Data.Practice;
 
@@ -19,6 +25,221 @@ namespace Nexora.IntegrationTests;
 
 public sealed class ContentReportsApiTests
 {
+    [Fact]
+    public async Task GrowthReportingRejectsUnavailableContentAndBoundsOversizedSnapshots()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client, "growth-bounds@example.test");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.AccessToken);
+        using var malformed = await client.PostAsJsonAsync("/api/v1/content-reports", new
+        {
+            contentType = ContentReportValues.LearningPath, contentId = "learning-path", reasonCode = ContentReportValues.Other
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, malformed.StatusCode);
+        using var emptyProfile = await client.PostAsJsonAsync("/api/v1/content-reports", new
+        {
+            contentType = ContentReportValues.SkillProfile, contentId = Guid.NewGuid(), reasonCode = ContentReportValues.Other
+        });
+        Assert.Equal(HttpStatusCode.NotFound, emptyProfile.StatusCode);
+        var pathId = await SeedGrowthAsync(factory, owner.UserId);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var path = await db.LearningPaths.SingleAsync(item => item.Id == pathId);
+        var milestone = await db.LearningPathMilestones.SingleAsync(item => item.LearningPathId == pathId);
+        var service = scope.ServiceProvider.GetRequiredService<IContentReportService>();
+        var command = new SubmitContentReportCommand(ContentReportValues.LearningPath, pathId, ContentReportValues.Other, null);
+        path.Status = LearningPathValues.Pending;
+        await db.SaveChangesAsync();
+        Assert.Equal("RESOURCE_NOT_FOUND", (await Assert.ThrowsAsync<Nexora.Business.Common.BusinessException>(
+            () => service.SubmitAsync(owner.UserId, command, CancellationToken.None))).Code);
+        path.Status = LearningPathValues.Active;
+        var goal = await db.CareerGoals.SingleAsync(item => item.Id == path.CareerGoalId);
+        goal.DeletedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        Assert.Equal("RESOURCE_NOT_FOUND", (await Assert.ThrowsAsync<Nexora.Business.Common.BusinessException>(
+            () => service.SubmitAsync(owner.UserId, command, CancellationToken.None))).Code);
+        goal.DeletedAt = null;
+        db.LearningPathActivities.AddRange(Enumerable.Range(0, 100).Select(index => new LearningPathActivity
+        {
+            Id = Guid.NewGuid(), LearningPathId = pathId, LearningPathMilestoneId = milestone.Id,
+            ActivityKey = $"large-{index}", Title = "Generated large activity", Description = new string('x', 500),
+            Type = LearningPathValues.StarDrill, Status = LearningPathValues.Pending, SortOrder = index + 1,
+            CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        }));
+        await db.SaveChangesAsync();
+        var receipt = await service.SubmitAsync(owner.UserId, command, CancellationToken.None);
+        var snapshot = (await db.ContentReports.SingleAsync(item => item.Id == receipt.ReportId)).ContentSnapshot!;
+        Assert.InRange(snapshot.Length, 1, ContentReportRules.MaximumSnapshotLength);
+        using var json = JsonDocument.Parse(snapshot);
+        Assert.True(json.RootElement.GetProperty("truncated").GetBoolean());
+        Assert.NotEmpty(json.RootElement.GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task GrowthReportingUsesOwnerScopedVersionedContent()
+    {
+        using var factory = new NexoraApiFactory();
+        factory.InitializeDatabase();
+        await VerifyGrowthReportingAsync(factory);
+    }
+
+    internal static async Task VerifyGrowthReportingAsync(NexoraApiFactory factory)
+    {
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client, "growth-report-owner@example.test");
+        var other = await RegisterAsync(client, "growth-report-other@example.test");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.AccessToken);
+        using var emptyResponse = await client.GetAsync("/api/v1/skill-profile");
+        Assert.Equal(JsonValueKind.Null, (await DataAsync(emptyResponse)).GetProperty("reportingId").ValueKind);
+
+        var ownerPath = await SeedGrowthAsync(factory, owner.UserId);
+        var foreignPath = await SeedGrowthAsync(factory, other.UserId);
+        using var profileResponse = await client.GetAsync("/api/v1/skill-profile");
+        var profileId = (await DataAsync(profileResponse)).GetProperty("reportingId").GetGuid();
+        Guid foreignProfileId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<ISkillProfileService>();
+            foreignProfileId = (await service.GetAsync(other.UserId, CancellationToken.None)).ReportingId!.Value;
+        }
+        Assert.NotEqual(profileId, foreignProfileId);
+        foreach (var (type, id) in new[] { (ContentReportValues.LearningPath, ownerPath), (ContentReportValues.SkillProfile, profileId) })
+        {
+            using var submitted = await client.PostAsJsonAsync("/api/v1/content-reports", new
+            {
+                contentType = type, contentId = id, reasonCode = ContentReportValues.Inaccurate,
+                description = "A user-initiated report.", contentSnapshot = "FORGED CLIENT CONTENT"
+            });
+            Assert.Equal(HttpStatusCode.Accepted, submitted.StatusCode);
+            Assert.NotEqual(Guid.Empty, (await DataAsync(submitted)).GetProperty("reportId").GetGuid());
+        }
+        foreach (var (type, id) in new[] { (ContentReportValues.LearningPath, foreignPath), (ContentReportValues.SkillProfile, foreignProfileId) })
+        {
+            using var denied = await client.PostAsJsonAsync("/api/v1/content-reports", new
+            {
+                contentType = type, contentId = id, reasonCode = ContentReportValues.Other
+            });
+            Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+        }
+        string[] originalSnapshots;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            originalSnapshots = await db.ContentReports.Where(item => item.ReporterUserId == owner.UserId)
+                .OrderBy(item => item.ContentType).Select(item => item.ContentSnapshot!).ToArrayAsync();
+            Assert.Equal(2, originalSnapshots.Length);
+            Assert.All(await db.ContentReports.Where(item => item.ReporterUserId == owner.UserId).ToArrayAsync(),
+                report => Assert.Equal(ContentReportValues.Pending, report.Status));
+            var reporting = scope.ServiceProvider.GetRequiredService<IContentReportService>();
+            foreach (var type in new[] { ContentReportValues.LearningPath, ContentReportValues.SkillProfile })
+            {
+                Assert.Equal("RESOURCE_NOT_FOUND", (await Assert.ThrowsAsync<Nexora.Business.Common.BusinessException>(
+                    () => reporting.SubmitAsync(owner.UserId, new(type, Guid.NewGuid(), ContentReportValues.Other, null),
+                        CancellationToken.None))).Code);
+                await Assert.ThrowsAsync<Nexora.Business.Common.BusinessException>(() => reporting.SubmitAsync(owner.UserId,
+                    new(type, profileId, "invalid_reason", null), CancellationToken.None));
+                await Assert.ThrowsAsync<Nexora.Business.Common.BusinessException>(() => reporting.SubmitAsync(owner.UserId,
+                    new(type, profileId, ContentReportValues.Other, new string('x', 1001)), CancellationToken.None));
+            }
+            Assert.All(originalSnapshots, snapshot =>
+            {
+                Assert.InRange(snapshot.Length, 1, ContentReportRules.MaximumSnapshotLength);
+                using var parsed = JsonDocument.Parse(snapshot);
+                Assert.NotEmpty(parsed.RootElement.GetProperty("items").EnumerateArray());
+                Assert.DoesNotContain("FORGED", snapshot, StringComparison.Ordinal);
+                Assert.DoesNotContain("PRIVATE ANSWER", snapshot, StringComparison.Ordinal);
+            });
+            Assert.Contains(originalSnapshots, text => text.Contains("Generated learning", StringComparison.Ordinal));
+            Assert.Contains(originalSnapshots, text => text.Contains("behavioral.action", StringComparison.Ordinal));
+            var attempt = await db.StarAttempts.SingleAsync(item => item.UserId == owner.UserId);
+            attempt.CompletedAt = attempt.CompletedAt!.Value.AddMinutes(1);
+            var activity = await db.LearningPathActivities.SingleAsync(item => item.LearningPathId == ownerPath);
+            activity.Description = "New content after report";
+            await db.SaveChangesAsync();
+        }
+        using var stale = await client.PostAsJsonAsync("/api/v1/content-reports", new
+        {
+            contentType = ContentReportValues.SkillProfile, contentId = profileId, reasonCode = ContentReportValues.Other
+        });
+        Assert.Equal(HttpStatusCode.NotFound, stale.StatusCode);
+        using var updatedProfile = await client.GetAsync("/api/v1/skill-profile");
+        Assert.NotEqual(profileId, (await DataAsync(updatedProfile)).GetProperty("reportingId").GetGuid());
+        var adminToken = await MakeAdminAsync(factory, owner.UserId, "growth-report-owner@example.test");
+        using var admin = factory.CreateHttpsClient();
+        admin.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        using var queue = await admin.GetAsync("/api/v1/admin/content-reports?contentType=skill_profile");
+        Assert.Equal(HttpStatusCode.OK, queue.StatusCode);
+        var entry = Assert.Single((await DataAsync(queue)).GetProperty("items").EnumerateArray());
+        Assert.DoesNotContain("snapshot", entry.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        var reportId = entry.GetProperty("id").GetGuid();
+        using var detail = await admin.GetAsync($"/api/v1/admin/content-reports/{reportId}");
+        Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
+        using var review = await admin.PostAsync($"/api/v1/admin/content-reports/{reportId}/review", null);
+        Assert.Equal(HttpStatusCode.OK, review.StatusCode);
+        using var resolve = await admin.PostAsJsonAsync($"/api/v1/admin/content-reports/{reportId}/resolve",
+            new { outcome = ContentReportValues.Resolved, resolutionCode = "content_corrected" });
+        Assert.Equal(HttpStatusCode.OK, resolve.StatusCode);
+        await using var finalScope = factory.Services.CreateAsyncScope();
+        var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(originalSnapshots, await finalDb.ContentReports.OrderBy(item => item.ContentType)
+            .Select(item => item.ContentSnapshot!).ToArrayAsync());
+        await using (var deletionScope = factory.Services.CreateAsyncScope())
+        {
+            await deletionScope.ServiceProvider.GetRequiredService<IPrivacyService>()
+                .RequestDeletionAsync(owner.UserId, "growth-report-delete", CancellationToken.None);
+            Assert.Equal(1, await deletionScope.ServiceProvider.GetRequiredService<IPrivacyJobProcessor>()
+                .ProcessPendingAsync(CancellationToken.None));
+        }
+        await using var deletionCheck = factory.Services.CreateAsyncScope();
+        var deletionDb = deletionCheck.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(PrivacyValues.Completed,
+            (await deletionDb.DataPrivacyRequests.SingleAsync(item => item.UserId == owner.UserId)).Status);
+        Assert.Empty(await deletionDb.ContentReports.Where(item => item.ReporterUserId == owner.UserId).ToArrayAsync());
+        Assert.True(await deletionDb.LearningPaths.AnyAsync(item => item.Id == foreignPath));
+    }
+
+    private static async Task<Guid> SeedGrowthAsync(NexoraApiFactory factory, Guid userId)
+    {
+        var now = DateTimeOffset.UtcNow;
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var goal = new CareerGoal
+        {
+            Id = Guid.NewGuid(), UserId = userId, TargetRole = "Backend", Seniority = "junior",
+            Active = true, CreatedAt = now, UpdatedAt = now
+        };
+        var path = new LearningPath
+        {
+            Id = Guid.NewGuid(), UserId = userId, CareerGoalId = goal.Id, Status = LearningPathValues.Active,
+            CreatedAt = now, UpdatedAt = now
+        };
+        var milestone = new LearningPathMilestone
+        {
+            Id = Guid.NewGuid(), LearningPathId = path.Id, Code = LearningPathValues.DevelopingMilestone,
+            Title = "Generated learning milestone", Status = LearningPathValues.Active, CreatedAt = now, UpdatedAt = now
+        };
+        var component = new StarComponentEvaluation(70, true, "Evidence", "Feedback");
+        db.AddRange(goal, path, milestone, new LearningPathActivity
+        {
+            Id = Guid.NewGuid(), LearningPathId = path.Id, LearningPathMilestoneId = milestone.Id,
+            ActivityKey = "behavioral.action", Type = LearningPathValues.StarDrill, Title = "Generated learning activity",
+            Description = "Improve personal actions", Status = LearningPathValues.Pending, CreatedAt = now, UpdatedAt = now
+        }, new StarAttempt
+        {
+            Id = Guid.NewGuid(), UserId = userId, Question = "PRIVATE QUESTION", Answer = "PRIVATE ANSWER",
+            Status = PracticeFeatureValues.Completed,
+            EvaluationJson = JsonSerializer.Serialize(new StarEvaluation(true, 70,
+                component, component, component, component, [], ["strength"], ["tip"], AiOperations.ScoreScale),
+                JsonSerializerOptions.Web),
+            ModelVersion = "test-model", PromptVersion = "test-prompt", SchemaVersion = "test-schema",
+            CreatedAt = now, UpdatedAt = now, CompletedAt = now
+        });
+        await db.SaveChangesAsync();
+        return path.Id;
+    }
+
     [Fact]
     public async Task OwnedAiContentCanBeReportedAndAdminListKeepsSnapshotOutOfQueue()
     {
@@ -55,7 +276,7 @@ public sealed class ContentReportsApiTests
         Assert.Equal(HttpStatusCode.NotFound, ownerSpoof.StatusCode);
         using var unsupported = await client.PostAsJsonAsync("/api/v1/content-reports", new
         {
-            contentType = "skill_profile",
+            contentType = "unsupported_type",
             contentId,
             reasonCode = ContentReportValues.Other
         });

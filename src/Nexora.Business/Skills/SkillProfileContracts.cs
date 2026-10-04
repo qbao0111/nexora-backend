@@ -38,7 +38,10 @@ public sealed record SkillProfileCompetency(
 
 public sealed record SkillProfileView(
     IReadOnlyCollection<SkillProfileCompetency> Competencies,
-    IReadOnlyCollection<SkillProfileWeaknessSignal> WeaknessSignals);
+    IReadOnlyCollection<SkillProfileWeaknessSignal> WeaknessSignals)
+{
+    public Guid? ReportingId { get; init; }
+}
 
 public interface ISkillProfileService
 {

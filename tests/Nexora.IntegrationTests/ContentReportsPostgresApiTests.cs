@@ -17,6 +17,15 @@ namespace Nexora.IntegrationTests;
 public sealed class ContentReportsPostgresApiTests
 {
     [PostgresFact]
+    public async Task PostgreSqlGrowthReportingPreservesOwnershipVersionAndFrozenSnapshots()
+    {
+        await using var factory = NexoraApiFactory.CreatePostgres(
+            Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!);
+        factory.InitializeDatabase();
+        await ContentReportsApiTests.VerifyGrowthReportingAsync(factory);
+    }
+
+    [PostgresFact]
     public async Task PostgreSqlEnforcesOwnedContentAndSerializesCompetingModerationClaims()
     {
         var connectionString = Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!;

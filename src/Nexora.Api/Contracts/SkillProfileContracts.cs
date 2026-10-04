@@ -21,4 +21,5 @@ public sealed record SkillProfileWeaknessSignalResponse(
 
 public sealed record SkillProfileResponse(
     IReadOnlyCollection<SkillProfileCompetencyResponse> Competencies,
-    IReadOnlyCollection<SkillProfileWeaknessSignalResponse> WeaknessSignals);
+    IReadOnlyCollection<SkillProfileWeaknessSignalResponse> WeaknessSignals,
+    Guid? ReportingId = null);

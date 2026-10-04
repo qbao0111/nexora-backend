@@ -20,6 +20,8 @@ public static class ContentReportValues
     public const string ResumeAnalysis = "resume_analysis";
     public const string ScenarioEvaluation = "scenario_evaluation";
     public const string StarEvaluation = "star_evaluation";
+    public const string LearningPath = "learning_path";
+    public const string SkillProfile = "skill_profile";
 }
 
 public static class ContentReportRules

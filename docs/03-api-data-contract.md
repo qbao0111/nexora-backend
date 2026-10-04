@@ -228,8 +228,21 @@ accept a reporter ID or content snapshot. It returns `202` with
 | `resume_analysis` | `resume_analyses.Id` | Analysis belongs to caller and has a result. |
 | `scenario_evaluation` | `scenario_attempts.Id` | Attempt belongs to caller, is completed and has an evaluation. |
 | `star_evaluation` | `star_attempts.Id` | Attempt belongs to caller, is completed and has an evaluation. |
+| `learning_path` | `learning_paths.Id` | Path and non-deleted career goal belong to caller; active/completed with milestones. |
+| `skill_profile` | `GET /skill-profile`'s `reportingId` | Recomputed current owner-scoped derived view; stale/foreign references return the same 404. Empty profiles have null reportingId. |
 
-The server resolves the snapshot from persisted output after the owner check;
+The server resolves the snapshot from persisted output or the current derived
+Skill Profile after the owner check. Skill Profile reportingId is an additive
+UUID reference to the displayed content version, not a new persisted resource.
+Any score/evidence/time/weakness change regenerates it. Refresh the profile on
+404; never invent IDs or use the user ID. Accepted snapshots remain immutable
+when the source later changes. New growth snapshots contain complete bounded
+JSON entries (40,000-character/200-entry cap, explicit truncated flag), not raw
+CV/JD/answers. Existing per-user reporting rate limits and moderation remain.
+Reports are not deduplicated/idempotent: prevent parallel client submissions,
+and do not automatically retry an ambiguous POST without confirmed receipt.
+
+For every report,
 the original CV, JD, candidate answer and source prompt are not copied into the
 snapshot. Unsupported types and missing/foreign content fail closed with a
 validation error or the same 404. Queue pagination uses `page` (1-based,

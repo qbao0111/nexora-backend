@@ -1331,7 +1331,7 @@ namespace Nexora.Data.Persistence.Migrations
 
                     b.ToTable("content_reports", null, t =>
                         {
-                            t.HasCheckConstraint("CK_content_reports_content_type", "\"ContentType\" IN ('interview_question', 'interview_answer_evaluation', 'interview_report', 'resume_analysis', 'scenario_evaluation', 'star_evaluation')");
+                            t.HasCheckConstraint("CK_content_reports_content_type", "\"ContentType\" IN ('interview_question', 'interview_answer_evaluation', 'interview_report', 'resume_analysis', 'scenario_evaluation', 'star_evaluation', 'learning_path', 'skill_profile')");
 
                             t.HasCheckConstraint("CK_content_reports_reason_code", "\"ReasonCode\" IN ('offensive', 'inaccurate', 'irrelevant', 'privacy_violation', 'discriminatory', 'other')");
 
