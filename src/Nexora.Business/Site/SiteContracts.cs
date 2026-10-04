@@ -47,7 +47,7 @@ public interface ISiteContentService
 
 public static class SiteContentRules
 {
-    public const string DefaultEmail = "nexorainterview@gmail.com";
+    public const string DefaultEmail = "nexorainterview.vn@gmail.com";
     public const string DefaultDescription = "Luyện phỏng vấn có chủ đích với phản hồi dựa trên bằng chứng.";
     public const int MaximumAssetBytes = 5 * 1024 * 1024;
     public static bool IsPageKey(string key) => key is "about" or "terms" or "privacy";

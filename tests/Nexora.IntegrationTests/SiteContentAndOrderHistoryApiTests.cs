@@ -28,7 +28,7 @@ public sealed class SiteContentAndOrderHistoryApiTests
         using var publicSettings = await client.GetAsync("/api/v1/public/site-settings");
         Assert.Equal(HttpStatusCode.OK, publicSettings.StatusCode);
         using var settingsJson = JsonDocument.Parse(await publicSettings.Content.ReadAsStringAsync());
-        Assert.Equal("nexorainterview@gmail.com", settingsJson.RootElement.GetProperty("data").GetProperty("contactEmail").GetString());
+        Assert.Equal("nexorainterview.vn@gmail.com", settingsJson.RootElement.GetProperty("data").GetProperty("contactEmail").GetString());
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/v1/public/pages/terms")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/v1/public/pages/unknown")).StatusCode);
 
