@@ -11,6 +11,7 @@ using Nexora.Business.Billing;
 using Nexora.Business.ContentReports;
 using Nexora.Business.Learning;
 using Nexora.Business.Practice;
+using Nexora.Business.Privacy;
 using Nexora.Business.Skills;
 using Nexora.Data.Billing;
 using Nexora.Data.Career;
@@ -129,6 +130,19 @@ public sealed class ContentReportsApiTests
             originalSnapshots = await db.ContentReports.Where(item => item.ReporterUserId == owner.UserId)
                 .OrderBy(item => item.ContentType).Select(item => item.ContentSnapshot!).ToArrayAsync();
             Assert.Equal(2, originalSnapshots.Length);
+            Assert.All(await db.ContentReports.Where(item => item.ReporterUserId == owner.UserId).ToArrayAsync(),
+                report => Assert.Equal(ContentReportValues.Pending, report.Status));
+            var reporting = scope.ServiceProvider.GetRequiredService<IContentReportService>();
+            foreach (var type in new[] { ContentReportValues.LearningPath, ContentReportValues.SkillProfile })
+            {
+                Assert.Equal("RESOURCE_NOT_FOUND", (await Assert.ThrowsAsync<Nexora.Business.Common.BusinessException>(
+                    () => reporting.SubmitAsync(owner.UserId, new(type, Guid.NewGuid(), ContentReportValues.Other, null),
+                        CancellationToken.None))).Code);
+                await Assert.ThrowsAsync<Nexora.Business.Common.BusinessException>(() => reporting.SubmitAsync(owner.UserId,
+                    new(type, profileId, "invalid_reason", null), CancellationToken.None));
+                await Assert.ThrowsAsync<Nexora.Business.Common.BusinessException>(() => reporting.SubmitAsync(owner.UserId,
+                    new(type, profileId, ContentReportValues.Other, new string('x', 1001)), CancellationToken.None));
+            }
             Assert.All(originalSnapshots, snapshot =>
             {
                 Assert.InRange(snapshot.Length, 1, ContentReportRules.MaximumSnapshotLength);
@@ -171,6 +185,19 @@ public sealed class ContentReportsApiTests
         var finalDb = finalScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
         Assert.Equal(originalSnapshots, await finalDb.ContentReports.OrderBy(item => item.ContentType)
             .Select(item => item.ContentSnapshot!).ToArrayAsync());
+        await using (var deletionScope = factory.Services.CreateAsyncScope())
+        {
+            await deletionScope.ServiceProvider.GetRequiredService<IPrivacyService>()
+                .RequestDeletionAsync(owner.UserId, "growth-report-delete", CancellationToken.None);
+            Assert.Equal(1, await deletionScope.ServiceProvider.GetRequiredService<IPrivacyJobProcessor>()
+                .ProcessPendingAsync(CancellationToken.None));
+        }
+        await using var deletionCheck = factory.Services.CreateAsyncScope();
+        var deletionDb = deletionCheck.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        Assert.Equal(PrivacyValues.Completed,
+            (await deletionDb.DataPrivacyRequests.SingleAsync(item => item.UserId == owner.UserId)).Status);
+        Assert.Empty(await deletionDb.ContentReports.Where(item => item.ReporterUserId == owner.UserId).ToArrayAsync());
+        Assert.True(await deletionDb.LearningPaths.AnyAsync(item => item.Id == foreignPath));
     }
 
     private static async Task<Guid> SeedGrowthAsync(NexoraApiFactory factory, Guid userId)
