@@ -239,6 +239,8 @@ Require `Idempotency-Key` when duplicate execution is unsafe: checkout/order cre
 
 Final retention periods and legal text remain DEC-03. Engineering must keep these policies configurable and testable. Full threat model: [security/privacy](docs/06-security-privacy.md).
 
+The owner-selected retention targets and safe cleanup foundation are described in [privacy retention](docs/privacy-retention.md) and its status manifest. The dedicated Worker supports bounded PostgreSQL expiry/old completed-deletion-audit cleanup with holds, durable scheduling and atomic rollback. Purge is disabled/report-only by default. Financial/usage/admin-audit records are not age-purged; 90-day non-accounting usage separation and legal/provider lifecycle approvals remain explicit follow-ups, not implemented guarantees.
+
 ## 17. Testing/release gates
 
 [Test strategy](docs/05-test-strategy.md) exclusively owns the canonical Definition of Done and T-01 through T-10 production-risk scenarios. Relevant unit/integration/contract/E2E and operational evidence must pass. When projects exist, the minimum local commands are:

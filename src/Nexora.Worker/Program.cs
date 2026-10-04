@@ -36,6 +36,7 @@ builder.Services.AddBusiness();
 builder.Services.AddDataPersistence(builder.Configuration);
 builder.Services.AddIntegrations(builder.Configuration);
 builder.Services.AddHostedService<PracticeWorker>();
+builder.Services.AddHostedService<RetentionWorker>();
 
 var host = builder.Build();
 host.Run();

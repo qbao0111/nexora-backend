@@ -39,6 +39,8 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<InterviewReport> InterviewReports => Set<InterviewReport>();
     public DbSet<DataPrivacyRequest> DataPrivacyRequests => Set<DataPrivacyRequest>();
     public DbSet<ExternalDeletionVerification> ExternalDeletionVerifications => Set<ExternalDeletionVerification>();
+    public DbSet<RetentionCheckpoint> RetentionCheckpoints => Set<RetentionCheckpoint>();
+    public DbSet<RetentionHold> RetentionHolds => Set<RetentionHold>();
     public DbSet<FeatureDefinition> FeatureDefinitions => Set<FeatureDefinition>();
     public DbSet<PlanPriceFeature> PlanPriceFeatures => Set<PlanPriceFeature>();
     public DbSet<EntitlementFeature> EntitlementFeatures => Set<EntitlementFeature>();
@@ -643,6 +645,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.HasKey(request => request.Id);
             entity.HasIndex(request => new { request.UserId, request.IdempotencyKey }).IsUnique();
             entity.HasIndex(request => new { request.Status, request.NextAttemptAt });
+            entity.HasIndex(request => new { request.Status, request.CompletedAt, request.Id });
             entity.Property(request => request.Type).HasMaxLength(40).IsRequired();
             entity.Property(request => request.Status).HasMaxLength(20).IsRequired();
             entity.Property(request => request.IdempotencyKey).HasMaxLength(128).IsRequired();
@@ -654,9 +657,27 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.HasKey(item => item.Id);
             entity.HasIndex(item => item.TokenHash).IsUnique();
             entity.HasIndex(item => new { item.UserId, item.ExpiresAt });
+            entity.HasIndex(item => new { item.ExpiresAt, item.Id });
             entity.Property(item => item.TokenHash).HasMaxLength(64).IsRequired();
             entity.HasOne<Nexora.Data.Identity.ApplicationUser>().WithMany()
                 .HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<RetentionCheckpoint>(entity =>
+        {
+            entity.ToTable("retention_checkpoints", table => table.HasCheckConstraint("CK_retention_checkpoint_id", "\"Id\" = 1"));
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Id).ValueGeneratedNever();
+            entity.Property(item => item.Status).HasMaxLength(40).IsRequired();
+            entity.HasData(new RetentionCheckpoint { Id = 1 });
+        });
+        builder.Entity<RetentionHold>(entity =>
+        {
+            entity.ToTable("retention_holds", table => table.HasCheckConstraint("CK_retention_hold_reason",
+                "\"ReasonCode\" IN ('legal', 'dispute', 'fraud', 'accounting', 'security')"));
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.ReasonCode).HasMaxLength(20).IsRequired();
+            entity.HasIndex(item => new { item.ReleasedAt, item.UserId });
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Restrict);
         });
     }
 

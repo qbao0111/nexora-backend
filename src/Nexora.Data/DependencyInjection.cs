@@ -135,6 +135,15 @@ public static class DependencyInjection
         services.AddScoped<PrivacyService>();
         services.AddScoped<IPrivacyService>(provider => provider.GetRequiredService<PrivacyService>());
         services.AddScoped<IPrivacyJobProcessor>(provider => provider.GetRequiredService<PrivacyService>());
+        services.AddOptions<RetentionOptions>().Bind(configuration.GetSection(RetentionOptions.SectionName))
+            .Validate(options => options.SweepIntervalHours is >= 1 and <= 24, "Retention sweep interval must be 1-24 hours.")
+            .Validate(options => options.BatchSize is >= 1 and <= 1000, "Retention batch size must be 1-1000.")
+            .Validate(options => options.VerificationGraceHours is >= 0 and <= 24, "Verification grace must be 0-24 hours.")
+            .Validate(options => options.AuditRetentionMonths is >= 12 and <= 120, "Audit retention must be 12-120 months.")
+            .Validate(options => options.FailureBackoffMinutes is >= 15 and <= 1440, "Retention failure backoff must be 15-1440 minutes.")
+            .Validate(options => options.MaxConsecutiveFailures is >= 1 and <= 10, "Retention failure limit must be 1-10.")
+            .ValidateOnStart();
+        services.AddScoped<IRetentionProcessor, RetentionProcessor>();
         return services;
     }
 }

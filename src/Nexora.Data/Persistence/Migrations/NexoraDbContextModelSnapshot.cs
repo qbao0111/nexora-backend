@@ -2766,6 +2766,8 @@ namespace Nexora.Data.Persistence.Migrations
                     b.HasIndex("UserId", "IdempotencyKey")
                         .IsUnique();
 
+                    b.HasIndex("Status", "CompletedAt", "Id");
+
                     b.ToTable("data_privacy_requests", (string)null);
                 });
 
@@ -2797,9 +2799,102 @@ namespace Nexora.Data.Persistence.Migrations
                     b.HasIndex("TokenHash")
                         .IsUnique();
 
+                    b.HasIndex("ExpiresAt", "Id");
+
                     b.HasIndex("UserId", "ExpiresAt");
 
                     b.ToTable("external_deletion_verifications", (string)null);
+                });
+
+            modelBuilder.Entity("Nexora.Data.Privacy.RetentionCheckpoint", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ConsecutiveFailures")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("DryRun")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Eligible")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Examined")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Failed")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("LastRunAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("NextRunAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Removed")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Skipped")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("retention_checkpoints", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_retention_checkpoint_id", "\"Id\" = 1");
+                        });
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            ConsecutiveFailures = 0,
+                            DryRun = true,
+                            Eligible = 0,
+                            Examined = 0,
+                            Failed = 0,
+                            Removed = 0,
+                            Skipped = 0,
+                            Status = "not_run"
+                        });
+                });
+
+            modelBuilder.Entity("Nexora.Data.Privacy.RetentionHold", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReasonCode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTimeOffset?>("ReleasedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("ReleasedAt", "UserId");
+
+                    b.ToTable("retention_holds", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_retention_hold_reason", "\"ReasonCode\" IN ('legal', 'dispute', 'fraud', 'accounting', 'security')");
+                        });
                 });
 
             modelBuilder.Entity("Nexora.Data.Realtime.RealtimeNotification", b =>
@@ -3574,6 +3669,14 @@ namespace Nexora.Data.Persistence.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Nexora.Data.Privacy.RetentionHold", b =>
+                {
+                    b.HasOne("Nexora.Data.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Nexora.Data.Site.SiteAsset", b =>
