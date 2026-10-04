@@ -103,6 +103,18 @@ states, token transport, duplicate handling and reconnect/fallback behavior.
 
 Admin policy bảo vệ `GET/PUT /api/v1/admin/site-settings`, `GET/PUT /api/v1/admin/site-pages/{key}`, `POST /api/v1/admin/site-pages/{key}/publish`, `POST /api/v1/admin/site-assets` (multipart `file`) và `GET /api/v1/admin/site-assets/{assetId}` để preview ảnh draft. Page chỉ nhận `about`, `terms`, `privacy`; `PUT` lưu draft có `concurrencyToken` khi sửa bản đã tồn tại. `POST publish` yêu cầu JSON `{ "concurrencyToken": "<token từ bản draft đã xem>" }`; token cũ trả `409 SITE_CONTENT_CONFLICT`, chỉ token hiện tại mới được chụp thành snapshot public và xoay token. About dùng cấu trúc `heroTitle`, `heroSubtitle`, `heroAssetId`, `missionTitle`, `missionBody`, `missionAssetId`, `values[]`, `milestones[]`, `teamSectionEnabled`, `teamHeading`, `teamMembers[]`. Terms/Privacy dùng `bodyMarkdown`, không nhận raw HTML. Asset chỉ nhận JPEG/PNG/WebP có MIME và magic bytes khớp, tối đa 5 MiB; response chỉ có opaque ID, MIME, size, createdAt. Mọi write thành công tạo `AdminAuditEvent` metadata ngắn, không ghi body/bytes.
 
+### Official public contact email — administrator follow-up
+
+The default public contact email is `nexorainterview.vn@gmail.com`. Existing `SiteSettings` and published page snapshots take precedence over this fallback; changing code does not rewrite them. Obtain explicit administrator approval for the precise settings/content edits and publication before changing production data. No migration or raw production SQL is required.
+
+1. With Admin authorization, read `GET /api/v1/admin/site-settings`; preserve every other writable setting and send `PUT /api/v1/admin/site-settings` with the approved `contactEmail` and current `concurrencyToken` (null only if no settings record exists). Verify `GET /api/v1/public/site-settings` after saving; settings changes become public immediately.
+2. Inspect both `GET /api/v1/public/pages/{key}` and `GET /api/v1/admin/site-pages/{key}` for `privacy`, `terms` and any current `about` contact references. Review the draft against the published snapshot so unrelated pending edits are not accidentally published. Keep all other approved content, title and effective date; update only official public contact references, including `mailto:` links, via `PUT /api/v1/admin/site-pages/{key}` using the current draft `concurrencyToken` and the existing Markdown/typed About contract.
+3. Review the saved draft and obtain approval for the complete snapshot to publish. Send `POST /api/v1/admin/site-pages/{key}/publish` with the **new token returned by PUT**, then verify the public page. A `409 SITE_CONTENT_CONFLICT` requires reloading and reviewing changes, not retrying with a guessed token. Do not publish absent/unpublished pages merely to update an email. Check other public legal copy owned outside these APIs with its responsible administrator.
+
+This contact field is separate from `Email:FromAddress`, Resend/SMTP identities, verification sender configuration and billing addresses; those settings remain unchanged. Account deletion APIs, token lifetime and privacy-worker behavior are independent of the site-contact fallback.
+
+Public settings/pages advertise `Cache-Control: public, max-age=300`; use a fresh/revalidated read or allow the cache to expire when confirming the published email.
+
 ### Public platform stats
 
 `GET /api/v1/public/platform-stats` không yêu cầu authentication và trả:
