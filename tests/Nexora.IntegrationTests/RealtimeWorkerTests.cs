@@ -287,11 +287,7 @@ public sealed class RealtimeWorkerTests
     [InlineData(true)]
     public async Task ResumeWorkerPublishesReadyOrFailedAndRestMatches(bool fail)
     {
-        using var factory = CreateFactory(configure: services =>
-        {
-            services.RemoveAll<IDocumentOcrProvider>();
-            services.AddSingleton<IDocumentOcrProvider, FailingOcr>();
-        });
+        using var factory = CreateFactory();
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
         var owner = await RegisterAsync(client);
@@ -308,7 +304,26 @@ public sealed class RealtimeWorkerTests
         var message = await socket.ReadEventAsync();
         Assert.Equal(expected, message.GetProperty("status").GetString());
         using var response = await client.GetAsync($"/api/v1/resumes/{id}");
-        Assert.Equal(expected, (await DataAsync(response)).GetProperty("status").GetString());
+        var data = await DataAsync(response);
+        Assert.Equal(expected, data.GetProperty("status").GetString());
+        if (fail)
+        {
+            Assert.Equal("RESUME_EXTRACTION_FAILED", data.GetProperty("errorCode").GetString());
+            Assert.Contains("PDF có văn bản", data.GetProperty("errorMessage").GetString(), StringComparison.Ordinal);
+        }
+        using var completedScope = factory.Services.CreateScope();
+        var db = completedScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var job = await db.OutboxEvents.SingleAsync(item => item.AggregateId == id && item.Type == "ResumeExtractionRequested");
+        Assert.Equal(BillingValues.Processed, job.Status);
+        Assert.NotNull(job.ProcessedAt);
+        Assert.Equal(0, Assert.IsType<TestAiProvider>(factory.Services.GetRequiredService<IAiProvider>()).TotalCalls);
+        if (fail)
+        {
+            var resume = await db.Resumes.SingleAsync(item => item.Id == id);
+            Assert.Null(resume.ExtractedText);
+            Assert.Null(resume.StructuredProfile);
+        }
+        Assert.Equal(0, await completedScope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(CancellationToken.None));
     }
 
     [Theory]
@@ -322,8 +337,6 @@ public sealed class RealtimeWorkerTests
         {
             services.RemoveAll<IAiProvider>();
             services.AddSingleton<IAiProvider>(ai);
-            services.RemoveAll<IDocumentOcrProvider>();
-            services.AddSingleton<IDocumentOcrProvider, FailingOcr>();
         });
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
@@ -575,7 +588,9 @@ public sealed class RealtimeWorkerTests
         if (invalid)
         {
             var pdf = new PdfDocumentBuilder();
-            pdf.AddPage(612, 792);
+            var page = pdf.AddPage(612, 792);
+            page.AddPng(Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="),
+                new UglyToad.PdfPig.Core.PdfRectangle(30, 30, 580, 760));
             bytes = pdf.Build();
         }
         else
@@ -597,12 +612,6 @@ public sealed class RealtimeWorkerTests
         Assert.Equal(HttpStatusCode.NoContent, uploaded.StatusCode);
         var resume = await PostAsync(client, "/api/v1/resumes", new { uploadToken = intent.GetProperty("token").GetString() });
         return resume.GetProperty("id").GetGuid();
-    }
-
-    private sealed class FailingOcr : IDocumentOcrProvider
-    {
-        public Task<DocumentOcrResult> ExtractAsync(Stream content, string contentType, CancellationToken cancellationToken) =>
-            Task.FromException<DocumentOcrResult>(new InvalidDataException("Synthetic document fallback failure"));
     }
 
     private sealed class RetryOnceStorageProvider : IStorageProvider

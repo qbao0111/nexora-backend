@@ -33,10 +33,7 @@ both `resume.analysis` modes, `interview.first-question`,
 `scenario.evaluate` and `star.evaluate`. Localization and user-selected output
 language are out of scope for this MVP.
 
-`GeminiDocumentOcrProvider` is intentionally excluded from this natural-language
-output policy because it is a document-extraction fallback: its contract is to
-preserve source text faithfully rather than translate it. The extracted source
-is not a user-facing coaching output.
+Local document extraction preserves source text faithfully rather than translating it. No external OCR provider remains; extracted source is not a user-facing coaching output.
 
 ## 2. Provider contract and structured execution layer
 
@@ -76,11 +73,11 @@ public interface IStructuredAiExecutor
 Current internal implementation:
 
 - `GeminiAiProvider` remains the default text provider for Development/internal testing with a development API key/quota. Gemini SDK/HTTP types stay in `Nexora.Integrations`; the model identifier comes from configuration; the key comes from secret configuration; output is mapped to Nexora-owned schemas.
-- `DeepSeekAiProvider` is an optional official DeepSeek V4 Flash text adapter. Select it with `Ai:Provider=deepseek`; the default remains `gemini`. The adapter calls `https://api.deepseek.com/chat/completions` directly with the OpenAI-compatible Chat Completions contract, `thinking`, `reasoning_effort` and JSON mode. It is approved for local/development evaluation only; it is not a production provider decision.
+- `DeepSeekAiProvider` is the owner-selected production text adapter. Select it with `Ai:Provider=deepseek`; the existing development code default remains `gemini`. The adapter calls `https://api.deepseek.com/chat/completions` directly with the OpenAI-compatible Chat Completions contract, `thinking`, `reasoning_effort` and JSON mode. Remaining model/budget and go-live approval gates are separate.
 - Provider selection is fail-closed: only `gemini` and `deepseek` are accepted and there is no automatic fallback between providers. `Nexora.Api` and `Nexora.Worker` resolve the same selected `IAiProvider`.
 - Automated tests that need deterministic provider behavior register a test-project-only provider (`TestAiProvider`); no test double is part of the application runtime or normal development configuration.
 
-The document extraction fallback is deliberately independent: `IDocumentOcrProvider` remains `GeminiDocumentOcrProvider` even when `Ai:Provider=deepseek`. Local development therefore keeps both Gemini (OCR) and DeepSeek (text) credentials in secret configuration.
+Document extraction is local PdfPig/OpenXML only. With `Ai:Provider=deepseek`, Gemini is not registered and Gemini options/credentials are not required. No CV document bytes are sent to Gemini and no provider fallback exists. Unreadable CVs terminate as `failed`; see [extraction/privacy](12-document-extraction-v2.md) for the reference audit and Render secret retirement procedure.
 
 ### 2.2 DeepSeek reasoning policy and request safety
 
@@ -119,7 +116,7 @@ For paid-provider safety, DeepSeek logs metadata-only usage telemetry when the r
 
 The adapter and executor must never copy a provider response body, credential, prompt, or candidate answer text into an API response or log. Only safe diagnostics (`failureReason`, `stage`, `attempt`, `correlationId`, JSON line/byte positions) are recorded.
 
-Document fallback is a separate `IDocumentOcrProvider` boundary. `GeminiDocumentOcrProvider` receives the original document only after the local extraction quality gate is suspicious/failed, and returns faithful extracted text plus the compact resume profile in one document-understanding response. It is not used for normal text PDF/DOCX extraction and is not a production OCR decision.
+Gemini document OCR and its Business boundary have been removed. The deterministic local quality gate accepts only `Good` text; suspicious/failed extraction completes the outbox job with a terminal resume failure, without a document network request or invented profile.
 
 ### 2.3 Resume analysis v2 modes
 
@@ -127,7 +124,7 @@ Document fallback is a separate `IDocumentOcrProvider` boundary. `GeminiDocument
 
 `field_benchmark` uses the same cached profile plus the required `industry`, `targetRole` and `seniority` context, with no JobDescription. It persists prompt/schema versions `resume-analysis-field-benchmark-v3` / `analysis-field-benchmark-v2` and returns a 0-100 `readinessScore`, grounded strengths, gaps, recommendations, section feedback and `technicalFoundation`, `projectEvidence`, `experiencePresentation`, `impactAchievements`, `clarity`, `roleAlignment` breakdown dimensions. The mode is included in the operation metadata and must match the response; provider-specific fields or concepts do not enter Business/API contracts.
 
-Both schemas are strict (`additionalProperties: false`) and require bounded collections, exact breakdown keys and server-side semantic validation. Strengths, gaps, recommendations and section feedback are non-empty; matched/missing skills may be empty when no evidence exists. A `finish_reason=length` response is rejected before deserialization; the existing executor may make one truncation retry at 8,192 tokens after the 4,096-token first attempt. Semantic repair and provider retries remain within the global two-call ceiling. A valid cached profile is serialized as a per-analysis snapshot with its model/prompt/schema provenance; OCR fallback profiles remain unversioned until the canonical text profile operation regenerates them, so no profile AI call is made again for each analysis mode once the cache is current.
+Both schemas are strict (`additionalProperties: false`) and require bounded collections, exact breakdown keys and server-side semantic validation. Strengths, gaps, recommendations and section feedback are non-empty; matched/missing skills may be empty when no evidence exists. A `finish_reason=length` response is rejected before deserialization; the existing executor may make one truncation retry at 8,192 tokens after the 4,096-token first attempt. Semantic repair and provider retries remain within the global two-call ceiling. A valid cached profile is serialized as a per-analysis snapshot with its model/prompt/schema provenance. Historical unversioned profiles regenerate through the selected text provider; current caches are reused across analysis modes.
 
 `sectionFeedback` is a bounded array of grounded strings. Each analysis also persists the nullable `RubricVersion` selected by its operation and exposes it with the other safe execution metadata; `ProfileSnapshot` remains private and is excluded from privacy exports.
 
@@ -135,7 +132,7 @@ Both schemas are strict (`additionalProperties: false`) and require bounded coll
 
 | Job | Input | Output/state | Quota point |
 | --- | --- | --- | --- |
-| ExtractResume | stored file ID | uploaded → extracting → ready/failed, with `ocr_fallback` when the local quality gate rejects text | none |
+| ExtractResume | stored file ID | uploaded → extracting → ready/failed; local extraction only | none |
 | AnalyzeResume | resume version + explicit `job_targeted`/`field_benchmark` context | analysis completed/failed with mode-specific schema and versioned profile snapshot | Theo entitlement riêng nếu plan định nghĩa; không dùng nhầm interview reservation |
 | StartInterview | interview context | session starting → active hoặc failed | API transaction reserves + creates `starting` session/job; worker success transaction persists validated first usable question + consumes + activates; terminal pre-activation failure transaction voids + fails |
 | EvaluateAnswer | question/answer snapshot | evaluation + canonical next primary (Q1–Q3) when allowed | included in session entitlement |

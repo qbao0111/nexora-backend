@@ -40,7 +40,7 @@ DEC-01–04 are production enablement gates, not prerequisites for Phases 0–3.
 
 - CV/JD private persistence and extraction boundary.
 - Canonical interview lifecycle `draft → starting → active → completing → completed`, plus `starting → failed` and `active → abandoned`.
-- `IAiProvider` with `GeminiAiProvider` as the default internal-development adapter and optional `DeepSeekAiProvider` for local text evaluation; deterministic test doubles remain test-project-only. `GeminiDocumentOcrProvider` remains the document OCR fallback for either text-provider selection.
+- `IAiProvider` with `GeminiAiProvider` as the default internal-development adapter and optional `DeepSeekAiProvider` for local text evaluation; deterministic test doubles remain test-project-only. PDF/DOCX extraction is local only, with terminal failure for unreadable CVs.
 - Durable question/official-answer flow, validated evaluation and idempotent evidence/rubric report.
 - Basic dashboard/history for the main journey.
 - STAR/scenario persistence only according to SRS Should priority and available capacity.

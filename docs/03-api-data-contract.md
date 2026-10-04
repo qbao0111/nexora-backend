@@ -467,9 +467,9 @@ POST /api/v1/interviews
 
 Với `Storage:Provider=r2`, client gọi `POST /uploads/presign`; server tạo intent bền vững với token capability ngẫu nhiên (chỉ hash token được lưu), cấp một signed HTTPS `uploadUrl` ngắn hạn cho đúng bucket/key private; client PUT raw bytes trực tiếp tới URL đó và không gửi bearer token của Nexora tới storage. Sau đó client gọi `POST /resumes` với `uploadToken`; endpoint này là finalize/confirm: server kiểm tra owner, expiry, object tồn tại, kích thước thực tế, chữ ký/container PDF/DOCX và checksum trước khi tạo metadata resume. Finalize lặp lại sau khi thành công trả cùng metadata và không tạo thêm object/resume/outbox. Với `Storage:Provider=local` (Development/Testing), `uploadUrl` vẫn trỏ tới `PUT /api/v1/uploads/{token}` và provider local giữ flow server-side hiện hữu.
 
-Response resume ban đầu có `status: "uploaded"`; client poll `GET /api/v1/resumes/{id}` hoặc reconcile qua realtime cho tới `ready` hoặc `failed`. Worker luôn mở object qua `IStorageProvider`, dùng `extracting` cho local PdfPig/OpenXML, `ocr_fallback` khi quality gate yêu cầu document fallback Gemini, rồi `ready` khi đã lưu canonical extracted text. Trước extraction worker đối chiếu size + SHA-256 với `StoredFile`; object bị thay đổi sau finalize sẽ không được coi là resume hợp lệ. Khi cả hai đường đọc thất bại, status là `failed` và response có:
+Response resume ban đầu có `status: "uploaded"`; client poll `GET /api/v1/resumes/{id}` hoặc reconcile qua realtime cho tới `ready` hoặc `failed`, rồi dừng polling. Worker luôn mở object qua `IStorageProvider`, dùng `extracting` cho local PdfPig/OpenXML và chỉ chuyển `ready` khi quality là `Good` và đã lưu canonical extracted text. Không có OCR/network fallback; CV scan/dạng ảnh hoặc text không đủ chất lượng chuyển `failed`, hoàn tất outbox và không tạo profile/analysis thành công. Trước extraction worker đối chiếu size + SHA-256 với `StoredFile`; object bị thay đổi sau finalize sẽ không được coi là resume hợp lệ. Lỗi terminal dùng contract hiện tại:
 
-Upload giữ giới hạn mặc định 10 MiB và kiểm tra cả kích thước byte, cặp extension/MIME, chữ ký và container tài liệu trước khi lưu private object. PDF có container hợp lệ nhưng bị mã hóa vẫn được lưu để quyết định khả năng đọc/OCR ở boundary extraction; lỗi mật khẩu hoặc không đọc được không bị biến thành lỗi format upload. Lỗi upload dùng mã ổn định: `UPLOAD_SIZE_ZERO`, `UPLOAD_SIZE_EXCEEDED`, `UPLOAD_TYPE_UNSUPPORTED`, `UPLOAD_SIZE_MISMATCH`, `UPLOAD_SIGNATURE_INVALID`, `UPLOAD_CONTAINER_INVALID`, `UPLOAD_CONTAINER_LIMIT`, `UPLOAD_OBJECT_NOT_FOUND`, `UPLOAD_DIRECT_UPLOAD_UNSUPPORTED`, `UPLOAD_INTENT_EXPIRED`, `UPLOAD_INTENT_INVALID` và `UPLOAD_FINALIZE_CONFLICT`. Các lỗi validation này trả HTTP 400 theo contract hiện tại; intent/object không tồn tại khi finalize trả `UPLOAD_NOT_FOUND` hoặc `UPLOAD_OBJECT_NOT_FOUND`/404. Signed URL không được log hoặc lưu lại; object luôn private và storage key là dữ liệu server-owned.
+Upload giữ giới hạn mặc định 10 MiB và kiểm tra cả kích thước byte, cặp extension/MIME, chữ ký và container tài liệu trước khi lưu private object. PDF có container hợp lệ nhưng bị mã hóa vẫn được lưu để quyết định khả năng đọc local ở boundary extraction; lỗi mật khẩu hoặc không đọc được không bị biến thành lỗi format upload. Lỗi upload dùng mã ổn định: `UPLOAD_SIZE_ZERO`, `UPLOAD_SIZE_EXCEEDED`, `UPLOAD_TYPE_UNSUPPORTED`, `UPLOAD_SIZE_MISMATCH`, `UPLOAD_SIGNATURE_INVALID`, `UPLOAD_CONTAINER_INVALID`, `UPLOAD_CONTAINER_LIMIT`, `UPLOAD_OBJECT_NOT_FOUND`, `UPLOAD_DIRECT_UPLOAD_UNSUPPORTED`, `UPLOAD_INTENT_EXPIRED`, `UPLOAD_INTENT_INVALID` và `UPLOAD_FINALIZE_CONFLICT`. Các lỗi validation này trả HTTP 400 theo contract hiện tại; intent/object không tồn tại khi finalize trả `UPLOAD_NOT_FOUND` hoặc `UPLOAD_OBJECT_NOT_FOUND`/404. Signed URL không được log hoặc lưu lại; object luôn private và storage key là dữ liệu server-owned.
 
 ```json
 {
@@ -477,7 +477,7 @@ Upload giữ giới hạn mặc định 10 MiB và kiểm tra cả kích thướ
     "id": "01J...",
     "status": "failed",
     "errorCode": "RESUME_EXTRACTION_FAILED",
-    "errorMessage": "Không thể đọc nội dung CV. Vui lòng thử lại với file PDF hoặc DOCX rõ hơn."
+    "errorMessage": "Không thể đọc nội dung CV. Vui lòng tải lên PDF có văn bản có thể chọn hoặc sao chép, hoặc file DOCX. CV dạng ảnh hoặc bản scan hiện chưa được hỗ trợ."
   }
 }
 ```
@@ -854,7 +854,6 @@ Order: processing -> pending -> paid -> fulfilled
        pending -> expired | failed
        paid | fulfilled -> refunded (theo DEC-02/BR-07)
 Resume: uploaded -> extracting -> ready | failed | deleted
-         extracting -> ocr_fallback -> ready | failed
 Analysis: queued -> processing -> completed | failed | cancelled
 Interview: canonical tại 08-data-model.md
   draft -> starting -> active -> completing -> completed

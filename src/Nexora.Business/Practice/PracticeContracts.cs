@@ -6,6 +6,7 @@ public static class PracticeValues
 {
     public const string Uploaded = "uploaded";
     public const string Extracting = "extracting";
+    // Legacy persisted status; new extraction jobs never enter this state.
     public const string OcrFallback = "ocr_fallback";
     public const string Ready = "ready";
     public const string Failed = "failed";
@@ -315,6 +316,7 @@ public enum DocumentExtractionMethod
     PdfText,
     PdfLayoutReconstructed,
     DocxOpenXml,
+    // Retained for compatibility with historical extraction metadata only.
     GeminiOcr
 }
 
@@ -357,28 +359,13 @@ public interface IDetailedDocumentExtractor
     Task<DocumentExtractionResult> ExtractDetailedAsync(Stream content, string contentType, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Applies the same normalization and deterministic quality gate to text returned by a fallback provider.
+    /// Applies normalization and the deterministic quality gate to extracted text.
     /// </summary>
     DocumentExtractionResult EvaluateExtractedText(
         string text,
         int pageCount,
         DocumentExtractionMethod method,
         IEnumerable<string>? warnings = null);
-}
-
-public sealed record DocumentOcrResult(
-    string ExtractedText,
-    ResumeProfile Profile,
-    int PageCount,
-    IReadOnlyCollection<string> Warnings,
-    string? SchemaVersion = null);
-
-public interface IDocumentOcrProvider
-{
-    Task<DocumentOcrResult> ExtractAsync(
-        Stream content,
-        string contentType,
-        CancellationToken cancellationToken);
 }
 
 public sealed record ResumeExperience(

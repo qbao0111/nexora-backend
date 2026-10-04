@@ -1,9 +1,7 @@
 using System.Data;
 using System.Security.Cryptography;
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Nexora.Business.Ai;
 using Nexora.Business.Billing;
 using Nexora.Business.Common;
 using Nexora.Business.Practice;
@@ -18,18 +16,9 @@ public sealed partial class ResumeExtractionJobHandler(
     NexoraDbContext dbContext,
     IStorageProvider storageProvider,
     IDetailedDocumentExtractor detailedDocumentExtractor,
-    IDocumentOcrProvider documentOcrProvider,
-    IAiProvider aiProvider,
     TimeProvider timeProvider,
     ILogger<PracticeService> logger)
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private static string ProfilePromptVersion => AiOperations.ResumeProfile.PromptVersion;
-    private static string ProfileSchemaVersion => AiOperations.ResumeProfile.SchemaVersion;
-    private string CurrentModelVersion => string.IsNullOrWhiteSpace(aiProvider.ModelVersion)
-        ? throw new InvalidOperationException("The configured AI provider must expose a model version.")
-        : aiProvider.ModelVersion.Trim();
-
     private static BusinessException NotFound() => new("NOT_FOUND", "Không tìm thấy tài nguyên.", BusinessErrorKind.NotFound);
     private void MarkProcessed(OutboxEvent job) { job.Status = BillingValues.Processed; job.ProcessedAt = timeProvider.GetUtcNow(); }
 
@@ -97,28 +86,14 @@ public sealed partial class ResumeExtractionJobHandler(
 
         if (localExtraction?.Quality == DocumentExtractionQuality.Good)
         {
-            await CompleteResumeExtractionAsync(resume, job, localExtraction, profile: null, ocrFallbackUsed: false, cancellationToken: cancellationToken);
+            await CompleteResumeExtractionAsync(resume, job, localExtraction, cancellationToken);
             return;
         }
 
-        if (!await TrySetResumeExtractionStatusAsync(
-                resume, job, PracticeValues.OcrFallback, notify: false, markProcessed: false, cancellationToken))
-            return;
-        OcrFallbackStarted(logger, resume.Id, localExtraction?.Quality.ToString() ?? DocumentExtractionQuality.Failed.ToString());
-
-        buffered.Position = 0;
-        var fallback = await documentOcrProvider.ExtractAsync(buffered, resume.StoredFile.ContentType, cancellationToken);
-        var fallbackPageCount = fallback.PageCount > 0 ? fallback.PageCount : localExtraction?.PageCount ?? 1;
-        var extraction = detailedDocumentExtractor.EvaluateExtractedText(
-            fallback.ExtractedText,
-            fallbackPageCount,
-            DocumentExtractionMethod.GeminiOcr,
-            fallback.Warnings.Append("OCR_FALLBACK_USED"));
-        if (extraction.Quality != DocumentExtractionQuality.Good)
-            throw new InvalidDataException("Gemini document extraction did not produce usable text.");
-
-        ResumeProfileProcessor.ValidateResumeProfile(fallback.Profile);
-        await CompleteResumeExtractionAsync(resume, job, extraction, fallback.Profile, ocrFallbackUsed: true, cancellationToken: cancellationToken);
+        // Unreadable documents are permanent failures. Complete the outbox job
+        // without sending document bytes to an external provider or retrying OCR.
+        await TrySetResumeExtractionStatusAsync(
+            resume, job, PracticeValues.Failed, notify: true, markProcessed: true, cancellationToken);
     }
 
     private async Task<bool> TrySetResumeExtractionStatusAsync(
@@ -182,8 +157,6 @@ public sealed partial class ResumeExtractionJobHandler(
         ResumeRecord resume,
         OutboxEvent job,
         DocumentExtractionResult extraction,
-        ResumeProfile? profile,
-        bool ocrFallbackUsed,
         CancellationToken cancellationToken)
     {
         await using var transaction = await BeginTransactionAsync(cancellationToken);
@@ -198,31 +171,11 @@ public sealed partial class ResumeExtractionJobHandler(
         }
 
         resume.ExtractedText = extraction.Text;
-        if (profile is not null)
-        {
-            resume.StructuredProfile = JsonSerializer.Serialize(profile, JsonOptions);
-            if (ocrFallbackUsed)
-            {
-                // OCR output is produced by a separate document-understanding
-                // provider and is not a text-profile execution of the current
-                // ResumeProfile operation. Force the canonical profile provider
-                // to regenerate it before any analysis uses the cache.
-                resume.ProfileModelVersion = null;
-                resume.ProfilePromptVersion = null;
-                resume.ProfileSchemaVersion = null;
-            }
-            else
-            {
-                resume.ProfileModelVersion = CurrentModelVersion;
-                resume.ProfilePromptVersion = ProfilePromptVersion;
-                resume.ProfileSchemaVersion = ProfileSchemaVersion;
-            }
-        }
         resume.Status = PracticeValues.Ready;
         resume.UpdatedAt = timeProvider.GetUtcNow();
         EnqueueResourceChanged(resume.UserId, "resume", resume.Id, resume.Status, resume.UpdatedAt);
         ResumeExtractionMeasured(logger, resume.Id, extraction.PageCount, extraction.CharacterCount, extraction.WordCount,
-            extraction.ExtractionMethod.ToString(), extraction.QualityScore, string.Join(',', extraction.Warnings), ocrFallbackUsed);
+            extraction.ExtractionMethod.ToString(), extraction.QualityScore, string.Join(',', extraction.Warnings));
         MarkProcessed(job);
         await dbContext.SaveChangesAsync(cancellationToken);
         await CommitAsync(transaction, cancellationToken);
@@ -249,18 +202,15 @@ public sealed partial class ResumeExtractionJobHandler(
     }
 
     [LoggerMessage(LogLevel.Information,
-        "Resume {ResumeId} extracted with {PageCount} pages, {CharacterCount} chars, {WordCount} words, method {ExtractionMethod}, quality {QualityScore}, OCR fallback {OcrFallbackUsed}, warnings {Warnings}")]
+        "Resume {ResumeId} extracted with {PageCount} pages, {CharacterCount} chars, {WordCount} words, method {ExtractionMethod}, quality {QualityScore}, warnings {Warnings}")]
     private static partial void ResumeExtractionMeasured(
         ILogger logger, Guid resumeId, int pageCount, int characterCount, int wordCount,
-        string extractionMethod, double qualityScore, string warnings, bool ocrFallbackUsed);
+        string extractionMethod, double qualityScore, string warnings);
 
-    [LoggerMessage(LogLevel.Warning, "Resume {ResumeId} local extraction failed with {ExceptionType}; trying document fallback")]
+    [LoggerMessage(LogLevel.Warning, "Resume {ResumeId} local extraction failed with {ExceptionType}")]
     private static partial void LocalExtractionFailed(ILogger logger, Guid resumeId, string exceptionType);
 
     [LoggerMessage(LogLevel.Error, "Resume {ResumeId} storage integrity check failed: actualBytes={ActualBytes} expectedBytes={ExpectedBytes}")]
     private static partial void StorageIntegrityFailed(ILogger logger, Guid resumeId, long actualBytes, long expectedBytes);
-
-    [LoggerMessage(LogLevel.Information, "Resume {ResumeId} entered document OCR fallback after {LocalQuality} local quality")]
-    private static partial void OcrFallbackStarted(ILogger logger, Guid resumeId, string localQuality);
 
 }

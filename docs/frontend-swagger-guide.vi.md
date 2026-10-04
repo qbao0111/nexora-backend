@@ -1,6 +1,6 @@
 # Nexora — Setup backend và test API bằng Swagger cho teammate FE
 
-Cập nhật: 01/09/2026. Dành cho môi trường Development, dùng Gemini với CV/JD thật do project owner cung cấp.
+Cập nhật: 01/09/2026. Dành cho môi trường Development, dùng text AI đã cấu hình với CV/JD thật do project owner cung cấp.
 
 ## 1. Cần chuẩn bị gì?
 
@@ -10,8 +10,8 @@ Cập nhật: 01/09/2026. Dành cho môi trường Development, dùng Gemini v�
 | .NET SDK | Cài .NET 10 SDK; kiểm tra phiên bản được chấp nhận trong `global.json` của repo. Hiện pin `10.0.203`, cho phép roll-forward `latestFeature`. |
 | PowerShell 7 | Các script dưới đây dùng `pwsh`, không phải Windows PowerShell 5.1. |
 | Database DEV | Xin qb connection string Npgsql của nhánh Neon **development** qua kênh riêng. Không dùng database production. |
-| AI Development | Dùng `Gemini` thật với API key/model trong user-secrets; không đưa secret vào FE. |
-| AI automated tests | Chỉ các test invariant cần thiết mới thay adapter trong test project; runtime application luôn là Gemini. |
+| AI Development | Dùng provider đã chọn (`deepseek`) với API key/model trong user-secrets; không đưa secret vào FE. |
+| AI automated tests | Chỉ các test invariant cần thiết mới thay adapter trong test project; runtime dùng provider đã chọn, không có OCR fallback. |
 | File test | Chọn PDF/DOCX hợp lệ của project owner. Mặc định tối đa 10 MiB. |
 
 Không cần cài PostgreSQL/Docker trên máy nếu dùng Neon DEV.
@@ -43,8 +43,9 @@ Mở PowerShell 7, trong repo backend:
 $devConnection = Read-Host "Nhap connection string Neon DEVELOPMENT do qb cap"
 dotnet user-secrets set "ConnectionStrings:Postgres" "$devConnection" --project src/Nexora.Api
 $devConnection = $null
-dotnet user-secrets set "Ai:Gemini:Model" "YOUR_CONFIGURED_MODEL" --project src/Nexora.Api
-dotnet user-secrets set "Ai:Gemini:ApiKey" "YOUR_DEVELOPMENT_KEY" --project src/Nexora.Api
+dotnet user-secrets set "Ai:Provider" "deepseek" --project src/Nexora.Api
+dotnet user-secrets set "Ai:DeepSeek:Model" "YOUR_CONFIGURED_MODEL" --project src/Nexora.Api
+dotnet user-secrets set "Ai:DeepSeek:ApiKey" "YOUR_DEVELOPMENT_KEY" --project src/Nexora.Api
 ```
 
 Nhập connection tại prompt giúp tránh ghi nguyên giá trị vào lịch sử câu lệnh. Không chụp màn hình lúc nhập.
@@ -63,7 +64,7 @@ dotnet user-secrets list --project src/Nexora.Api |
     ForEach-Object { ($_ -split '\s*=\s*', 2)[0].Trim() }
 ```
 
-Kết quả cần có `ConnectionStrings:Postgres`, `Ai:Gemini:Model` và `Ai:Gemini:ApiKey`. Model phải là API ID do maintainer cung cấp, không phải tên hiển thị. Nếu AI bật mà thiếu key/model, API và Worker dừng với lỗi cấu hình rõ ràng.
+Kết quả cần có `ConnectionStrings:Postgres`, `Ai:Provider=deepseek`, `Ai:DeepSeek:Model` và `Ai:DeepSeek:ApiKey`. Model phải là API ID do maintainer cung cấp, không phải tên hiển thị. Nếu AI bật mà thiếu key/model, API và Worker dừng với lỗi cấu hình rõ ràng.
 
 Không đưa connection string, JWT, refresh token hoặc API key vào FE, source code, ảnh chụp, PR hay log chia sẻ.
 
@@ -90,9 +91,9 @@ Swagger chỉ có ở **Development**. Testing chỉ có OpenAPI JSON; Staging/P
 Swagger vào được chưa đủ: readiness phải healthy, và Worker phải đang chạy để xử lý CV/AI.
 Script ghi lại log của phiên mới; sao lưu phần log cần điều tra trước khi khởi động lại.
 
-## 5. Xác nhận Gemini trước khi test FE
+## 5. Xác nhận text AI trước khi test FE
 
-Giữ API và Worker chạy bằng `pwsh ./scripts/run-development.ps1`, rồi kiểm tra `http://localhost:5088/api/v1/health`. Development dùng Gemini thật; nếu thiếu `Ai:Gemini:ApiKey` hoặc `Ai:Gemini:Model`, startup sẽ dừng với lỗi cấu hình. Nếu Gemini trả `400`, kiểm tra model ID do maintainer cung cấp; nếu `401/403`, kiểm tra key/quota nhưng không in key ra log.
+Giữ API và Worker chạy bằng `pwsh ./scripts/run-development.ps1`, rồi kiểm tra `http://localhost:5088/api/v1/health`. Development dùng text provider đã chọn; nếu thiếu key/model tương ứng, startup sẽ dừng với lỗi cấu hình. DeepSeek không cần Gemini key/model. Nếu provider trả `400`, kiểm tra model ID do maintainer cung cấp; nếu `401/403`, kiểm tra key/quota nhưng không in key ra log.
 
 ## 6. Cách dùng Swagger và đăng nhập
 
@@ -210,7 +211,7 @@ Nếu cần dùng Postman: PUT `http://localhost:5088{uploadUrl}`, Body → bina
 { "uploadToken": "TOKEN_TU_BUOC_1" }
 ```
 
-Thay placeholder bằng token thật. CV ban đầu là `uploaded`; Worker sẽ xử lý bằng extractor thật cho PDF/DOCX. Poll `GET /api/v1/resumes/{id}`: `uploaded → extracting → ready`; tài liệu cần fallback sẽ hiện `ocr_fallback`; lỗi cuối là `failed` kèm `errorCode = RESUME_EXTRACTION_FAILED` và thông báo an toàn.
+Thay placeholder bằng token thật. CV ban đầu là `uploaded`; Worker sẽ xử lý bằng extractor thật cho PDF/DOCX. Poll `GET /api/v1/resumes/{id}`: `uploaded → extracting → ready`; CV scan/dạng ảnh hoặc text không đủ chất lượng chuyển terminal `failed`, không gọi OCR; lỗi cuối là `failed` kèm `errorCode = RESUME_EXTRACTION_FAILED` và thông báo an toàn.
 
 ### Bước 3b — Danh sách và CV chính
 
@@ -256,7 +257,7 @@ Nếu `201`, lưu `data.id`.
 - `completed`: hiển thị kết quả backend.
 - `failed`: dừng, hiển thị lỗi an toàn và requestId nếu có.
 
-Với Development, kết quả phân tích được tạo bởi Gemini thật và nhận text trích xuất thật từ PDF/DOCX. PDF scan hoặc tài liệu có text local không đủ chất lượng sẽ tự vào `ocr_fallback`; Gemini trả text + profile trong một lần document-understanding. Nếu fallback vẫn không usable, dừng ở `failed` và hiển thị lỗi an toàn.
+Kết quả phân tích dùng text/profile qua provider đã chọn (`Ai:Provider=deepseek` cho DeepSeek). PDF/DOCX được đọc local; CV scan/dạng ảnh hoặc text không đủ chất lượng dừng ở `failed` với `RESUME_EXTRACTION_FAILED`. Dừng polling, hiển thị thông báo an toàn và cho tải lên PDF có text hoặc DOCX khác.
 
 ## Practice loop navigation contract
 
@@ -290,7 +291,7 @@ Recommendation interview co the tra them `action` nullable voi
 `type=practice_again`, `reason`, `sourceInterviewId`, `sourceQuestionId`,
 `focusTopic` va `suggestedInterviewType` de FE mo dung flow.
 
-## 8. Test plan, fake payment và interview bằng Gemini
+## 8. Test plan, fake payment và interview bằng text AI đã chọn
 
 1. `GET /api/v1/plans` → lấy `prices[].id` của gói trả phí từ server.
 2. `POST /api/v1/checkout-sessions`, Idempotency-Key mới, body `{ "planPriceId": "UUID_PRICE" }`.
@@ -390,7 +391,7 @@ Che token, password, connection string, upload capability và nội dung CV/answ
 ## 11. Checklist bàn giao FE
 
 - [ ] Pull main; restore/build/test pass.
-- [ ] Secret riêng từng máy; Gemini key/model đúng; đúng DB DEV.
+- [ ] Secret riêng từng máy; key/model provider đã chọn đúng; đúng DB DEV.
 - [ ] API healthy và Worker chạy.
 - [ ] Swagger register/login → Authorize → /me pass.
 - [ ] Presign → raw upload 204 → finalize 201 → JD → analysis completed.
@@ -399,5 +400,5 @@ Che token, password, connection string, upload capability và nội dung CV/answ
 - [ ] Không hard-code price, quota, userId, score; không dùng mock state làm authority.
 - [ ] Không commit secrets hoặc dữ liệu runtime.
 
-Hướng dẫn này không thay thế các production gates DEC-01–04, test PostgreSQL/concurrency, security và staging. Gemini là text/OCR development adapter mặc định; DeepSeek chỉ là optional local text adapter; không bật traffic production.
+Hướng dẫn này không thay thế các production gates DEC-01–04, test PostgreSQL/concurrency, security và staging. Gemini text là adapter development legacy; DeepSeek là lựa chọn text AI của chủ dự án. Không có OCR fallback; các production gates còn lại vẫn cần xác minh.
 Tài liệu nguồn: [repo Nexora Backend](https://github.com/qbao0111/nexora-backend), `docs/03-api-data-contract.md`, `docs/frontend-integration.md`, `docs/development-setup.md`.

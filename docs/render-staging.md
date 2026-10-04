@@ -28,8 +28,8 @@ Render Free Web Service (`nexora-staging`)
 └─────────────────────────────────────────────────────────────┘
        │                              │                 │
        ▼                              ▼                 ▼
-Neon PostgreSQL (Non-Prod)    Google Gemini API   SePay Sandbox / R2
-(ep-crimson-art-...-singapore)  (gemini-2.5-flash) (pay-sandbox.sepay.vn)
+Neon PostgreSQL (Non-Prod)    DeepSeek Text API   SePay Sandbox / R2
+(ep-crimson-art-...-singapore)  (configured model) (pay-sandbox.sepay.vn)
 ```
 
 ### API and Worker storage
@@ -103,8 +103,10 @@ On 2026-09-11, the Render dashboard verified that `nexora-staging` was connected
 - `Authentication__EmailVerification__PublicUrl`: Frontend URL (e.g. `https://nexora-staging.vercel.app` or custom HTTPS domain).
 - `Email__FromAddress`: Verified sending email address (e.g. `onboarding@resend.dev` or domain address).
 - `Email__Resend__ApiKey`: Resend API key (`re_...`).
-- `Ai__Gemini__ApiKey`: Google Gemini API key.
-- `Ai__Gemini__Model`: `gemini-3.5-flash-lite`.
+- `Ai__Provider`: `deepseek` for the owner-selected text provider.
+- `Ai__DeepSeek__ApiKey`: DeepSeek API key from secret configuration.
+- `Ai__DeepSeek__Model`: maintainer-configured DeepSeek text model ID.
+- Gemini credentials are not required in DeepSeek mode. CV extraction is local only; follow [the verification-first secret retirement procedure](12-document-extraction-v2.md#gemini-reference-audit-and-render-secret-retirement) after deployment. Do not remove secrets from unrelated services or print them.
 - `Billing__Sepay__MerchantId`: SePay Sandbox Merchant ID.
 - `Billing__Sepay__SecretKey`: SePay Sandbox Secret Key.
 
