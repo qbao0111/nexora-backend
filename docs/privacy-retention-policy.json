@@ -1,0 +1,23 @@
+{
+  "version": "retention-foundation-v1",
+  "publication": "DRAFT_NOT_PUBLISHED",
+  "productionPurgeDefault": "DISABLED",
+  "statuses": {
+    "TARGET": "Owner-selected objective, not enforcement evidence",
+    "IMPLEMENTED": "Source and deterministic tests establish a capability; not deployment enablement",
+    "PROVIDER-CONFIRMED": "Requires dated external lifecycle evidence; none asserted here",
+    "LEGAL-APPROVED": "Requires responsible legal/business owner approval; none asserted here"
+  },
+  "categories": [
+    { "category": "personal_career_data", "target": "completed_account_deletion", "status": "IMPLEMENTED", "deploymentVerified": false, "exceptions": ["storage_failure", "unexpired_upload_capability"], "providerCopiesVerified": false },
+    { "category": "identity", "target": "anonymize_disable_at_completed_deletion", "status": "IMPLEMENTED", "deploymentVerified": false, "limitation": "stable account UUID remains for financial FK integrity; not anonymous" },
+    { "category": "expired_external_verifications", "target": "approximately_24_hours_after_expiry", "status": "IMPLEMENTED", "implementation": "bounded expiry purge capability, defaults disabled/report-only", "deploymentVerified": false, "exceptions": ["legal_hold", "backlog", "worker_failure", "purge_disabled"] },
+    { "category": "nexora_controlled_logs", "targetDays": 30, "status": "TARGET", "implementation": "no backend log sink lifecycle enforcement", "providerConfirmed": false },
+    { "category": "deleted_account_non_accounting_usage", "targetDaysAfterCompletedDeletion": 90, "status": "TARGET", "implementation": "BLOCKED", "reason": "immutable usage and financial/quota references are not safely separated" },
+    { "category": "completed_deletion_request_metadata", "targetCalendarMonthsAfterCompletedDeletion": 12, "status": "IMPLEMENTED", "implementation": "bounded purge capability requiring old completed request AND old deleted owner; defaults disabled/report-only", "deploymentVerified": false, "exceptions": ["legal_hold", "incomplete_owner_privacy_job", "backlog", "worker_failure", "purge_disabled"] },
+    { "category": "admin_audit_and_hold_history", "targetCalendarMonthsAfterCompletedDeletion": 12, "status": "TARGET", "implementation": "BLOCKED_PENDING_CATEGORY_AND_LEGAL_REVIEW", "reason": "financial/security investigations and linkable metadata cannot be purged by age alone" },
+    { "category": "financial_records", "target": "applicable_legally_required_retention", "status": "TARGET", "implementation": "PRESERVED_NO_AUTOMATIC_PURGE", "legalApproved": false },
+    { "category": "orphan_uploads", "target": "scoped_reference_checked_cleanup", "status": "TARGET", "implementation": "BLOCKED_NO_GLOBAL_OBJECT_OR_AGE_PURGE" },
+    { "category": "database_backups_and_provider_copies", "target": "actual_verified_lifecycle", "status": "TARGET", "providerConfirmed": false, "duration": null }
+  ]
+}

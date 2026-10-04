@@ -1,5 +1,9 @@
 # Data Model Specification — Nexora
 
+## Retention foundation additions
+
+`retention_checkpoints` contains one fixed ID=1 row with durable next-run time, latest bounded counters and consecutive failure count. `retention_holds` contains opaque nullable UserId (null=global), constrained reason code, creation/release timestamps and a restrictive user FK. The new `PrivacyRetentionLifecycle` migration adds only these tables plus stable cleanup indexes on external verification expiry/ID and privacy-request status/completion/ID. No existing personal or financial row is purged by the migration. See [retention inventory/runbook](privacy-retention.md) for eligibility, holds and disabled-by-default controls; no automatic 90-day financial/usage purge exists.
+
 **Status:** Approved implementation baseline; retention values deferred  
 **Last updated:** 2026-09-22
 

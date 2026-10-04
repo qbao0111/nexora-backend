@@ -32,6 +32,8 @@ decision.
 
 ## 3. Privacy requirements
 
+Owner-approved targets, actual enforcement boundaries, legal holds and operator enablement are in [privacy-retention.md](privacy-retention.md) / [status manifest](privacy-retention-policy.json). Automatic destructive retention cleanup is disabled by default. Targets do not establish deployed SLAs, legal approval or external-provider erasure.
+
 - Trước upload/recording, hiển thị purpose, retention, quyền xoá và link Privacy Policy.
 - CV/JD/transcript không được dùng để training AI model nếu chưa có opt-in riêng, rõ ràng.
 - Người dùng có thể export dữ liệu core và yêu cầu xoá account; task xoá có audit status.

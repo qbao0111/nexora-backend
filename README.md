@@ -116,6 +116,8 @@ The R2 adapter uses an S3-compatible HTTPS endpoint and keeps objects private by
 
 ### AI provider development configuration
 
+Retention cleanup is disabled/report-only by default. See the [source-grounded retention inventory and operator runbook](docs/privacy-retention.md) and [policy-status manifest](docs/privacy-retention-policy.json). Financial ledgers and shared R2 bucket objects are never age-purged by this foundation.
+
 The legacy Gemini text adapter is required only when explicitly using `Ai:Provider=gemini` (the existing development default). Its optional development configuration is:
 
 ```powershell
