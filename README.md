@@ -1,8 +1,8 @@
 # Nexora
 
-**Status:** **REAL INTERNAL DEVELOPMENT FLOW (GEMINI DEFAULT; OPTIONAL DEEPSEEK LOCAL TEST)**
+**Status:** **REAL INTERNAL DEVELOPMENT FLOW (DEEPSEEK TEXT; LOCAL CV EXTRACTION)**
 
-**Current milestone:** Real browser/API/PostgreSQL flow is the development verification path; Gemini remains the default text provider and DeepSeek V4 Flash is available on this local evaluation branch
+**Current milestone:** Real browser/API/PostgreSQL flow is the development verification path; DeepSeek is the owner-selected production text provider; CV document extraction is local only
 
 **Specification baseline:** Approved implementation baseline
 **Last updated:** 2026-09-09
@@ -108,7 +108,7 @@ dotnet run --project src/Nexora.Api --no-launch-profile
 dotnet run --project src/Nexora.Worker --no-launch-profile
 ```
 
-Both processes use the same ignored `.nexora-local/storage` path when launched from the repository root. Development defaults to Gemini text AI, with optional DeepSeek V4 Flash text evaluation selected through `Ai:Provider=deepseek`; document OCR fallback remains Gemini in either mode. `Storage:Provider=local` selects the private local adapter for Development/Testing, while `Storage:Provider=r2` selects the private Cloudflare R2 adapter plus durable upload-intent/finalize flow when all `Storage:R2:*` settings are supplied. R2 direct browser PUTs use short-lived private signed URLs; the existing `POST /resumes` endpoint validates the actual object before creating a usable resume. Payment is config-selected; the default remains `FakePaymentProvider`, while SePay Sandbox and payOS can be enabled explicitly for internal payment testing with no production provider decision. Readiness is `/api/v1/health`; liveness is `/health/live`.
+Both processes use the same ignored `.nexora-local/storage` path when launched from the repository root. Select the owner-approved DeepSeek text provider with `Ai:Provider=deepseek`; the legacy development default remains Gemini. Document extraction is local PdfPig/OpenXML only. `Storage:Provider=local` selects the private local adapter for Development/Testing, while `Storage:Provider=r2` selects the private Cloudflare R2 adapter plus durable upload-intent/finalize flow when all `Storage:R2:*` settings are supplied. R2 direct browser PUTs use short-lived private signed URLs; the existing `POST /resumes` endpoint validates the actual object before creating a usable resume. Payment is config-selected; the default remains `FakePaymentProvider`, while SePay Sandbox and payOS can be enabled explicitly for internal payment testing with no production provider decision. Readiness is `/api/v1/health`; liveness is `/health/live`.
 
 ### Cloudflare R2 storage configuration
 
@@ -116,14 +116,14 @@ The R2 adapter uses an S3-compatible HTTPS endpoint and keeps objects private by
 
 ### AI provider development configuration
 
-Gemini remains the default text provider and must stay configured because the document OCR fallback is Gemini. Configure its development key and model through user-secrets:
+The legacy Gemini text adapter is required only when explicitly using `Ai:Provider=gemini` (the existing development default). Its optional development configuration is:
 
 ```powershell
 dotnet user-secrets set "Ai:Gemini:ApiKey" "YOUR_DEVELOPMENT_KEY" --project src/Nexora.Api
 dotnet user-secrets set "Ai:Gemini:Model" "YOUR_CONFIGURED_MODEL" --project src/Nexora.Api
 ```
 
-To evaluate the optional DeepSeek V4 Flash text provider locally, switch the shared user-secrets store (the API and Worker use the same `Nexora.LocalDevelopment` ID):
+For DeepSeek text AI, configure the shared user-secrets store (the API and Worker use the same `Nexora.LocalDevelopment` ID):
 
 ```powershell
 dotnet user-secrets set "Ai:Provider" "deepseek" --project src/Nexora.Api
@@ -131,9 +131,9 @@ dotnet user-secrets set "Ai:DeepSeek:ApiKey" "YOUR_DEEPSEEK_KEY" --project src/N
 dotnet user-secrets set "Ai:DeepSeek:Model" "deepseek-v4-flash" --project src/Nexora.Api
 ```
 
-Restart API and Worker after changing secrets. If the selected provider or the Gemini OCR configuration is incomplete, startup fails with a clear configuration error. DeepSeek is a local/development evaluation adapter only; DEC-01 production provider/model and budget decisions remain deferred.
+Restart API and Worker after changing secrets. Missing selected-provider configuration fails startup. DeepSeek configurations need no Gemini credentials and register no Gemini provider. The owner has selected DeepSeek for production text AI; remaining model/budget and go-live gates are separate. See [document extraction/privacy](docs/12-document-extraction-v2.md) for safe retirement of obsolete Render Gemini secrets after deployment verification.
 
-Use the real browser/frontend journey for CV, JD and interview validation. A normal text PDF/DOCX stays local; only suspicious extraction automatically uses one Gemini document-understanding fallback that returns extracted text and the compact resume profile together. See [frontend integration](docs/frontend-integration.md) and the Desktop guides generated for the project owner.
+Use the real browser/frontend journey for CV, JD and interview validation. Text PDF/DOCX extraction stays local; suspicious or unreadable CVs become `failed` with `RESUME_EXTRACTION_FAILED`. Scanned/image-only CVs require a new text-based PDF or DOCX upload. Profile/analysis operations continue through the selected text provider using canonical text and compact cached profiles. See [frontend integration](docs/frontend-integration.md).
 
 ### SePay Sandbox payment configuration
 

@@ -46,11 +46,12 @@ Both API and Worker use the shared user-secrets ID `Nexora.LocalDevelopment`, so
 
 ```powershell
 dotnet user-secrets set "ConnectionStrings:Postgres" "NEON_DEVELOPMENT_NPGSQL_CONNECTION" --project src/Nexora.Api
-dotnet user-secrets set "Ai:Gemini:ApiKey" "GEMINI_DEVELOPMENT_KEY" --project src/Nexora.Api
-dotnet user-secrets set "Ai:Gemini:Model" "GEMINI_MODEL_ID" --project src/Nexora.Api
+dotnet user-secrets set "Ai:Provider" "deepseek" --project src/Nexora.Api
+dotnet user-secrets set "Ai:DeepSeek:ApiKey" "DEEPSEEK_KEY" --project src/Nexora.Api
+dotnet user-secrets set "Ai:DeepSeek:Model" "DEEPSEEK_MODEL_ID" --project src/Nexora.Api
 ```
 
-Use only the Neon `development` branch. The guarded scripts reject non-Neon hosts for this workflow and never expose a remote reset/drop action. If the Neon branch selector says `production`, replace the secret with the connection from `development` before creating any test users. Gemini remains required for the document OCR fallback; the API and Worker fail clearly at startup when the Gemini secrets are missing. Text AI may use the default Gemini adapter or the optional local DeepSeek adapter. Neither is approved for production under DEC-01.
+Use only the Neon `development` branch. The guarded scripts reject non-Neon hosts for this workflow and never expose a remote reset/drop action. If the Neon branch selector says `production`, replace the secret with the connection from `development` before creating any test users. Configure `Ai:Provider=deepseek` with DeepSeek key/model for the owner-selected text provider; API and Worker need no Gemini credentials in that mode. The legacy Gemini text adapter remains selectable. Missing selected-provider credentials fail startup; remaining go-live gates still apply.
 
 Verify presence without sharing values:
 
@@ -79,7 +80,7 @@ Keep this terminal open while developing the frontend. Start the Vite frontend i
 
 Swagger uses the existing OpenAPI document, with Bearer authorization, required idempotency headers and raw PDF/DOCX upload inputs. It does not persist authorization across reloads or use an external schema validator. Neither UI nor JSON is exposed in Staging/Production; Testing retains JSON only. See the [Vietnamese FE setup and Swagger walkthrough](frontend-swagger-guide.vi.md) for a copy-ready checklist and resume troubleshooting.
 
-Resume extraction uses the real PDF/DOCX adapter. Text-based PDFs and DOCX files stay local; suspicious or image-only documents automatically enter the Gemini document fallback and expose `ocr_fallback` while processing.
+Resume extraction uses local PdfPig/OpenXML. Suspicious, unreadable or image-only documents become terminal `failed` with `RESUME_EXTRACTION_FAILED`; upload a text-based PDF or DOCX. No document bytes leave the extraction pipeline for AI/OCR.
 
 ## 5. Test payment and AI flows
 
@@ -89,7 +90,7 @@ Automated tests that protect critical invariants replace the AI adapter inside t
 pwsh ./scripts/complete-fake-payment.ps1 -OrderId "ORDER_ID"
 ```
 
-Refetch `/api/v1/me` after fulfillment. The owner validates the complete Gemini journey manually with the real browser/frontend and real CV/JD files; do not put provider secrets in the browser.
+Refetch `/api/v1/me` after fulfillment. The owner validates the complete selected-provider text AI journey manually with the real browser/frontend and real CV/JD files; do not put provider secrets in the browser.
 
 For hosted payment sandbox testing, keep FakePayment as the default and explicitly switch a machine to SePay only through user-secrets:
 

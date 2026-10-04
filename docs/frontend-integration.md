@@ -73,11 +73,10 @@ For password recovery, call `POST /auth/forgot-password` with `{ "email": "..." 
 
    ```text
    uploaded → extracting → ready
-                     ↘ ocr_fallback → ready
                      ↘ failed
    ```
 
-   `failed` includes `errorCode: "RESUME_EXTRACTION_FAILED"` and the safe message `Không thể đọc nội dung CV. Vui lòng thử lại với file PDF hoặc DOCX rõ hơn.`. Local text PDFs/DOCX use PdfPig/OpenXML; only suspicious/failed local extraction invokes the single Gemini document fallback.
+   `failed` includes `errorCode: "RESUME_EXTRACTION_FAILED"` and the safe message `Không thể đọc nội dung CV. Vui lòng tải lên PDF có văn bản có thể chọn hoặc sao chép, hoặc file DOCX. CV dạng ảnh hoặc bản scan hiện chưa được hỗ trợ.`. FE/Mobile stop polling on `ready` or `failed`, show the failure message and allow a new upload; start analysis only after `ready`. PdfPig/OpenXML extraction is local only and there is no Gemini OCR fallback. Legacy stored status/metadata values remain compatible.
 
    To show the user's saved CVs, call `GET /resumes` with the Bearer token. It returns the same safe `ResumeView` metadata in newest-first order and returns `data: []` when the user has no CVs. It never returns extracted text, structured profile, storage keys or provider fields.
 
@@ -434,7 +433,7 @@ The endpoint is read-only, uses no AI and returns no raw CV, answer, STAR or sce
 
 ## Development shortcut (optional)
 
-`POST /dev/resume-analysis` is **DEVELOPMENT ONLY**. It accepts multipart `File` + `JobDescription` and an idempotency key, then orchestrates the same real upload, storage, extraction, automatic fallback, Worker, PostgreSQL and Gemini services. It is useful for backend debugging; the normal frontend should use the explicit sequence above. The route is not mapped outside Development.
+`POST /dev/resume-analysis` is **DEVELOPMENT ONLY**. It accepts multipart `File` + `JobDescription` and an idempotency key, then orchestrates the same real upload, storage, local extraction, Worker, PostgreSQL and selected text AI services. Unreadable CVs fail without OCR. It is useful for backend debugging; the normal frontend should use the explicit sequence above. The route is not mapped outside Development.
 
 ## Status and error handling
 

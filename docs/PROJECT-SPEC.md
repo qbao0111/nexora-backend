@@ -77,7 +77,7 @@ Production application host (DEC-04)
 - C# nullable enabled, `async` all I/O, cancellation token cho HTTP/job.
 - Controller mỏng: bind DTO → validation → service → DTO response.
 - Business service không phụ thuộc `HttpContext`, controller không gọi `DbContext` trực tiếp.
-- Integration adapter đặt timeout/bounded retry cho external provider. Development defaults to `GeminiAiProvider`; optional `DeepSeekAiProvider` may be selected for local text-AI evaluation through `Ai:Provider=deepseek`, while document OCR remains Gemini. Deterministic AI test doubles, when needed, live only in the test project. `FakePaymentProvider` and `LocalStorageProvider` remain development adapters; `R2StorageProvider` is the private storage adapter for production-like configuration. Neither Gemini nor DeepSeek is a production selection until DEC-01 is approved, and final R2 account/hosting enablement remains DEC-04.
+- Integration adapter đặt timeout/bounded retry cho external provider. Development defaults to `GeminiAiProvider`; optional `DeepSeekAiProvider` may be selected for local text-AI evaluation through `Ai:Provider=deepseek`. Document extraction is local only and unreadable CVs fail safely. Deterministic AI test doubles, when needed, live only in the test project. `FakePaymentProvider` and `LocalStorageProvider` remain development adapters; `R2StorageProvider` is the private storage adapter for production-like configuration. Neither Gemini nor DeepSeek is a production selection until DEC-01 is approved, and final R2 account/hosting enablement remains DEC-04.
 - EF migrations là artefact source-controlled và review cùng thay đổi entity.
 
 ## 9. Provider decision boundary

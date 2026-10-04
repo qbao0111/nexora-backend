@@ -84,7 +84,9 @@ public static class DependencyInjection
         if (aiProvider is not ("gemini" or "deepseek"))
             throw new InvalidOperationException("Ai:Provider must be gemini or deepseek.");
         var deepSeekEnabled = aiEnabled && string.Equals(aiProvider, "deepseek", StringComparison.Ordinal);
-        services.AddOptions<GeminiOptions>().Bind(configuration.GetSection(GeminiOptions.SectionName))
+        if (string.Equals(aiProvider, "gemini", StringComparison.Ordinal))
+        {
+            services.AddOptions<GeminiOptions>().Bind(configuration.GetSection(GeminiOptions.SectionName))
             .Validate(options => !aiEnabled || !string.IsNullOrWhiteSpace(options.ApiKey),
                 "Ai:Gemini:ApiKey must be supplied through secret configuration when Features:Ai is enabled.")
             .Validate(options => !aiEnabled || !string.IsNullOrWhiteSpace(options.Model),
@@ -96,7 +98,8 @@ public static class DependencyInjection
                 "Gemini MaxAttempts must be exactly 1; StructuredAiExecutor owns retries.")
             .Validate(options => options.RetryBaseDelayMilliseconds is >= 0 and <= 5_000, "Gemini retry delay must be between 0 and 5000 milliseconds.")
             .ValidateOnStart();
-        services.AddHttpClient<GeminiAiProvider>();
+            services.AddHttpClient<GeminiAiProvider>();
+        }
         services.AddOptions<DeepSeekOptions>().Bind(configuration.GetSection(DeepSeekOptions.SectionName))
             .Validate(options => !deepSeekEnabled || !string.IsNullOrWhiteSpace(options.ApiKey),
                 "Ai:DeepSeek:ApiKey must be supplied through secret configuration when Ai:Provider=deepseek.")
@@ -118,8 +121,6 @@ public static class DependencyInjection
             string.Equals(aiProvider, "deepseek", StringComparison.Ordinal)
                 ? provider.GetRequiredService<DeepSeekAiProvider>()
                 : provider.GetRequiredService<GeminiAiProvider>());
-        services.AddHttpClient<GeminiDocumentOcrProvider>();
-        services.AddSingleton<IDocumentOcrProvider>(provider => provider.GetRequiredService<GeminiDocumentOcrProvider>());
         var paymentProvider = configuration.GetValue($"{PaymentProviderOptions.SectionName}:Provider", "fake")?.Trim().ToLowerInvariant() ?? "fake";
         var payosEnabled = string.Equals(paymentProvider, "payos", StringComparison.Ordinal);
         services.AddOptions<PaymentProviderOptions>().Bind(configuration.GetSection(PaymentProviderOptions.SectionName))

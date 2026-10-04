@@ -71,11 +71,6 @@ public sealed class ResumeProfileProcessor(
         }
     }
 
-    internal static void ValidateResumeProfile(ResumeProfile profile)
-    {
-        if (!ResumeProfileValidator.NormalizeAndValidate(profile).IsValid) throw InvalidAiOutput();
-    }
-
     private static BusinessException InvalidAiOutput() => new("AI_OUTPUT_INVALID", "AI trả về dữ liệu không hợp lệ.", BusinessErrorKind.ExternalFailure);
     private static BusinessException AiUnavailable(AiProviderException exception) => new(
         exception.Kind == AiProviderFailureKind.RateLimited ? "AI_RATE_LIMITED" : "AI_PROVIDER_UNAVAILABLE",

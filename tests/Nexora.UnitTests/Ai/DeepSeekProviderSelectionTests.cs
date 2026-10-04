@@ -1,5 +1,5 @@
-using Microsoft.Extensions.Configuration;
 using System.Globalization;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Nexora.Business.Ai;
@@ -12,21 +12,23 @@ namespace Nexora.UnitTests.Ai;
 public sealed class DeepSeekProviderSelectionTests
 {
     [Fact]
-    public void GeminiIsTheDefaultTextProviderAndOcrRemainsGemini()
+    public void GeminiIsTheDefaultLegacyTextProvider()
     {
         using var services = BuildServices();
 
         Assert.IsType<GeminiAiProvider>(services.GetRequiredService<IAiProvider>());
-        Assert.IsType<GeminiDocumentOcrProvider>(services.GetRequiredService<IDocumentOcrProvider>());
     }
 
     [Fact]
-    public void DeepSeekSelectionResolvesDeepSeekTextProviderAndGeminiOcr()
+    public void DeepSeekSelectionRequiresNoGeminiCredentials()
     {
-        using var services = BuildServices("deepseek");
+        using var services = BuildDeepSeekServices("https://api.deepseek.com");
 
         Assert.IsType<DeepSeekAiProvider>(services.GetRequiredService<IAiProvider>());
-        Assert.IsType<GeminiDocumentOcrProvider>(services.GetRequiredService<IDocumentOcrProvider>());
+        Assert.Empty(services.GetRequiredService<IOptions<GeminiOptions>>().Value.ApiKey);
+        Assert.Null(services.GetService<GeminiAiProvider>());
+        Assert.IsType<Nexora.Integrations.Storage.PdfDocxDocumentExtractor>(services.GetRequiredService<IDetailedDocumentExtractor>());
+        services.GetRequiredService<IStartupValidator>().Validate();
     }
 
     [Fact]
@@ -107,8 +109,8 @@ public sealed class DeepSeekProviderSelectionTests
             {
                 ["Features:Ai"] = aiEnabled ? "true" : "false",
                 ["Ai:Provider"] = provider,
-                ["Ai:Gemini:ApiKey"] = "test-gemini-key",
-                ["Ai:Gemini:Model"] = "test-gemini-model",
+                ["Ai:Gemini:ApiKey"] = provider == "gemini" ? "test-gemini-key" : "",
+                ["Ai:Gemini:Model"] = provider == "gemini" ? "test-gemini-model" : "",
                 ["Ai:Gemini:MaxAttempts"] = geminiMaxAttempts.ToString(CultureInfo.InvariantCulture),
                 ["Ai:DeepSeek:ApiKey"] = "test-deepseek-key",
                 ["Ai:DeepSeek:BaseUrl"] = deepSeekBaseUrl ?? "https://api.deepseek.com",

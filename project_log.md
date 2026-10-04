@@ -1004,3 +1004,10 @@ This log records completed implementation milestones and verification evidence. 
 - Added typed site settings, draft/published About and legal pages, private-backed marketing assets with admin preview and published-only public image reads, plus metadata-only admin audit actions.
 - Added `GET /api/v1/me/orders` owner-scoped keyset pagination without changing `/me`'s latest-20 summary. The new migration adds site tables and the owner/time/id order index.
 - Local SQLite-backed focused API tests cover publication boundaries, admin authorization, asset MIME/magic/size, owner paging/filtering and `/me` compatibility. PostgreSQL-only coverage remains a hosted-CI gate; no live storage/payment/AI provider call was used.
+
+## 2026-10-04 — Retire Gemini document OCR fallback
+
+- Removed the document OCR provider, contract and Worker network fallback. PdfPig/OpenXML extraction and quality/layout gates remain local; permanently unreadable documents become `failed` with `RESUME_EXTRACTION_FAILED`, an actionable Vietnamese message and a processed outbox event, without AI calls or endless retries.
+- DeepSeek selection no longer registers or validates Gemini dependencies. Profile/analysis still use the selected text provider and existing cache versions; historical `GeminiOcr` metadata remains readable. Upload, ownership, deletion, billing and quota paths are unchanged.
+- Added local PDF/DOCX, scan-only, invalid-document, historical-metadata and provider-selection tests, plus text-only DeepSeek pipeline and PostgreSQL outbox regressions. Release build passed with zero warnings/errors; 625 unit tests and 419 integration tests passed locally, with 35 PostgreSQL tests skipped because the local Docker daemon was unavailable. Hosted PostgreSQL CI remains required before approval.
+- Changed-file style/analyzer verification, EF pending-model validation, CRLF-aware diff check and transitive vulnerability scan passed. No package or migration change. Documentation explains scan limitations, FE/Mobile terminal polling and verification-first retirement of obsolete Render Gemini secrets; no deployment or Render changes were performed.

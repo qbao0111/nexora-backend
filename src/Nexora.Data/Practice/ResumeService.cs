@@ -17,7 +17,7 @@ public sealed class ResumeService(
     IUploadProvider uploadProvider,
     TimeProvider timeProvider) : IResumeService
 {
-    private const string ResumeExtractionFailureMessage = "Không thể đọc nội dung CV. Vui lòng thử lại với file PDF hoặc DOCX rõ hơn.";
+    private const string ResumeExtractionFailureMessage = "Không thể đọc nội dung CV. Vui lòng tải lên PDF có văn bản có thể chọn hoặc sao chép, hoặc file DOCX. CV dạng ảnh hoặc bản scan hiện chưa được hỗ trợ.";
 
     internal static ResumeView MapResume(ResumeRecord resume) => new(
         resume.Id, resume.StoredFile.FileName, resume.StoredFile.ContentType, resume.StoredFile.Size,

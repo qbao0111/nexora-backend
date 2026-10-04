@@ -23,8 +23,8 @@ public sealed class PdfDocxDocumentExtractor(IOptions<DocumentExtractionQualityO
     public async Task<string> ExtractAsync(Stream content, string contentType, CancellationToken cancellationToken)
     {
         var result = await ExtractDetailedAsync(content, contentType, cancellationToken).ConfigureAwait(false);
-        if (result.Quality == DocumentExtractionQuality.Failed)
-            throw new InvalidDataException("Document text extraction quality is insufficient; OCR may be required.");
+        if (result.Quality != DocumentExtractionQuality.Good)
+            throw new InvalidDataException("Document text extraction quality is insufficient.");
         return result.Text;
     }
 
@@ -428,7 +428,7 @@ public sealed class PdfDocxDocumentExtractor(IOptions<DocumentExtractionQualityO
               controlRatio <= qualityOptions.MaximumControlRatio
                 ? DocumentExtractionQuality.Good
                 : DocumentExtractionQuality.Suspicious;
-        if (quality != DocumentExtractionQuality.Good) warnings.Add("OCR_MAY_BE_REQUIRED");
+        if (quality != DocumentExtractionQuality.Good) warnings.Add("TEXT_EXTRACTION_INSUFFICIENT");
 
         return new(
             text,

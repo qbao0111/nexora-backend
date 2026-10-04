@@ -14,6 +14,43 @@ namespace Nexora.UnitTests.Ai;
 public sealed class DeepSeekAiProviderTests
 {
     [Fact]
+    public async Task ResumeProfileAndAnalysisUseDeepSeekTextContracts()
+    {
+        var responses = new Queue<HttpResponseMessage>([
+            SuccessResponse("""
+                {"summary":"Kỹ sư backend","skills":["C#","PostgreSQL"],"experiences":[],"education":[],"projects":[],"certifications":[],"languages":[]}
+                """),
+            SuccessResponse(ValidResumeAnalysisContent())
+        ]);
+        var handler = new RecordingHandler(_ => responses.Dequeue());
+        var provider = CreateProvider(handler);
+        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance);
+        var profile = await executor.ExecuteAsync(AiOperations.ResumeProfile,
+            "<resume-text>Backend engineer with C# and PostgreSQL experience.</resume-text>",
+            new AiOperationContext("local-profile"), CancellationToken.None);
+        var analysis = await executor.ExecuteAsync(AiOperations.ResumeAnalysis,
+            "<resume-profile>C#, PostgreSQL</resume-profile><job-description>Backend engineer</job-description>",
+            new AiOperationContext("local-analysis", Metadata: new Dictionary<string, string>
+            {
+                [ResumeAnalysisMetadata.Mode] = ResumeAnalysisModes.JobTargeted
+            }), CancellationToken.None);
+
+        Assert.Contains("PostgreSQL", profile.Value.Skills);
+        Assert.Equal(75, analysis.Value.MatchScore);
+        Assert.Equal(1, profile.Attempts);
+        Assert.Equal(1, analysis.Attempts);
+        Assert.Equal(2, handler.Calls);
+        Assert.Equal("https://api.deepseek.com/chat/completions", handler.RequestUri!.AbsoluteUri);
+        Assert.All(handler.RequestBodies, body =>
+        {
+            using var request = JsonDocument.Parse(body);
+            Assert.Equal(JsonValueKind.String, request.RootElement.GetProperty("messages")[1].GetProperty("content").ValueKind);
+            Assert.DoesNotContain("inline_data", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("image_url", body, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
     public async Task SendsOfficialEndpointBearerModelBudgetAndTrustedJsonContract()
     {
         var handler = new RecordingHandler(_ => SuccessResponse("{\"content\":\"ok\"}"));
