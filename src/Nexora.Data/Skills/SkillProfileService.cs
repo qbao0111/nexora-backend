@@ -110,7 +110,8 @@ public sealed class SkillProfileService(NexoraDbContext dbContext) : ISkillProfi
         foreach (var row in scenarioAttempts)
             ReadScenarioAttempt(row, evidence);
 
-        return SkillProfileAggregator.Aggregate(evidence, weaknessSignals);
+        var profile = SkillProfileAggregator.Aggregate(evidence, weaknessSignals);
+        return profile with { ReportingId = SkillProfileReporting.CreateId(userId, profile) };
     }
 
     private static void ReadResumeAnalysisEvidence(

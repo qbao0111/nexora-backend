@@ -798,7 +798,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.ToTable("content_reports", table =>
             {
                 table.HasCheckConstraint("CK_content_reports_content_type",
-                    "\"ContentType\" IN ('interview_question', 'interview_answer_evaluation', 'interview_report', 'resume_analysis', 'scenario_evaluation', 'star_evaluation')");
+                    "\"ContentType\" IN ('interview_question', 'interview_answer_evaluation', 'interview_report', 'resume_analysis', 'scenario_evaluation', 'star_evaluation', 'learning_path', 'skill_profile')");
                 table.HasCheckConstraint("CK_content_reports_reason_code",
                     "\"ReasonCode\" IN ('offensive', 'inaccurate', 'irrelevant', 'privacy_violation', 'discriminatory', 'other')");
                 table.HasCheckConstraint("CK_content_reports_status",

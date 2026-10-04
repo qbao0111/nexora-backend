@@ -2,13 +2,16 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Nexora.Business.Common;
 using Nexora.Business.ContentReports;
+using Nexora.Business.Learning;
 using Nexora.Business.Practice;
+using Nexora.Business.Skills;
 using Nexora.Data.Billing;
 using Nexora.Data.Persistence;
 
 namespace Nexora.Data.ContentReports;
 
-public sealed class ContentReportService(NexoraDbContext dbContext, TimeProvider timeProvider) : IContentReportService
+public sealed class ContentReportService(
+    NexoraDbContext dbContext, TimeProvider timeProvider, ISkillProfileService skillProfiles) : IContentReportService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly HashSet<string> Reasons =
@@ -166,6 +169,35 @@ public sealed class ContentReportService(NexoraDbContext dbContext, TimeProvider
     {
         switch (contentType)
         {
+            case ContentReportValues.LearningPath:
+            {
+                var path = await dbContext.LearningPaths.AsNoTracking().AsSplitQuery()
+                    .Where(item => item.Id == contentId && item.UserId == userId &&
+                        item.CareerGoal.UserId == userId && item.CareerGoal.DeletedAt == null &&
+                        (item.Status == LearningPathValues.Active || item.Status == LearningPathValues.Completed))
+                    .Include(item => item.Milestones).ThenInclude(item => item.Activities)
+                    .SingleOrDefaultAsync(cancellationToken);
+                if (path is null || path.Milestones.Count == 0) return null;
+                var items = path.Milestones.OrderBy(item => item.SortOrder).ThenBy(item => item.Id)
+                    .SelectMany(milestone => new object[]
+                    {
+                        new { kind = "milestone", milestone.Code, milestone.Title, milestone.Status }
+                    }.Concat(milestone.Activities.OrderBy(item => item.SortOrder).ThenBy(item => item.Id)
+                        .Select(activity => (object)new
+                        {
+                            kind = "activity", milestone = milestone.Code, activity.Type,
+                            activity.Title, activity.Description, activity.CompetencyCode, activity.Status
+                        })));
+                return SerializeBounded(contentType, contentId, items);
+            }
+            case ContentReportValues.SkillProfile:
+            {
+                var profile = await skillProfiles.GetAsync(userId, cancellationToken);
+                if (profile.ReportingId != contentId) return null;
+                var items = profile.Competencies.Select(item => (object)new { kind = "competency", content = item })
+                    .Concat(profile.WeaknessSignals.Select(item => (object)new { kind = "weakness", content = item }));
+                return SerializeBounded(contentType, contentId, items);
+            }
             case ContentReportValues.InterviewQuestion:
             {
                 var content = await dbContext.InterviewQuestions.AsNoTracking()
@@ -224,6 +256,25 @@ public sealed class ContentReportService(NexoraDbContext dbContext, TimeProvider
     }
 
     private static string SerializeJson(string value) => JsonSerializer.Serialize(ParseJson(value), JsonOptions);
+
+    private static string SerializeBounded(string contentType, Guid contentId, IEnumerable<object> source)
+    {
+        // Preserve complete JSON entries, never splice/truncate JSON or include raw source CV/answers.
+        var items = new List<JsonElement>();
+        var truncated = false;
+        foreach (var item in source)
+        {
+            if (items.Count == 200) { truncated = true; break; }
+            var entry = JsonSerializer.SerializeToElement(item, JsonOptions);
+            items.Add(entry);
+            var candidate = JsonSerializer.Serialize(new { contentType, contentId, items, truncated = true }, JsonOptions);
+            if (candidate.Length <= ContentReportRules.MaximumSnapshotLength) continue;
+            items.RemoveAt(items.Count - 1);
+            truncated = true;
+            break;
+        }
+        return JsonSerializer.Serialize(new { contentType, contentId, items, truncated }, JsonOptions);
+    }
 
     private static JsonElement ParseJson(string value)
     {
@@ -288,7 +339,9 @@ public sealed class ContentReportService(NexoraDbContext dbContext, TimeProvider
         ContentReportValues.InterviewReport,
         ContentReportValues.ResumeAnalysis,
         ContentReportValues.ScenarioEvaluation,
-        ContentReportValues.StarEvaluation
+        ContentReportValues.StarEvaluation,
+        ContentReportValues.LearningPath,
+        ContentReportValues.SkillProfile
     ];
 
     private static BusinessException NotFound() =>

@@ -1,0 +1,42 @@
+warning: in the working copy of 'docs/release/site-content/privacy-published.snapshot.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/release/site-content/privacy-proposed.vi.md', LF will be replaced by CRLF the next time Git touches it
+diff --git a/docs/release/site-content/privacy-published.snapshot.md b/docs/release/site-content/privacy-proposed.vi.md
+index 13e9501..9803e8f 100644
+--- a/docs/release/site-content/privacy-published.snapshot.md
++++ b/docs/release/site-content/privacy-proposed.vi.md
+@@ -10 +10 @@ Dữ liệu được xử lý để xác thực tài khoản, cung cấp chức
+-Khi bạn yêu cầu phân tích CV, đánh giá câu trả lời, tạo câu hỏi, báo cáo hoặc chức năng AI tương ứng, phần dữ liệu cần thiết cho tác vụ có thể được gửi tới nhà cung cấp AI được cấu hình cho môi trường đang vận hành.
++Nexora lưu CV dưới dạng đối tượng riêng tư trên Cloudflare R2 và trích xuất văn bản PDF/DOCX tại máy chủ. Nexora không sử dụng Gemini OCR hoặc dịch vụ OCR bên ngoài; PDF chỉ chứa ảnh hoặc bản scan có thể không đọc được.
+@@ -12 +12,5 @@ Khi bạn yêu cầu phân tích CV, đánh giá câu trả lời, tạo câu h
+-Khi bạn chủ động sử dụng chức năng giọng nói, dữ liệu âm thanh hoặc văn bản liên quan có thể được xử lý bởi nhà cung cấp nhận dạng hoặc tổng hợp giọng nói để thực hiện chức năng đó.
++Khi bạn yêu cầu chức năng AI, văn bản CV đã trích xuất hoặc hồ sơ rút gọn, mô tả công việc, mục tiêu nghề nghiệp, câu trả lời và nội dung cần thiết được gửi tới DeepSeek API để cung cấp phân tích, phản hồi và luyện tập. Việc này là truyền nội dung tài liệu đã trích xuất, không phải tải nguyên tệp PDF/DOCX lên DeepSeek. Dữ liệu bạn tự đưa vào nội dung có thể chứa tên, email, số điện thoại hoặc địa chỉ; không gửi thông tin nhạy cảm không cần thiết hoặc dữ liệu của người khác khi chưa được phép.
++
++Khi bạn chủ động sử dụng chức năng giọng nói và cấp quyền microphone, âm thanh được gửi tới Microsoft Azure Speech để chuyển thành văn bản; nội dung cần đọc được gửi tới Azure Speech để tổng hợp giọng nói. Bạn có thể chọn chế độ văn bản. Ứng dụng cố gắng dọn tệp âm thanh tạm sau xử lý; văn bản câu trả lời được lưu khi bạn nộp. Việc dọn tệp trên thiết bị khác với vòng đời dữ liệu tại nhà cung cấp.
++
++Việc xử lý và lưu giữ tại nhà cung cấp phụ thuộc điều khoản áp dụng và cấu hình thực tế. Nexora không cam kết DeepSeek không lưu dữ liệu, không huấn luyện mô hình hoặc xóa ngay mọi bản sao. Việc công bố truyền dữ liệu không phải khẳng định nhà cung cấp sử dụng dữ liệu để huấn luyện.
+@@ -17 +21 @@ Không nên xem phản hồi của nhà cung cấp AI hoặc giọng nói là d
+-Nexora sử dụng các dịch vụ hạ tầng cần thiết như cơ sở dữ liệu, lưu trữ đối tượng riêng tư, hosting, email, AI, thanh toán và dịch vụ giọng nói.
++Render vận hành máy chủ Nexora; Neon PostgreSQL lưu dữ liệu tài khoản và tính năng. Cloudflare R2 lưu CV và ảnh đại diện riêng tư. Resend xử lý địa chỉ email và nội dung email xác minh, khôi phục và xác minh yêu cầu xóa tài khoản. DeepSeek API và Microsoft Azure Speech xử lý nội dung trong phạm vi mô tả ở mục 3. Thanh toán trên website có thể được xử lý bởi nhà cung cấp được hiển thị tại bước thanh toán.
+@@ -21 +25,3 @@ Tệp CV, ảnh đại diện và các tài sản riêng tư được lưu trong
+-Nhà cung cấp cụ thể có thể thay đổi theo môi trường và cấu hình vận hành.
++Ứng dụng Mobile trong bản phát hành mới không tích hợp Sentry hoặc tự động gửi báo cáo lỗi qua SDK phân tích. Điều này không phải khẳng định các bản ứng dụng cũ đã được thay đổi. Máy chủ và hạ tầng có thể xử lý nhật ký kỹ thuật, địa chỉ IP và thông tin yêu cầu để bảo mật, xử lý lỗi và vận hành; Sentry phía máy chủ phụ thuộc cấu hình. Điều này khác với phản hồi hoặc báo cáo nội dung bạn chủ động gửi.
++
++Phạm vi xử lý dữ liệu của nhà cung cấp tuân theo hợp đồng áp dụng và cấu hình dịch vụ. Dữ liệu tài khoản, bảo mật hoặc hoạt động độc lập của nhà cung cấp không mặc nhiên có cùng phạm vi với nội dung người dùng do Nexora gửi để thực hiện dịch vụ. Nhà cung cấp cụ thể có thể thay đổi theo môi trường và cấu hình vận hành.
+@@ -27,0 +34,2 @@ Việc hiển thị phản hồi trên trang công khai phụ thuộc vào trạ
++Trong ứng dụng Mobile mới, nhận xét không mặc định công khai. Nếu bạn cho phép hiển thị, nhận xét đã được duyệt có thể xuất hiện trên website cùng tên hiển thị và ảnh đại diện. Bạn có thể thay đổi lựa chọn hoặc xóa đánh giá.
++
+@@ -43 +51,7 @@ Nexora lưu dữ liệu trong thời gian cần thiết để cung cấp chức
+-Khi yêu cầu xóa tài khoản được xử lý, hệ thống thu hồi quyền truy cập phù hợp, xóa các tệp riêng tư và xóa hoặc ẩn danh dữ liệu cá nhân thuộc quy trình xóa của sản phẩm.
++Khi yêu cầu xóa được chấp nhận, tài khoản bị chặn truy cập, các phiên liên quan được thu hồi và yêu cầu được xử lý theo hàng đợi; chấp nhận yêu cầu không phải cam kết hoàn tất ngay. Khi hoàn tất, Nexora xóa dữ liệu nghề nghiệp, CV và ảnh đại diện thuộc tài khoản, nội dung luyện tập và báo cáo thuộc quy trình xóa; thông tin nhận diện tài khoản được loại bỏ hoặc thay thế và tài khoản không thể đăng nhập. Lượt tải lên còn hiệu lực hoặc lỗi lưu trữ có thể làm việc hoàn tất chậm hơn. Trạng thái thất bại hoặc chưa hoàn tất không đồng nghĩa đã xóa xong.
++
++Bản ghi tài khoản với mã định danh ổn định vẫn được giữ để bảo đảm liên kết giao dịch. Mã tài khoản giả danh có thể còn gắn với đơn hàng, sự kiện thanh toán, quyền lợi, lịch sử sử dụng và kiểm toán nhằm đối soát, duy trì tính toàn vẹn hạn mức, xử lý tranh chấp, bảo mật và nghĩa vụ pháp luật. Đây không phải ẩn danh không thể liên kết; không phải mọi dữ liệu sử dụng hoặc kiểm toán đều được tự động xóa khi xóa tài khoản.
++
++Những bản ghi được phép giữ theo pháp luật, tranh chấp, chống gian lận, kế toán hoặc an ninh có thể được áp dụng cơ chế lưu giữ hợp pháp. Cơ chế này đối với tác vụ dọn dữ liệu định kỳ không phải cơ chế hủy yêu cầu xóa tài khoản hoặc cam kết xóa dữ liệu của nhà cung cấp.
++
++Hệ thống có khả năng dọn một số thông tin xác minh hết hạn và thông tin yêu cầu xóa đã hoàn tất đủ 12 tháng, nhưng mặc định việc dọn định kỳ bị tắt hoặc chỉ báo cáo; việc áp dụng còn phụ thuộc phê duyệt, cấu hình, tồn đọng, lỗi và ngoại lệ lưu giữ. Mốc 12 tháng là điều kiện có thể được xem xét dọn, không phải bảo đảm ngày xóa. Các mục tiêu nhật ký 30 ngày và dữ liệu sử dụng không phục vụ kế toán 90 ngày chưa được thực thi như thời hạn xóa bảo đảm. Không cam kết mọi dữ liệu tự động bị xóa theo các mốc này; dữ liệu sử dụng gắn với sổ cái tài chính và kiểm toán vẫn được giữ trong phạm vi cần thiết.
+@@ -45 +59 @@ Khi yêu cầu xóa tài khoản được xử lý, hệ thống thu hồi quy
+-Một số bản ghi tối thiểu liên quan đến giao dịch, bảo mật, kiểm toán hoặc nghĩa vụ pháp lý có thể cần được giữ lại khi việc xóa hoàn toàn không phù hợp với mục đích đó.
++Bản sao lưu, bản sao lịch sử và dữ liệu tại nhà cung cấp có vòng đời riêng. Xóa dữ liệu đang hoạt động trong Nexora không tự động chứng minh mọi bản sao ngoài hệ thống đã bị xóa. Nexora không cam kết một thời hạn chung chưa được xác minh cho Neon, Render, R2, Resend, DeepSeek, Azure Speech hoặc các bản sao đã gửi tới nhà cung cấp trước đây.
+@@ -47 +61 @@ Một số bản ghi tối thiểu liên quan đến giao dịch, bảo mật, k
+-Không công bố một thời hạn lưu giữ cố định nếu hệ thống chưa thực sự áp dụng thời hạn đó.
++Bạn có thể yêu cầu xóa trong Cài đặt tài khoản hoặc tại https://www.nexorainterview.io.vn/account-deletion không cần đăng nhập. Liên kết xác minh email chỉ dùng một lần, hết hạn sau 30 phút; đây không phải thời gian ân hạn 30 ngày. Chỉ khi bạn chủ động xác nhận và máy chủ chấp nhận thì yêu cầu mới được gửi. Không có chức năng hủy yêu cầu hoặc khôi phục bằng đăng nhập lại.

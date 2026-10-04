@@ -1,0 +1,15 @@
+warning: in the working copy of 'docs/release/site-content/terms-published.snapshot.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/release/site-content/terms-proposed.vi.md', LF will be replaced by CRLF the next time Git touches it
+diff --git a/docs/release/site-content/terms-published.snapshot.md b/docs/release/site-content/terms-proposed.vi.md
+index c6bb252..8d03992 100644
+--- a/docs/release/site-content/terms-published.snapshot.md
++++ b/docs/release/site-content/terms-proposed.vi.md
+@@ -19,0 +20,2 @@ Nexora cố gắng bám phản hồi vào dữ liệu và câu trả lời bạn
++Một số điểm được máy chủ tính từ tiêu chí đánh giá. Kết quả không phải dự đoán tuyển dụng hoặc xếp hạng ứng viên cho quyết định tuyển dụng. Bạn có thể sử dụng chức năng báo cáo nội dung được hỗ trợ để gửi vấn đề tới Nexora; việc gửi báo cáo không bảo đảm một kết luận kiểm duyệt hoặc thời hạn xử lý cụ thể.
++
+@@ -40,0 +43,2 @@ Nexora không mặc nhiên cam kết hoàn tiền nếu chưa có chính sách h
++Các điều khoản thanh toán trên áp dụng cho giao dịch website được hỗ trợ. Ứng dụng Android chỉ sử dụng quyền lợi hiện có của tài khoản, không xử lý mua hàng hoặc hướng người dùng tới thanh toán ngoài ứng dụng.
++
+@@ -50,0 +55,2 @@ Bạn có thể sử dụng chức năng yêu cầu xóa tài khoản khi chức
++Bạn cũng có thể yêu cầu xóa tại https://www.nexorainterview.io.vn/account-deletion. Chấp nhận yêu cầu không phải hoàn tất ngay; không có chức năng hủy hoặc khôi phục bằng đăng nhập lại. Các mã tài khoản giả danh và bản ghi tài chính, sử dụng, kiểm toán cần thiết có thể được giữ theo Chính sách bảo mật; dữ liệu tại nhà cung cấp và bản sao lưu có vòng đời riêng.
++

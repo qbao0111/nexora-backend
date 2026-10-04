@@ -28,6 +28,6 @@ public sealed class SkillProfileController(ISkillProfileService skillProfileServ
             profile.WeaknessSignals.Select(signal => new SkillProfileWeaknessSignalResponse(
                 signal.SourceType,
                 signal.Label,
-                signal.LatestEvidenceAt)).ToArray())));
+                signal.LatestEvidenceAt)).ToArray(), profile.ReportingId)));
     }
 }
