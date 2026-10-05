@@ -61,8 +61,8 @@ jobs:
           done
           curl --fail --silent --output /dev/null http://localhost:10000/health/live
           curl --fail --silent --output /dev/null http://localhost:10000/api/v1/health
-          docker top nexora-container-test -eo args | grep -q 'dotnet ./api/Nexora.Api.dll'
-          docker top nexora-container-test -eo args | grep -q 'dotnet ./worker/Nexora.Worker.dll'
+          docker top nexora-container-test -eo pid,args | grep -q 'dotnet ./api/Nexora.Api.dll'
+          docker top nexora-container-test -eo pid,args | grep -q 'dotnet ./worker/Nexora.Worker.dll'
           [[ "$(docker exec nexora-container-test id -u)" != 0 ]]
           [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:10000/swagger/index.html)" == 404 ]]
           docker stop --time 60 nexora-container-test >/dev/null
