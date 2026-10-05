@@ -1,0 +1,31 @@
+name: nexora-production
+services:
+  nexora:
+    image: ghcr.io/qbao0111/nexora-backend:${NEXORA_IMAGE_TAG:?Set the full reviewed commit SHA}
+    platform: linux/amd64
+    restart: unless-stopped
+    stop_grace_period: 60s
+    env_file:
+      - .env.production
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      DOTNET_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://0.0.0.0:10000
+      Sentry__Release: nexora-backend@${NEXORA_IMAGE_TAG}
+    ports:
+      - "127.0.0.1:10000:10000"
+    volumes:
+      - data-protection:/home/app/.aspnet/DataProtection-Keys
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "--max-time", "5", "http://localhost:10000/health/live"]
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  data-protection:

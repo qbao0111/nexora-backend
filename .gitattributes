@@ -1,0 +1,4 @@
+# Executable container scripts require LF even in Windows checkouts.
+scripts/container-entrypoint.sh text eol=lf
+scripts/tests/container-entrypoint-test.sh text eol=lf
+deploy/deploy.sh text eol=lf

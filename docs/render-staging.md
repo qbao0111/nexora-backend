@@ -33,7 +33,7 @@ Neon PostgreSQL (Non-Prod)    DeepSeek Text API   SePay Sandbox / R2
 ```
 
 ### API and Worker storage
-- API and Worker currently run in one Render container via `scripts/render-entrypoint.sh`, but share private R2 objects through the existing storage adapter.
+- API and Worker currently run in one Render container via `scripts/container-entrypoint.sh`, but share private R2 objects through the existing storage adapter. Hosting must supply matching `ASPNETCORE_ENVIRONMENT=Staging` and `DOTNET_ENVIRONMENT=Staging`, plus the PostgreSQL connection string; missing/failed migrations prevent startup.
 - The former `/tmp/nexora-storage` approach was ephemeral and caused persisted metadata to point at missing objects after restart/deploy.
 - Render Free does not provide a persistent local disk for this topology. Co-location does not make `/tmp` durable.
 
@@ -65,7 +65,7 @@ The remaining Render Free constraints are:
 | **Auto-Deploy** | Disabled during initial branch validation; enabled on `main` post-merge |
 | **Health Check Route** | `/health/live` (Readiness: `/api/v1/health`) |
 | **Durable storage** | Private R2 bucket, configured by deployment environment |
-| **EF Core Migrations** | Pre-run bundle `/app/nexora-migrate` via `scripts/render-entrypoint.sh` |
+| **EF Core Migrations** | Pre-run bundle `/app/nexora-migrate` via `scripts/container-entrypoint.sh` |
 
 ### Runtime source of truth
 
