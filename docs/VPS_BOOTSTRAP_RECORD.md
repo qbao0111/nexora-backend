@@ -2,14 +2,20 @@
 
 ## Status and evidence
 
-- Updated: 2026-10-05 13:02:27 UTC (GitHub environment created at 12:39:29 UTC).
-- Phase: **BLOCKED_INFRA_FAILURE** (deployment safety conflict, not an observed
-  VPS runtime failure). Operator completed env input; same-database Render Worker
-  remains running, so VPS startup is prohibited pending explicit coordination.
+- Updated: 2026-10-05 13:26:14 UTC (20:26:14 Asia/Saigon).
+- Phase: **BLOCKED_GHCR_ACCESS**; image visibility/existence cannot be established.
+  Reviewer policy and privileged Caddy/firewall preparation also remain pending.
+  Same-database Render Worker still prohibits VPS application startup.
 - Repository: `qbao0111/nexora-backend`.
-- Reviewed main: `d7b24a6852fea3aeed91eb8691bbe3faeab2b755`.
+- Current reviewed main: `6d20de4392ca237457c27d310c3746b2ad07ee2d`.
+- [PR #127](https://github.com/qbao0111/nexora-backend/pull/127): merged at
+  `2026-10-05T13:18:29Z`, merge commit is the current main above. Only the bootstrap
+  record changed since PR #126; deployment design is unchanged.
+- [Current exact-main Backend CI 37315788736](https://github.com/qbao0111/nexora-backend/actions/runs/37315788736):
+  completed successfully on `6d20de4392ca237457c27d310c3746b2ad07ee2d`.
 - [PR #126](https://github.com/qbao0111/nexora-backend/pull/126): merged at
-  `2026-10-05T12:29:50Z`; merge commit is the reviewed main above. Its tree matches
+  `2026-10-05T12:29:50Z`; original bootstrap main was
+  `d7b24a6852fea3aeed91eb8691bbe3faeab2b755`. Its tree matches
   reviewed PR HEAD `d1f97b87cfaadb306e4a46c63df508a34b9117ad`.
 - [Backend CI run 37309933032](https://github.com/qbao0111/nexora-backend/actions/runs/37309933032):
   completed successfully on that exact main SHA.
@@ -117,8 +123,8 @@ The private metadata-only helper is `/opt/nexora/validate-vps-env.sh`, mode `700
 Main remained `d7b24a6852fea3aeed91eb8691bbe3faeab2b755`; its successful Backend CI
 run above was rechecked before stopping on the Worker conflict.
 
-Intended image reference for the main inspected in this record:
-`ghcr.io/qbao0111/nexora-backend:d7b24a6852fea3aeed91eb8691bbe3faeab2b755`.
+Intended image reference for the current main inspected in this record:
+`ghcr.io/qbao0111/nexora-backend:6d20de4392ca237457c27d310c3746b2ad07ee2d`.
 This does not assert that the image exists or has been pulled. The current CLI
 credential cannot list GHCR packages (`read:packages` is unavailable); a package
 lookup returned 404, which does not establish public/private visibility. Do not
@@ -169,8 +175,8 @@ no additional root access or privilege changes were introduced to work around th
 
    Copy corresponding credentials manually from the operator's current production
    configuration, save, then tell Codex to continue. Do not paste credentials into
-   chat/PR. The file now exists with empty credentials and mode `600`; do not print
-   its contents after populating it.
+   chat/PR. The file has since been populated by the operator, mode `600`; do not
+   print its contents.
 7. After operator confirmation, check required keys with `SET`/`MISSING` output
    only, never values or resolved Compose configuration. Do not source the env file.
    Enabled-feature credentials must all be present before deployment. Speech needs
@@ -236,3 +242,151 @@ suspension or DNS cutover. The operator manually disabled Render Auto-Deploy
 remain running, so same-production-DB Worker overlap still blocks VPS startup.
 Existing exact-main Backend CI success is recorded above, not claimed as VPS
 health evidence.
+
+## Post-PR #127 preparation evidence
+
+- GitHub production environment rechecked: main-only policy, SSH secret names
+  present, host/port/user unchanged, repository enable gate remains `false`.
+- **GITHUB_ENVIRONMENT_REVIEWER_BLOCKED**: only qbao0111 is configured as reviewer
+  with self-review prevented. A deployment initiated by qbao0111 has no configured
+  second reviewer. Existing write collaborators `onlyvu`, `dmm717`, `nbn1784` are
+  candidates for operator selection, not automatically approved release reviewers.
+  None was added; no reviewer, bypass or self-review protection was changed.
+- Anonymous GHCR token/manifest probe returned HTTP 403. Visibility, package
+  existence, exact-main tag and digest remain unverified; 403/404 alone are not
+  treated as proof of private visibility or absence. VPS Docker credential config
+  is absent; no login or pull was attempted without established registry access.
+- **GHCR_IMAGE_PUBLISH_PREP_REQUIRED** if authenticated inspection confirms the
+  exact SHA image is absent: the repository has only Backend CI and the gated
+  build-and-deploy workflow, no publish-only action. Do not enable the deployment
+  gate for publishing. Safest minimal proposal is a separately reviewed publish-only
+  workflow using a short-lived package-write Actions token, green current main,
+  production Dockerfile, linux/amd64, full SHA only, no SSH/startup and digest output.
+  No such workflow was added/dispatched. Alternatively an operator-authorized build
+  context can publish the exact main without repository changes; no authorized
+  registry-write context was supplied here. Private VPS access needs a dedicated
+  read-only package credential supplied securely, not in chat/argv/docs.
+- Docker 29.8.2 / Compose v5.6.0 active and deploy daemon access rechecked. No VPS
+  containers, including stopped containers, were listed. No Nexora image startup.
+- Caddy executable/config absent. The reviewed example was staged at
+  `/opt/nexora/Caddyfile.example`, not activated. Caddy installation/version/config
+  validation remain pending root/operator access; deploy has no passwordless sudo.
+  Follow [official Caddy Ubuntu installation](https://caddyserver.com/docs/install#debian-ubuntu-raspbian).
+  Inspect and back up any existing `/etc/caddy/Caddyfile` before installation/config
+  changes; preserve unrelated sites. The official package starts its service, so
+  inspect listeners first and never activate the production hostname during prep.
+- `sudo -n ufw status` could not run without operator credentials. Firewall status
+  is **unknown**, not assumed disabled. No firewall rule or enable action occurred.
+  Public listeners observed: TCP 22 on IPv4/IPv6; DNS 53 and X11 6010 are loopback.
+  No listener on 80, 443 or 10000 was observed. Compose remains loopback-only for
+  10000. A future root inspection must cover UFW and provider firewall rules.
+- Safe future UFW commands, only after root confirms no unrelated-service conflict:
+  `ufw allow 22/tcp`, `ufw allow 80/tcp`, `ufw allow 443/tcp`. Do not blindly enable
+  UFW or remove unrelated rules. Preserve SSH and re-test pinned deploy SSH afterward.
+  Never allow public 10000; Docker port bindings are a separate firewall boundary.
+- DNS read-only lookup still resolves API CNAME to
+  `nexora-backend-q32b.onrender.com`, through Render to `216.24.57.16`/`216.24.57.18`.
+  DNS unchanged. Operator must confirm DNS-only versus proxied TLS strategy; no
+  Cloudflare dashboard mode or origin certificate was inferred from this lookup.
+- TLS pending: DNS-only needs public ACME after challenge routing reaches VPS;
+  proxied needs valid origin TLS and Full (strict), plus trusted proxy/IP handling.
+  Do not use Flexible. No origin certificate installed or ACME request triggered.
+  After Caddy installation, run only `caddy validate --config
+  /opt/nexora/Caddyfile.example --adapter caddyfile`; do not reload this staged site.
+- Required DB/JWT/R2/DeepSeek/payOS/Resend/Azure keys again reported `SET`, env mode
+  600 deploy:deploy. Hosting modes/providers/CORS/payOS callbacks and enabled Speech
+  were checked by metadata-only validation. Actual Resend sender verification and
+  credential validity remain unproven; env was not read back into chat or downloaded.
+- Neon production-v2 remains operator-confirmed only. No PostgreSQL client was
+  available on VPS and no database query/migration/write was executed. Before cutover,
+  compare the configured endpoint in a secret-safe local check to the operator's
+  non-secret Neon production-v2 endpoint ID. A read-only `current_database()` query
+  alone cannot distinguish Neon branches sharing a database name; verify the endpoint
+  mapping too. Never print connection strings or raw database errors.
+- Render state is still operator-reported: Auto-Deploy disabled, live API/Worker on
+  same production-v2. No Render API/CLI mutation, restart, deployment, env change,
+  suspension or shutdown occurred in this phase.
+- Root-only SSH recovery backup remains a manual privileged item. No sudo was granted,
+  root key installed, or Docker root-equivalent workaround used to create it.
+
+## Authentication continuity findings
+
+Source inspection: Identity uses default token providers and the configured
+DataProtectionTokenProviderOptions lifespan (default 24 hours). No explicit shared
+key-ring/application-name configuration was found. The Compose Data Protection
+volume is new; no Render key ring was copied, and cross-environment/key-purpose
+compatibility has not been established.
+
+- JWT access tokens can remain valid until expiry only with matching signing key,
+  issuer/audience and unchanged account/security-stamp state; actual cross-host
+  values were not compared. No key rotation was performed.
+- Refresh tokens are random opaque tokens hashed in the shared database, not
+  Data Protection payloads (`IdentityAuthService`). Continuity requires the same DB,
+  valid nonrevoked token/user state, unchanged public host/cookie path `/api/v1/auth`,
+  secure cookie/CORS behavior and no concurrent Worker/API overlap. Not smoke-tested.
+- Existing email verification and password reset links may fail on the new key ring;
+  do not promise seamless validity. Either separately approve secure migration of a
+  compatible ring/discriminator or plan user reissuance of links. Preserve the new
+  VPS volume after first startup; do not delete it on rollback.
+
+## Ordered cutover plan — approval only, NOT executed
+
+Complete registry, reviewer, root/Caddy/firewall, TLS and DB identity prerequisites
+above first. Root recovery backup and auth-link impact also need operator resolution.
+
+1. Re-fetch exact main; require green exact-main Backend CI and reviewed deployment
+   design. Current candidate is `6d20de4392ca237457c27d310c3746b2ad07ee2d`, not approval
+   to deploy that SHA after main advances.
+2. Establish authenticated registry visibility/tag existence. Publish only if safely
+   authorized; record digest. As deploy, pull the exact image without running it and
+   inspect only RepoDigests/user/image metadata, never embedded environment JSON.
+3. Recheck env presence/semantics, intended Neon endpoint, backup/restore readiness,
+   DB compatibility and provider sender/config. No paid-provider or payment smoke
+   without separate authorization. Keep automatic deploy disabled.
+4. Install Caddy through approved root access; back up prior config, validate staged
+   Nexora config without reload/certificate issuance. Confirm firewall/TLS choice,
+   current DNS target/TTL, forwarded-header policy and persistent key-ring handling.
+5. Obtain explicit coordinated outage/cutover approval. Stop the production-facing
+   Render compute using an operator-reviewed action; confirm BOTH its API and Worker
+   are stopped and no other production-v2 worker/migrator is active. Do not treat
+   Auto-Deploy off as stop evidence. **Steps 5 onward are outside this task.**
+6. Only then, through pinned SSH as deploy:
+
+   ```bash
+   cd /opt/nexora
+   bash deploy.sh 6d20de4392ca237457c27d310c3746b2ad07ee2d
+   ```
+
+   Substitute the newly reviewed exact SHA if main advanced; never use `latest`.
+7. Require successful deploy exit, migration, Docker health and DB readiness. Verify
+   local `/health/live`, `/api/v1/health`, both dotnet processes, non-root runtime,
+   stable restart count and Swagger 404. Inspect/redact logs privately. On failure,
+   hold DNS and follow rollback decision below.
+8. After local success and TLS/proxy readiness, obtain/execute approved DNS cutover
+   to VPS and activate reviewed Caddy config in the strategy-specific order. For
+   DNS-only public ACME, challenge routing must reach VPS before issuance; for
+   proxied mode install valid origin TLS before changing traffic and use Full (strict).
+9. Test external HTTPS, unauthenticated auth behavior, approved real-account refresh,
+   SignalR reconnect/REST reconciliation, provider configuration, jobs and Sentry.
+   Record exact deployed image/digest, migration state, DNS/TLS evidence and durations.
+10. Observe stable operation before approving old Render deletion or future automatic
+    deploy enablement. Neither action is implied by this plan; gate stays `false` here.
+
+## Rollback decision points
+
+- Before Render stop: abort preparation with existing Render runtime unchanged.
+- After Render stop but before successful VPS validation: stop failed VPS compute,
+  confirm no VPS Worker/migrator remains, inspect whether migration committed any
+  schema changes. Resume the preserved Render runtime ONLY with confirmed database/
+  configuration compatibility and explicit approval; do not run both workers.
+- After DNS cutover: retain previous DNS target/TTL evidence. Point DNS back only
+  after compatible Render service is safely restored; account for cached routing.
+  Drain/stop VPS processing first or explicitly coordinate an approved no-overlap
+  recovery. DNS rollback alone does not stop a VPS Worker.
+- For later image rollback use the documented deploy.sh path with a known-working,
+  CI-passed compatible SHA. No such previous VPS release currently exists.
+- Database migrations are not automatically reversible: require approved forward-fix
+  or rehearsed recovery, never blind down migration/restore. Keep Data Protection
+  volumes, inspect pending/in-flight jobs and idempotency state, and retain payOS
+  reconciliation credentials for existing payments. No fabricated refunds or job
+  replay policy is introduced. This is a plan, not a tested rollback rehearsal.
