@@ -165,6 +165,9 @@ public sealed class HardeningApiTests
             document.RootElement.GetProperty("data").GetProperty("accessToken").GetString());
 
         await AssertDisabledAsync(await client.PostAsJsonAsync("/api/v1/interviews", new { }));
+        await AssertDisabledAsync(await client.PostAsJsonAsync("/api/v1/resume-analyses", new { }));
+        await AssertDisabledAsync(await client.PostAsJsonAsync("/api/v1/star-attempts", new { }));
+        await AssertDisabledAsync(await client.PostAsJsonAsync($"/api/v1/scenario-attempts/{Guid.NewGuid()}/submit", new { }));
         await AssertDisabledAsync(await client.PostAsJsonAsync("/api/v1/checkout-sessions", new { }));
         await AssertDisabledAsync(await client.PostAsJsonAsync("/api/v1/uploads/presign", new { }));
     }

@@ -12,15 +12,10 @@ builder.Services.AddOptions<SentryLoggingOptions>()
         SentryObservability.Configure(options, environment, configuration));
 builder.Services.AddSentry<SentryLoggingOptions>();
 builder.Services.AddSingleton<IWorkerSentryReporter, WorkerSentryReporter>();
-ProductionSafety.ValidateDevelopmentAdapters(
+ProductionSafety.ValidateAdapters(
     builder.Environment.IsProduction(),
-    builder.Configuration.GetValue("Features:Ai", true),
-    builder.Configuration.GetValue("Features:Payment", true),
-    builder.Configuration.GetValue("Features:Upload", true),
-    builder.Configuration.GetValue<string?>("Storage:Provider"),
-    builder.Configuration.GetValue<string?>("Billing:Payment:Provider"),
     builder.Environment.IsStaging(),
-    builder.Configuration.GetValue("Storage:Local:PersistentVolumeConfigured", false));
+    ProductionAdapterSelection.FromConfiguration(builder.Configuration));
 builder.Services.AddOptions<WorkerPollingOptions>()
     .Bind(builder.Configuration.GetSection(WorkerPollingOptions.SectionName))
     .Validate(options => options.BusyDelayMilliseconds >= 0, "Busy delay must not be negative.")
@@ -34,7 +29,7 @@ builder.Services.AddSingleton(serviceProvider =>
     new AdaptivePollingBackoff(serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<WorkerPollingOptions>>().Value));
 builder.Services.AddBusiness();
 builder.Services.AddDataPersistence(builder.Configuration);
-builder.Services.AddIntegrations(builder.Configuration);
+builder.Services.AddIntegrations(builder.Configuration, isProduction: builder.Environment.IsProduction());
 builder.Services.AddHostedService<PracticeWorker>();
 builder.Services.AddHostedService<RetentionWorker>();
 

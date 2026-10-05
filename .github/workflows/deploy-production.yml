@@ -1,0 +1,88 @@
+name: Deploy production
+on:
+  workflow_run:
+    workflows: [Backend CI]
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: nexora-production-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Confirm CI commit is still current main
+        id: current
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          echo "deploy=$([[ "$RELEASE_SHA" == "$main_sha" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - name: Check out exact successful CI commit
+        if: steps.current.outputs.deploy == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
+      - name: Build and publish immutable GHCR image
+        if: steps.current.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/qbao0111/nexora-backend:$RELEASE_SHA"
+          echo "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io >/dev/null 2>&1' EXIT
+          # Do not overwrite an existing SHA tag on CI reruns.
+          manifest_error="$(mktemp)"
+          trap 'docker logout ghcr.io >/dev/null 2>&1; rm -f "$manifest_error"' EXIT
+          if docker manifest inspect "$image" >/dev/null 2>"$manifest_error"; then
+            echo "Reusing existing release SHA tag."
+          elif grep -Eqi 'manifest unknown|no such manifest' "$manifest_error"; then
+            docker build --platform linux/amd64 --tag "$image" .
+            docker push "$image"
+          else
+            echo "Cannot establish that the SHA tag is absent; refusing to overwrite." >&2
+            exit 1
+          fi
+      - name: Transfer definition and release over pinned SSH
+        if: steps.current.outputs.deploy == 'true'
+        shell: bash
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_PORT: ${{ vars.VPS_PORT }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          # Re-check after image build; never release a superseded CI commit.
+          [[ "$RELEASE_SHA" == "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" ]] || exit 0
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$VPS_PORT" =~ ^[0-9]{1,5}$ ]] && (( 10#$VPS_PORT > 0 && 10#$VPS_PORT <= 65535 ))
+          [[ "$VPS_USER" == deploy ]]
+          [[ -n "$SSH_PRIVATE_KEY" && -n "$KNOWN_HOSTS" ]]
+          ssh_dir="$(mktemp -d)"
+          trap 'rm -f "$ssh_dir/key" "$ssh_dir/known_hosts"; rmdir "$ssh_dir"' EXIT
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          ssh_options=(-i "$ssh_dir/key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$ssh_dir/known_hosts")
+          scp "${ssh_options[@]}" -P "$VPS_PORT" deploy/docker-compose.production.yml deploy/deploy.sh "$VPS_USER@$VPS_HOST:/opt/nexora/"
+          ssh "${ssh_options[@]}" -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "bash /opt/nexora/deploy.sh '$RELEASE_SHA'"

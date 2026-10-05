@@ -1,0 +1,4 @@
+# Install on VPS only after reviewing TLS/DNS mode in the runbook.
+api.nexorainterview.io.vn {
+    reverse_proxy 127.0.0.1:10000
+}

@@ -8,7 +8,8 @@ public sealed partial class PracticeWorker(
     IServiceScopeFactory scopeFactory,
     AdaptivePollingBackoff pollingBackoff,
     ILogger<PracticeWorker> logger,
-    IWorkerSentryReporter sentryReporter) : BackgroundService
+    IWorkerSentryReporter sentryReporter,
+    IConfiguration configuration) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -19,8 +20,13 @@ public sealed partial class PracticeWorker(
             {
                 using var scope = scopeFactory.CreateScope();
                 var count = await scope.ServiceProvider.GetRequiredService<IPrivacyJobProcessor>().ProcessPendingAsync(stoppingToken);
-                count += await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(stoppingToken);
-                count += await scope.ServiceProvider.GetRequiredService<IScenarioStarJobProcessor>().ProcessPendingAsync(stoppingToken);
+                // Pause queued AI work without consuming/retrying/failing its jobs.
+                // Privacy processing remains independent of the AI kill switch.
+                if (configuration.GetValue("Features:Ai", true))
+                {
+                    count += await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(stoppingToken);
+                    count += await scope.ServiceProvider.GetRequiredService<IScenarioStarJobProcessor>().ProcessPendingAsync(stoppingToken);
+                }
                 if (count > 0)
                 {
                     pollingBackoff.Reset();

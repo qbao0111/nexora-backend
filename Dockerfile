@@ -1,4 +1,4 @@
-# Multi-stage build for Nexora staging on Render Free
+# Linux amd64 image shared by Render staging and VPS production
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
@@ -45,8 +45,6 @@ RUN dotnet publish src/Nexora.Worker/Nexora.Worker.csproj \
 # Runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
-ENV ASPNETCORE_ENVIRONMENT=Staging
-ENV DOTNET_ENVIRONMENT=Staging
 
 # Install bash and curl for health checks and entrypoint
 RUN apt-get update && apt-get install -y --no-install-recommends bash curl && rm -rf /var/lib/apt/lists/*
@@ -62,12 +60,14 @@ COPY src/Nexora.Api/appsettings.json ./api/appsettings.json
 COPY src/Nexora.Api/appsettings.json ./appsettings.json
 
 # Copy entrypoint script
-COPY scripts/render-entrypoint.sh ./render-entrypoint.sh
-RUN chmod +x ./render-entrypoint.sh
+COPY scripts/container-entrypoint.sh ./container-entrypoint.sh
+RUN chmod +x ./container-entrypoint.sh
 
 # Create local storage directory
-RUN mkdir -p /tmp/nexora-storage && chmod 777 /tmp/nexora-storage
+RUN mkdir -p /tmp/nexora-storage /home/app/.aspnet/DataProtection-Keys \
+    && chown -R app:app /tmp/nexora-storage /home/app/.aspnet
+USER app
 
 EXPOSE 10000
 
-ENTRYPOINT ["/app/render-entrypoint.sh"]
+ENTRYPOINT ["/app/container-entrypoint.sh"]

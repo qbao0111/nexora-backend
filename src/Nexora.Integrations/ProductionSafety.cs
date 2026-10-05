@@ -3,45 +3,47 @@ using Nexora.Integrations.Email;
 
 namespace Nexora.Integrations;
 
+public sealed record ProductionAdapterSelection(
+    bool AiEnabled,
+    bool PaymentEnabled,
+    string? AiProvider,
+    string? PaymentProvider,
+    string? StorageProvider,
+    bool LocalPersistentVolumeConfigured = false)
+{
+    public static ProductionAdapterSelection FromConfiguration(IConfiguration configuration) => new(
+        configuration.GetValue("Features:Ai", true),
+        configuration.GetValue("Features:Payment", true),
+        configuration.GetValue<string?>("Ai:Provider")?.Trim().ToLowerInvariant() ?? "gemini",
+        configuration.GetValue<string?>("Billing:Payment:Provider")?.Trim().ToLowerInvariant() ?? "fake",
+        configuration.GetValue<string?>("Storage:Provider")?.Trim().ToLowerInvariant() ?? "local",
+        configuration.GetValue("Storage:Local:PersistentVolumeConfigured", false));
+}
+
 public static class ProductionSafety
 {
-    public static void ValidateDevelopmentAdapters(
+    public static void ValidateAdapters(
         bool isProduction,
-        bool aiEnabled,
-        bool paymentEnabled,
-        bool uploadEnabled,
-        string? storageProvider = null,
-        string? paymentProvider = null,
-        bool isStaging = false,
-        bool localPersistentVolumeConfigured = false)
+        bool isStaging,
+        ProductionAdapterSelection adapters)
     {
-        var normalizedStorageProvider = storageProvider?.Trim().ToLowerInvariant() ?? "local";
-        var normalizedPaymentProvider = paymentProvider?.Trim().ToLowerInvariant() ?? "fake";
+        var normalizedStorageProvider = adapters.StorageProvider?.Trim().ToLowerInvariant() ?? "local";
         if (normalizedStorageProvider is not ("local" or "r2"))
             throw new InvalidOperationException("Storage:Provider must be local or r2.");
 
-        if ((isProduction || isStaging) && normalizedStorageProvider == "local" && !localPersistentVolumeConfigured)
+        if (isProduction && normalizedStorageProvider != "r2")
+            throw new InvalidOperationException("Production requires durable storage with Storage:Provider=r2, even when uploads are disabled.");
+
+        if (isStaging && normalizedStorageProvider == "local" && !adapters.LocalPersistentVolumeConfigured)
             throw new InvalidOperationException(
-                "Staging and Production require durable storage. Set Storage:Provider=r2, or explicitly configure Storage:Local:PersistentVolumeConfigured=true only for a mounted persistent volume.");
+                "Staging requires durable storage. Set Storage:Provider=r2, or explicitly configure Storage:Local:PersistentVolumeConfigured=true only for a mounted persistent volume.");
 
         if (!isProduction) return;
-        var enabled = new List<string>();
-        if (aiEnabled) enabled.Add("AI (DEC-01)");
-        if (paymentEnabled) enabled.Add($"{PaymentAdapterName(normalizedPaymentProvider)} (DEC-02)");
-        if (uploadEnabled && normalizedStorageProvider != "r2")
-            enabled.Add("development upload adapter (A2/DEC-04)");
-        if (enabled.Count == 0) return;
-        throw new InvalidOperationException(
-            $"Production cannot enable {string.Join(", ", enabled)} before the corresponding production decisions are resolved. Disable the affected Features settings.");
+        if (adapters.AiEnabled && !string.Equals(adapters.AiProvider?.Trim(), "deepseek", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Production AI requires Ai:Provider=deepseek when Features:Ai is enabled.");
+        if (adapters.PaymentEnabled && !string.Equals(adapters.PaymentProvider?.Trim(), "payos", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Production payment requires Billing:Payment:Provider=payos when Features:Payment is enabled.");
     }
-
-    private static string PaymentAdapterName(string provider) => provider switch
-    {
-        "fake" => "Fake payment adapter",
-        "sepay" => "SePay payment adapter",
-        "payos" => "payOS payment adapter",
-        _ => "payment adapter"
-    };
 
     public static void ValidateEmailConfiguration(bool isProductionOrStaging, IConfiguration configuration)
     {

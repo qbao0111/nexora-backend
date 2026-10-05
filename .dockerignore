@@ -7,6 +7,10 @@
 TestResults
 .env
 .env.*
+**/.env
+**/.env.*
+**/appsettings.Local.json
+**/secrets.json
 *.user
 *.suo
 .vs

@@ -184,8 +184,8 @@ an inherited tombstoned Resume.
 | Interface | Requirement |
 | --- | --- |
 | Frontend/API | REST JSON `/api/v1`, UTC ISO-8601, standard error envelope, API versioning. |
-| AI | `IAiProvider` adapter; Development/internal traffic defaults to configuration-driven `GeminiAiProvider` and may select optional `DeepSeekAiProvider` for local text evaluation, while deterministic test doubles stay in the test project; timeout, bounded retry, structured schema/semantic validation, token/cost telemetry; no client key/provider type leak. Document extraction is local only; unreadable CVs terminate safely without external OCR. DEC-01 still gates production AI. |
-| Payment | `IPaymentProvider`; `FakePaymentProvider` trước DEC-02; hosted production checkout, signature verification and idempotent webhook. |
+| AI | `IAiProvider` adapter; Development/internal traffic defaults to configuration-driven `GeminiAiProvider` and may select official `DeepSeekAiProvider`, while deterministic doubles stay in tests. Production permits only DeepSeek when enabled (PR #126). Timeout, bounded retry, structured schema/semantic validation and safe token telemetry remain; no key/provider payload leaks. Document extraction remains local. DEC-01 operational cost gates are documented in the ADR audit; no global monetary guard is claimed. |
+| Payment | `IPaymentProvider`; development/testing fake adapter; Production enabled payment permits only payOS with hosted checkout, provider query, verified signatures and idempotent webhook. Refund/invoice/tax policy remains separate under DEC-02. |
 | Storage | `IStorageProvider`; `LocalStorageProvider`/development adapter được phép nhưng không dùng production; `R2StorageProvider` cung cấp private production-like objects, signed PUT/GET where supported, file checksum and lifecycle policy. |
 | Email | Transactional email adapter for verify/reset/payment receipt; no sensitive content in URL. |
 
@@ -224,9 +224,9 @@ Use-case specification, sequence/class/package/deployment diagrams và ma trận
 
 Các quyết định dưới đây **không block backend/local development, Phases 0–3 hoặc integration test dùng internal Gemini/DeepSeek development adapters và test-project doubles**. Chúng chỉ block real production capability tương ứng:
 
-1. **DEC-01:** production AI provider/model và production per-user/global budgets, alert/circuit-break controls.
-2. **DEC-02:** production Vietnamese payment provider; refund, invoice và tax handling.
+1. **DEC-01:** official DeepSeek approved in PR #126; environment-controlled model, cost exposure/monitoring and monetary budgets/alerts still require operator approval. Auth, quotas, rate limits, bounded retries/timeouts, safe telemetry and AI kill switch are implemented; no automatic global spend guard is claimed.
+2. **DEC-02:** payOS approved with checkout/query/verified webhook; refund, invoice and tax policy remains a separate business/legal concern, not an implemented automated workflow.
 3. **DEC-03:** final retention periods cho CV/JD/transcript/recording/logs và approved Terms/Privacy/AI/recording text.
-4. **DEC-04:** production hosting/storage vendors, domains, mail provider và infrastructure accounts.
+4. **DEC-04:** VPS + Neon + R2 + Resend deployment path prepared; accounts/secrets, DNS/TLS, backups and rollout approval remain operator responsibilities. No actual deployment is claimed.
 
 Pricing/plan business values vẫn phải được xác định theo ticket liên quan nhưng không phải lý do để block repository/foundation work. Không suy ra production decision từ Gemini, test-project double, local storage hoặc vendor example.

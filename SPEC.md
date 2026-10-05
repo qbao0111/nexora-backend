@@ -257,10 +257,10 @@ Implementation is incomplete while relevant tests fail. Production also requires
 
 | Decision | Still unresolved | Effect |
 | --- | --- | --- |
-| DEC-01 | Production AI provider/model and per-user/global production budgets/controls | Blocks real production AI enablement only |
-| DEC-02 | Vietnamese payment provider; refund, invoice and tax handling | Blocks real production payment/refund enablement only |
+| DEC-01 | Official DeepSeek selected in PR #126; environment-controlled model and operational monetary budgets/alerts require approval | Adapter startup allowed; real traffic needs cost/abuse operational readiness (see ADR audit) |
+| DEC-02 | payOS selected and checkout/query/verified webhook implemented; refund/invoice/tax operational policy remains separate | Adapter startup allowed; affected financial/legal rollout needs owner approval |
 | DEC-03 | Final retention periods and approved Terms/Privacy/AI/recording text | Blocks production processing/go-live where policy disclosure is required |
-| DEC-04 | Production hosting/storage vendors, domains, mail provider and infrastructure accounts | Blocks deployment of affected production infrastructure only |
+| DEC-04 | VPS + Neon + R2 + Resend deployment path prepared; accounts/secrets, DNS/TLS, backups and rollout approval remain operator work | Blocks actual deployment/cutover until operator readiness |
 
 None blocks backend/local development, Phases 0–3, or integration testing with fake/development adapters. Do not infer a final choice from examples or development implementations.
 

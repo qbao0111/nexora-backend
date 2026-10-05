@@ -136,10 +136,19 @@ public static class HardeningExtensions
     }
 }
 
-public sealed class FeatureGateMiddleware(RequestDelegate next, IOptions<FeatureOptions> options)
+public sealed class FeatureGateMiddleware(RequestDelegate next, IOptions<FeatureOptions> options, IWebHostEnvironment environment)
 {
     public async Task InvokeAsync(HttpContext context)
     {
+        // A disabled checkout capability can boot with legacy adapter configuration,
+        // but Production must never accept fake/sandbox fulfillment callbacks.
+        if (environment.IsProduction() && (context.Request.Path.StartsWithSegments("/api/v1/webhooks/payments/fake") ||
+            context.Request.Path.StartsWithSegments("/api/v1/webhooks/payments/sepay")))
+        {
+            await ApiErrorWriter.WriteAsync(context, StatusCodes.Status404NotFound,
+                "NOT_FOUND", "Không tìm thấy tài nguyên.");
+            return;
+        }
         var feature = context.Request.Method == HttpMethods.Post
             ? DisabledFeature(context.Request.Path, options.Value)
             : context.Request.Method == HttpMethods.Put && !options.Value.Upload && context.Request.Path == "/api/v1/me/avatar"
@@ -158,7 +167,8 @@ public sealed class FeatureGateMiddleware(RequestDelegate next, IOptions<Feature
     {
         if (!options.Upload && path == "/api/v1/uploads/presign") return "upload";
         if (!options.Payment && path == "/api/v1/checkout-sessions") return "payment";
-        if (!options.Ai && (path == "/api/v1/resume-analyses" || path.StartsWithSegments("/api/v1/interviews"))) return "AI";
+        if (!options.Ai && (path == "/api/v1/resume-analyses" || path.StartsWithSegments("/api/v1/interviews") ||
+            path.StartsWithSegments("/api/v1/star-attempts") || path.StartsWithSegments("/api/v1/scenario-attempts"))) return "AI";
         if (!options.Speech && path.StartsWithSegments("/api/v1/speech")) return "speech";
         return null;
     }

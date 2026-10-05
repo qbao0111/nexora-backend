@@ -118,7 +118,8 @@ public sealed class SentryObservabilityTests
             provider.GetRequiredService<IServiceScopeFactory>(),
             CreateBackoff(failureDelayMilliseconds: 5_000),
             NullLogger<PracticeWorker>.Instance,
-            reporter);
+            reporter,
+            new ConfigurationBuilder().Build());
 
         await worker.StartAsync(CancellationToken.None);
         await reporter.Captured.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -142,13 +143,48 @@ public sealed class SentryObservabilityTests
             provider.GetRequiredService<IServiceScopeFactory>(),
             CreateBackoff(failureDelayMilliseconds: 1),
             NullLogger<PracticeWorker>.Instance,
-            reporter);
+            reporter,
+            new ConfigurationBuilder().Build());
 
         await worker.StartAsync(CancellationToken.None);
         await blocking.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         await worker.StopAsync(CancellationToken.None);
 
         Assert.Empty(reporter.Exceptions);
+    }
+
+    [Fact]
+    public async Task AiKillSwitchPausesBothAiProcessorsButKeepsPrivacyProcessing()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Features:Ai"] = "false"
+        }).Build();
+        var privacy = new CountingPrivacyProcessor();
+        var services = new ServiceCollection();
+        services.AddScoped<IPrivacyJobProcessor>(_ => privacy);
+        // Missing registrations would fail/report if either AI processor were resolved.
+        await using var provider = services.BuildServiceProvider();
+        var reporter = new RecordingWorkerReporter();
+        using var worker = new PracticeWorker(provider.GetRequiredService<IServiceScopeFactory>(),
+            CreateBackoff(1), NullLogger<PracticeWorker>.Instance, reporter, configuration);
+
+        await worker.StartAsync(CancellationToken.None);
+        await privacy.SecondCycle.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await worker.StopAsync(CancellationToken.None);
+
+        Assert.Empty(reporter.Exceptions);
+    }
+
+    private sealed class CountingPrivacyProcessor : IPrivacyJobProcessor
+    {
+        private int _cycles;
+        public TaskCompletionSource SecondCycle { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<int> ProcessPendingAsync(CancellationToken cancellationToken)
+        {
+            if (++_cycles >= 2) SecondCycle.TrySetResult();
+            return Task.FromResult(0);
+        }
     }
 
     private static AdaptivePollingBackoff CreateBackoff(int failureDelayMilliseconds) => new(new WorkerPollingOptions

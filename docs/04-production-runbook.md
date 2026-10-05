@@ -82,12 +82,12 @@ Không chạy drill vào production target. Không ghi connection string/token v
 
 ## Production enablement gates
 
-- **DEC-01:** production AI provider/model and budgets approved before real production AI traffic; internal Gemini development traffic remains allowed.
-- **DEC-02:** production Vietnamese payment/refund/invoice/tax decision approved before real payments; `FakePaymentProvider` verified webhook flow remains allowed.
+- **DEC-01:** official DeepSeek adapter approved in PR #126; environment-controlled model/cost exposure, usage monitoring and kill-switch response require operator approval before real traffic. No automatic global monetary budget/alert is claimed. Gemini remains local/staging only.
+- **DEC-02:** payOS adapter and checkout/query/verified webhook are implemented/approved. Refund/invoice/tax policy remains a separate business/legal approval where applicable, not a claimed automated workflow. Fake/SePay sandbox are not approved Production payment providers.
 - **DEC-03:** final retention periods and approved legal/privacy text completed before processing affected personal data in production.
-- **DEC-04:** hosting/storage vendors, domains, mail and infrastructure accounts completed before production deployment.
+- **DEC-04:** VPS + Neon + R2 + Resend path prepared by PR #126; accounts/secrets, DNS/TLS, backups and actual rollout still require operator approval.
 
-Development/testing storage may use `LocalStorageProvider`; deployed Staging/Production must use `R2StorageProvider` with private objects and validated HTTPS endpoint/credentials. A2 supplies the durable database-backed R2 upload-intent, signed PUT and finalize path. Staging/Production + local storage now fails at startup regardless of `Features:Upload` unless `Storage:Local:PersistentVolumeConfigured=true` explicitly acknowledges a genuinely mounted persistent volume; ephemeral `/tmp` does not qualify. Production + local upload remains gated separately. Configure `Storage__Provider=r2` and `Storage__R2__AccountId`, `Storage__R2__Bucket`, `Storage__R2__AccessKeyId`, `Storage__R2__SecretAccessKey`, `Storage__R2__Endpoint` through deployment secrets. Actual production account/hosting enablement remains subject to DEC-04, and the exact deferred-decision wording is canonical in [07-architecture-decisions.md](07-architecture-decisions.md#production-enablement-decisions-dec-01-through-dec-04).
+Development/testing storage may use `LocalStorageProvider`; Production requires `R2StorageProvider` regardless of `Features:Upload` or the local persistent-volume flag. Staging retains its explicit mounted-volume exception (`Storage:Local:PersistentVolumeConfigured=true`); ephemeral `/tmp` does not qualify. A2 supplies database-backed R2 upload intents, signed PUT and finalize validation. Configure `Storage__Provider=r2` and `Storage__R2__AccountId`, `Storage__R2__Bucket`, `Storage__R2__AccessKeyId`, `Storage__R2__SecretAccessKey`, `Storage__R2__Endpoint` through deployment secrets. See the canonical [ADR audit](07-architecture-decisions.md#pr-126-production-approval-and-control-audit) and [VPS runbook](VPS_PRODUCTION_DEPLOYMENT.md) for unresolved operator gates and feature kill switches (container recreation required).
 
 ## Incident response tối thiểu
 

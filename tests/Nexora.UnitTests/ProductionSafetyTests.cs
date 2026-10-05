@@ -5,86 +5,111 @@ namespace Nexora.UnitTests;
 
 public sealed class ProductionSafetyTests
 {
-    [Fact]
-    public void ProductionFailsClosedWhileAnyDevelopmentAdapterFeatureIsEnabled()
+    [Theory]
+    [InlineData("deepseek")]
+    [InlineData(" DeepSeek ")]
+    public void ProductionAllowsApprovedAi(string provider) =>
+        ProductionSafety.ValidateAdapters(true, false, Approved with { AiProvider = provider });
+
+    [Theory]
+    [InlineData("gemini")]
+    [InlineData("unknown")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void ProductionRejectsUnapprovedEnabledAi(string? provider)
     {
-        Assert.Throws<InvalidOperationException>(() =>
-            ProductionSafety.ValidateDevelopmentAdapters(true, aiEnabled: false, paymentEnabled: true, uploadEnabled: false));
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ProductionSafety.ValidateAdapters(true, false, Approved with { AiProvider = provider }));
+        Assert.Contains("Ai:Provider=deepseek", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("payos")]
+    [InlineData(" PayOS ")]
+    public void ProductionAllowsApprovedPayment(string provider) =>
+        ProductionSafety.ValidateAdapters(true, false, Approved with { PaymentProvider = provider });
+
+    [Theory]
+    [InlineData("fake")]
+    [InlineData("sepay")]
+    [InlineData("unknown")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void ProductionRejectsUnapprovedEnabledPayment(string? provider)
+    {
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ProductionSafety.ValidateAdapters(true, false, Approved with { PaymentProvider = provider }));
+        Assert.Contains("Billing:Payment:Provider=payos", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("gemini", "fake")]
+    [InlineData("unknown", "unknown")]
+    [InlineData(null, null)]
+    public void DisabledCapabilitiesDoNotBlockAdapterGuard(string? aiProvider, string? paymentProvider) =>
+        ProductionSafety.ValidateAdapters(true, false, new(false, false, aiProvider, paymentProvider, "r2"));
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ProductionRequiresR2RegardlessOfUploadGate(bool uploadEnabled)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Features:Ai"] = "false",
+            ["Features:Payment"] = "false",
+            ["Features:Upload"] = uploadEnabled.ToString(),
+            ["Storage:Provider"] = "r2"
+        }).Build();
+        var adapters = ProductionAdapterSelection.FromConfiguration(configuration);
+        ProductionSafety.ValidateAdapters(true, false, adapters);
+        foreach (var localVolume in new[] { false, true })
+        {
+            var error = Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateAdapters(true, false,
+                adapters with { StorageProvider = "local", LocalPersistentVolumeConfigured = localVolume }));
+            Assert.Contains("durable storage", error.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
+    [InlineData("unknown")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void ProductionRejectsUnapprovedStorage(string? provider) =>
+        Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateAdapters(true, false, Approved with { StorageProvider = provider }));
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DevelopmentTestingAndStagingKeepTheirAdapterChoices(bool isStaging)
+    {
+        ProductionSafety.ValidateAdapters(false, isStaging, new(true, true, "gemini", "fake", "r2"));
+        ProductionSafety.ValidateAdapters(false, isStaging, new(true, true, "deepseek", "sepay", "local", true));
+        if (isStaging)
+            Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateAdapters(false, true, new(false, false, null, null, "local")));
+        else
+            ProductionSafety.ValidateAdapters(false, false, new(true, true, "gemini", "fake", "local"));
+        Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateAdapters(false, isStaging, Approved with { StorageProvider = "unknown" }));
     }
 
     [Fact]
-    public void ProductionStillRejectsPayosUntilDec02IsResolved()
+    public void ConfigurationSnapshotNormalizesApprovedCombinedStack()
     {
-        var exception = Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
-            true, aiEnabled: false, paymentEnabled: true, uploadEnabled: false, storageProvider: "r2", paymentProvider: "payos"));
-
-        Assert.Contains("payOS payment adapter", exception.Message, StringComparison.Ordinal);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Features:Ai"] = "true",
+            ["Features:Payment"] = "true",
+            ["Features:Upload"] = "true",
+            ["Ai:Provider"] = " DeepSeek ",
+            ["Billing:Payment:Provider"] = " PayOS ",
+            ["Storage:Provider"] = " R2 "
+        }).Build();
+        var adapters = ProductionAdapterSelection.FromConfiguration(configuration);
+        Assert.Equal(Approved, adapters);
+        ProductionSafety.ValidateAdapters(true, false, adapters);
     }
 
-    [Fact]
-    public void DisabledProductionCapabilitiesAndDevelopmentRemainAvailable()
-    {
-        ProductionSafety.ValidateDevelopmentAdapters(true, aiEnabled: false, paymentEnabled: false, uploadEnabled: false, storageProvider: "r2");
-        ProductionSafety.ValidateDevelopmentAdapters(false, aiEnabled: true, paymentEnabled: true, uploadEnabled: true);
-    }
-
-    [Fact]
-    public void ProductionAllowsR2WhenUploadIsEnabledAfterDurableUploadFlow()
-    {
-        ProductionSafety.ValidateDevelopmentAdapters(
-            true, aiEnabled: false, paymentEnabled: false, uploadEnabled: true, storageProvider: "r2");
-    }
-
-    [Fact]
-    public void ProductionAllowsR2WhenUploadIsDisabled()
-    {
-        ProductionSafety.ValidateDevelopmentAdapters(
-            true, aiEnabled: false, paymentEnabled: false, uploadEnabled: false, storageProvider: "r2");
-    }
-
-    [Fact]
-    public void ProductionRejectsLocalWhenUploadIsEnabled()
-    {
-        Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
-            true, aiEnabled: false, paymentEnabled: false, uploadEnabled: true, storageProvider: "local"));
-    }
-
-    [Fact]
-    public void ProductionRejectsLocalEvenWhenUploadIsDisabled()
-    {
-        var exception = Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
-            true, aiEnabled: false, paymentEnabled: false, uploadEnabled: false, storageProvider: "local"));
-        Assert.Contains("durable storage", exception.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void StagingRejectsLocalEvenWhenUploadIsDisabled()
-    {
-        Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
-            false, aiEnabled: false, paymentEnabled: false, uploadEnabled: false, storageProvider: "local", isStaging: true));
-    }
-
-    [Fact]
-    public void StagingAllowsR2AndExplicitPersistentLocalVolume()
-    {
-        ProductionSafety.ValidateDevelopmentAdapters(false, false, false, true, storageProvider: "r2", isStaging: true);
-        ProductionSafety.ValidateDevelopmentAdapters(false, false, false, true, storageProvider: "local", isStaging: true,
-            localPersistentVolumeConfigured: true);
-    }
-
-    [Fact]
-    public void DevelopmentAllowsLocalWhenUploadIsEnabled()
-    {
-        ProductionSafety.ValidateDevelopmentAdapters(
-            false, aiEnabled: false, paymentEnabled: false, uploadEnabled: true, storageProvider: "local");
-    }
-
-    [Fact]
-    public void UnknownStorageProviderFailsClosed()
-    {
-        Assert.Throws<InvalidOperationException>(() => ProductionSafety.ValidateDevelopmentAdapters(
-            false, aiEnabled: false, paymentEnabled: false, uploadEnabled: false, storageProvider: "wat"));
-    }
+    private static ProductionAdapterSelection Approved => new(true, true, "deepseek", "payos", "r2");
 
     [Fact]
     public void ValidateEmailConfigurationInDevelopmentOrTestingAllowsNoopAndHttp()
