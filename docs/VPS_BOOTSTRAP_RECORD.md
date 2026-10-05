@@ -2,11 +2,10 @@
 
 ## Status and evidence
 
-- Updated: 2026-10-05 13:26:14 UTC (20:26:14 Asia/Saigon).
-- Phase: **BLOCKED_ROOT_BOOTSTRAP_ACCESS** after explicit root-task authorization.
-  Pinned, noninteractive root SSH failed authentication; no authorized bootstrap
-  root key is available in local tooling. GHCR image visibility/existence, reviewer
-  policy and privileged Caddy/firewall preparation also remain pending.
+- Updated: 2026-10-05 13:44:31 UTC (20:44:31 Asia/Saigon).
+- Phase: **BLOCKED_GHCR_ACCESS**. Authorized root preparation completed; image
+  visibility/existence/authentication and safe publish-only preparation remain
+  pending. Render same-production-DB Worker still prohibits VPS application startup.
   Same-database Render Worker still prohibits VPS application startup.
 - Repository: `qbao0111/nexora-backend`.
 - Current reviewed main: `6d20de4392ca237457c27d310c3746b2ad07ee2d`.
@@ -37,7 +36,7 @@ any eventual first deployment; this record is not approval to deploy an older SH
 | --- | --- |
 | GitHub Environment | `production`, created |
 | Allowed deployment branch | `main` only, custom branch policy |
-| Required reviewer | `qbao0111` |
+| Required reviewers | `qbao0111`, `nbn1784` (second reviewer explicitly authorized by operator) |
 | Prevent self-review | `true` |
 | Administrator bypass | GitHub reports `can_admins_bypass=true`; not changed |
 | Repository variable `PRODUCTION_DEPLOY_ENABLED` | `false` |
@@ -48,10 +47,10 @@ any eventual first deployment; this record is not approval to deploy an older SH
 | Environment secret `VPS_KNOWN_HOSTS` | Installed; trusted-console ED25519 host key pinned |
 
 No existing branch protections were changed. Application credentials were not
-stored in GitHub. With self-review prevention, a release initiated by the only
-reviewer may need another authorized reviewer; resolve this before enabling
-automatic deployments, without weakening the protection. No second reviewer was
-assumed or added.
+stored in GitHub. The operator selected `nbn1784`; they were added without removing
+qbao0111 or weakening self-review/main-only protection. A qbao0111-initiated release
+can now be approved by the authorized second reviewer. No release approval was
+requested or exercised, and the automatic deployment gate remains false.
 
 ## VPS and runtime evidence
 
@@ -61,10 +60,10 @@ Expected settings are **not** verification results.
 | Item | Actual evidence / status |
 | --- | --- |
 | VPS hostname/IP; SSH port | `linux9484`, `180.93.59.22`, port `22` |
-| Bootstrap/root access | Operator root MobaXterm session; automated SSH is deploy-only, no sudo |
+| Bootstrap/root access | Separate root bootstrap key installed by operator; pinned root SSH verified for host administration only |
 | OS/version, kernel, architecture | Ubuntu 24.04.5 LTS noble, kernel 6.8.0-62-generic, x86_64 |
 | CPU/RAM/disk | 2 CPUs; RAM 3.8 GiB, available 3.2 GiB; root disk 24 GB, free 19 GB; swap 4 GiB |
-| Existing listeners | Operator screenshot: SSH 22; loopback DNS 53 and X11 6010; no web listeners shown |
+| Existing listeners | Public SSH 22 and Caddy HTTP 80; loopback DNS 53, X11 6010, Caddy admin 2019; no 443/10000 listener |
 | Deploy user and effective Docker group | UID/GID 1000; docker group 988, verified in fresh SSH session |
 | Docker Engine / Compose versions; Docker service | Engine 29.8.2; Compose v5.6.0; Docker active; deploy daemon access verified |
 | Deployment public key and SHA256 fingerprint | Recorded below |
@@ -72,15 +71,18 @@ Expected settings are **not** verification results.
 | Deploy SSH using pinned host key | PASS: BatchMode, IdentitiesOnly, StrictHostKeyChecking=yes |
 | `/opt/nexora` and reviewed Compose/script | deploy:deploy mode 700 directory; executable deploy.sh 700, Compose 600 |
 | `/opt/nexora/.env.production` | Operator populated; deploy:deploy mode 600 verified; required keys SET |
-| `/root/nexora-secret-backup` and README | Not created; mode not verified |
-| Private recovery files | Local dedicated SSH key outside git with restricted ACL; root-only VPS backup pending |
+| `/root/nexora-secret-backup` and README | root:root directory 700; README 600, created |
+| Private recovery files | Actions deployment key root:root mode 600; private-derived public fingerprint verified against deployed key |
+| Caddy | v2.11.7 official apt package; enabled/active; package-default HTTP site only |
+| Nexora Caddy config | `/etc/caddy/Caddyfile.nexora.staged`, root:root 644; validate PASS, NOT activated |
+| Firewall | UFW active, deny incoming/routed, allow outgoing; IPv4/IPv6 TCP 22/80/443 allowed |
 | GHCR package visibility / exact SHA image existence | Not verified |
 | GHCR VPS pull authentication | Not configured/tested |
 | Exact deployed main SHA | None |
 | Container health / restart count / runtime non-root user | Not tested |
 | API process / Worker process | Not started or verified |
 | `/health/live` / DB readiness `/api/v1/health` | Not tested |
-| Migrations / intended Neon production-v2 identity | Not run/verified |
+| Migrations / intended Neon production-v2 identity | Migrations NOT RUN; verified TLS read-only query and operator endpoint match PASS |
 | Production Swagger 404 | Not tested on VPS |
 | Provider startup validation | Not tested on VPS |
 | Render service / Worker | Existing service and Worker are still running, per operator confirmation |
@@ -145,8 +147,9 @@ Steps 1 through 6 below have completed except the root-only recovery backup.
 The current stop is step 8: the operator confirms an active Render Worker on the
 same database. No application startup, production migration or deployment command
 has been executed. A privileged
-operator still needs to arrange the root-only recovery copy; deploy has no sudo and
-no additional root access or privilege changes were introduced to work around that.
+operator has since authorized separate root bootstrap SSH and the root-only
+recovery copy is complete. Deploy remains non-sudo; root is not used by CI or for
+Nexora runtime operations.
 
 1. Supply VPS host, SSH port and a secure bootstrap access method (an existing
    authorized SSH key/alias or trusted operator console). Do not paste root
@@ -196,9 +199,10 @@ no additional root access or privilege changes were introduced to work around th
    Keep `PRODUCTION_DEPLOY_ENABLED=false` until separately approved. No DNS change,
    real payment charge, paid provider call or guessed authenticated account test.
 
-## Recovery backup policy (VPS copy pending)
+## Recovery backup policy (VPS copy created)
 
-The deployment key has been generated outside git. Retain the requested emergency
+The deployment key was generated outside git and its recovery copy is verified.
+Retain the requested emergency
 copy only in `/root/nexora-secret-backup` (directory mode `700`):
 
 - `github-actions-deploy-ed25519`: private backup, mode `600`.
@@ -245,7 +249,7 @@ remain running, so same-production-DB Worker overlap still blocks VPS startup.
 Existing exact-main Backend CI success is recorded above, not claimed as VPS
 health evidence.
 
-## Post-PR #127 preparation evidence
+## Earlier post-PR #127 preparation evidence (historical; superseded below)
 
 - Operator subsequently authorized root-only host preparation while forbidding
   deploy sudo and Docker host-mount/privileged workarounds. A pinned BatchMode root
@@ -255,9 +259,8 @@ health evidence.
   execution session. Authorization is not authentication: root host tasks remain
   blocked. No root key was installed, root password requested, deploy sudo granted,
   SSH protection weakened or Docker permission workaround attempted. Current main
-  remains `6d20de4392ca237457c27d310c3746b2ad07ee2d`. Resume host inspection only after
-  operator supplies a secure authenticated root access method; do not claim Caddy,
-  firewall or recovery backup completion.
+  remained `6d20de4392ca237457c27d310c3746b2ad07ee2d`. This initial authentication
+  blocker was subsequently resolved by operator-installed separate root public key.
 
 - GitHub production environment rechecked: main-only policy, SSH secret names
   present, host/port/user unchanged, repository enable gate remains `false`.
@@ -322,6 +325,62 @@ health evidence.
   suspension or shutdown occurred in this phase.
 - Root-only SSH recovery backup remains a manual privileged item. No sudo was granted,
   root key installed, or Docker root-equivalent workaround used to create it.
+
+## Authorized root preparation completion (current evidence)
+
+Root access was established only after the operator installed the separate
+`nexora-root-bootstrap` public key in the existing root session. Key fingerprint:
+`SHA256:1103LGU4T1N68yfbsIyZToKsIZzBFFi3QqswSkpPZ9Q`. Its private key stays outside
+git with restricted local ACL, never in Actions or application env. Root and deploy
+keys are separate; root SSH host key was pinned. Remove this temporary root
+authorized-key entry only after operator approval and secure recovery/access review.
+No root/password SSH policy was changed and deploy remains denied sudo.
+
+1. Root inspection confirmed Ubuntu 24.04.5 x86_64, 2 CPUs, RAM 3.8 GiB (3.2 GiB
+   available), disk 24 GB (19 GB free), swap 4 GiB. Docker active/enabled. Before
+   changes, UFW was inactive with no added rules and listeners were SSH plus
+   loopback DNS/X11 only; no unrelated public web service was present.
+2. Installed official Caddy stable apt repository/package v2.11.7 and PostgreSQL
+   client 16 for a read-only DB probe. No database server installed. No autoremove,
+   distro upgrade or reboot. The package-default `/etc/caddy/Caddyfile` was backed
+   up to `/root/nexora-host-config-backup/Caddyfile.package-default`.
+3. Both active package-default config and staged reviewed Nexora config passed
+   `caddy validate`. Caddy is enabled/active serving only its default HTTP site on
+   port 80; the production hostname is **not loaded**. No ACME issuance attempted.
+   Activation/TLS/DNS remain cutover tasks; preserve unrelated configs if added later.
+4. UFW configured only after root inspection: allow TCP 22/80/443 on IPv4/IPv6,
+   incoming/routed deny and outgoing allow. UFW enabled; fresh pinned root and deploy
+   SSH both succeeded afterward. Current listeners are public TCP 22/80; Caddy admin
+   2019, DNS and X11 stay loopback. No 10000 listener or allow rule exists; Compose
+   remains `127.0.0.1:10000:10000`. Provider-edge firewall is not independently audited.
+5. Root-only recovery copy created in directory mode 700. Private/public deployment
+   key and README are root:root mode 600. Public key derived from private backup
+   matches `SHA256:IwsV8Mr+l70JUY17IdI6udK2Vu54eJEnfb3ly3H1mks`; no private content
+   was printed. README contains the required off-VPS verified-copy/deletion warning.
+   Do not delete the requested copy automatically; operator must copy and verify it
+   externally before authorizing deletion.
+6. Operator explicitly chose `nbn1784`; their existing write access was confirmed,
+   then added as second production reviewer. Main-only policy and self-review
+   prevention unchanged; gate still false. Reviewer blocker is resolved, not bypassed.
+7. Env presence/hosting/provider/CORS/payOS-callback/enabled-Speech checks pass, mode
+   600 deploy:deploy. Initial DB TLS configuration was not VerifyFull. With explicit
+   operator permission, changed **only** the SSL Mode parameter to VerifyFull via an
+   atomic mode-600 update; did not rotate or modify credentials/host/database/JWT.
+8. Read-only psql probe used system CA trust, verified hostname TLS, explicit
+   `BEGIN READ ONLY`, transaction-local timeout, metadata SELECT and ROLLBACK. No
+   writes/migrations. Initial probe failed before using pooler-compatible transaction
+   setup; its provisional timeout category was not established as a server outage.
+   Final probe passed TLS/read-only/current-database checks and matched the operator's
+   `ep-muddy-poetry-b3wyjpga` endpoint (pooler suffix normalized). This verifies the
+   supplied endpoint mapping, not an independent Neon management-plane branch audit.
+   No connection string, password, raw errors or env contents were returned.
+9. GHCR remains blocked: authenticated package lookup 404 is inconclusive with
+   current scopes; anonymous registry probe 403; exact SHA/digest unverified. No
+   registry login/pull/publish, workflow change or deployment-gate enablement.
+10. Render untouched: operator reports Auto-Deploy off, API/Worker still running
+    against the same DB. No VPS Nexora containers (running or stopped), application
+    startup, EF bundle execution or DNS change. Docker daemon permissions for deploy
+    verified again. Ordered cutover/rollback plan below remains approval-only.
 
 ## Authentication continuity findings
 
