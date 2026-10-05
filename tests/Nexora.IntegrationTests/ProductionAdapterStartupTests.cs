@@ -93,6 +93,21 @@ public sealed class ProductionAdapterStartupTests
     }
 
     [Theory]
+    [InlineData("fake")]
+    [InlineData("sepay")]
+    public async Task ProductionRejectsDevelopmentPaymentCallbacksEvenWhenCheckoutIsDisabled(string provider)
+    {
+        var configuration = ApprovedConfiguration();
+        configuration["Features:Payment"] = "false";
+        configuration["Billing:Payment:Provider"] = "fake";
+        using var factory = new NexoraApiFactory("Production", configuration);
+        using var client = factory.CreateHttpsClient();
+        using var response = await client.PostAsync($"/api/v1/webhooks/payments/{provider}", new StringContent("{}"));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Theory]
     [InlineData("Ai:Provider")]
     [InlineData("Billing:Payment:Provider")]
     public void UnknownSelectorsStillFailConfigurationValidationWhenFeaturesAreDisabled(string key)

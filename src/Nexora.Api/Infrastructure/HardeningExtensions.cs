@@ -136,10 +136,19 @@ public static class HardeningExtensions
     }
 }
 
-public sealed class FeatureGateMiddleware(RequestDelegate next, IOptions<FeatureOptions> options)
+public sealed class FeatureGateMiddleware(RequestDelegate next, IOptions<FeatureOptions> options, IWebHostEnvironment environment)
 {
     public async Task InvokeAsync(HttpContext context)
     {
+        // A disabled checkout capability can boot with legacy adapter configuration,
+        // but Production must never accept fake/sandbox fulfillment callbacks.
+        if (environment.IsProduction() && (context.Request.Path.StartsWithSegments("/api/v1/webhooks/payments/fake") ||
+            context.Request.Path.StartsWithSegments("/api/v1/webhooks/payments/sepay")))
+        {
+            await ApiErrorWriter.WriteAsync(context, StatusCodes.Status404NotFound,
+                "NOT_FOUND", "Không tìm thấy tài nguyên.");
+            return;
+        }
         var feature = context.Request.Method == HttpMethods.Post
             ? DisabledFeature(context.Request.Path, options.Value)
             : context.Request.Method == HttpMethods.Put && !options.Value.Upload && context.Request.Path == "/api/v1/me/avatar"

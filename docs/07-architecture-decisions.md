@@ -119,6 +119,8 @@ invoice or tax issuance is claimed; those policies require separate owner/legal
 approval where applicable. `Features__Payment=false` blocks new checkout after
 recreation, **not** callback/query reconciliation for existing orders. Keep valid
 payOS credentials for outstanding orders even during an emergency checkout pause.
+Production rejects fake/SePay webhook routes even if checkout is disabled and a
+legacy adapter is configured; no fake/sandbox fulfillment bypass is permitted.
 
 DEC-04 is a prepared Linux amd64 VPS/GHCR/SSH/Caddy deployment path using Neon/R2/
 Resend and the approved domain, not evidence of accounts, DNS or deployment actions.

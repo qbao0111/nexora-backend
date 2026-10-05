@@ -55,6 +55,10 @@ jobs:
         run: |
           set -euo pipefail
           cleanup() {
+            if (( $? != 0 )); then
+              docker logs --tail 150 nexora-container-test 2>&1 || true
+              docker inspect --format '{{.State.Status}} exit={{.State.ExitCode}}' nexora-container-test || true
+            fi
             docker rm -f nexora-container-test >/dev/null 2>&1 || true
             docker network disconnect nexora-smoke "$POSTGRES_SERVICE_ID" >/dev/null 2>&1 || true
             docker network rm nexora-smoke >/dev/null 2>&1 || true
@@ -63,7 +67,7 @@ jobs:
           # No external provider traffic: internal bridge has no outbound route.
           docker network create --internal nexora-smoke
           docker network connect --alias postgres-test nexora-smoke "$POSTGRES_SERVICE_ID"
-          docker run -d --name nexora-container-test --network nexora-smoke -p 127.0.0.1:10000:10000 \
+          docker run -d --name nexora-container-test --network nexora-smoke \
             --env-file deploy/.env.production \
             -e 'ConnectionStrings__Postgres=Host=postgres-test;Database=nexora_container_tests;Username=nexora_tests;Password=nexora-tests-password' \
             -e Features__Ai=true -e Ai__Provider=deepseek \
@@ -75,15 +79,15 @@ jobs:
             -e Features__Upload=true -e Storage__Provider=r2 \
             nexora-container-test
           for (( i=0; i<90; i++ )); do
-            if curl --fail --silent --output /dev/null http://localhost:10000/api/v1/health; then break; fi
+            if docker exec nexora-container-test curl --max-time 5 --fail --silent --output /dev/null http://localhost:10000/api/v1/health; then break; fi
             sleep 2
           done
-          curl --fail --silent --output /dev/null http://localhost:10000/health/live
-          curl --fail --silent --output /dev/null http://localhost:10000/api/v1/health
+          docker exec nexora-container-test curl --max-time 5 --fail --silent --output /dev/null http://localhost:10000/health/live
+          docker exec nexora-container-test curl --max-time 5 --fail --silent --output /dev/null http://localhost:10000/api/v1/health
           docker top nexora-container-test -eo pid,args | grep -q 'dotnet ./api/Nexora.Api.dll'
           docker top nexora-container-test -eo pid,args | grep -q 'dotnet ./worker/Nexora.Worker.dll'
           [[ "$(docker exec nexora-container-test id -u)" != 0 ]]
-          [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:10000/swagger/index.html)" == 404 ]]
+          [[ "$(docker exec nexora-container-test curl --max-time 5 --silent --output /dev/null --write-out '%{http_code}' http://localhost:10000/swagger/index.html)" == 404 ]]
           docker stop --time 60 nexora-container-test >/dev/null
           [[ "$(docker inspect --format '{{.State.ExitCode}}' nexora-container-test)" == 0 ]]
   build-test-checks:
