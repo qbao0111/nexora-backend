@@ -75,9 +75,16 @@ Expected settings are **not** verification results.
 | Migrations / intended Neon production-v2 identity | Not run/verified |
 | Production Swagger 404 | Not tested on VPS |
 | Provider startup validation | Not tested on VPS |
-| Render Worker database overlap | Operator confirms Render Worker is running on the same production-v2 DB; BLOCKS VPS startup |
+| Render service / Worker | Existing service and Worker are still running, per operator confirmation |
+| Render Worker database overlap | Worker remains on the same production-v2 DB; BLOCKS VPS application startup |
 | DNS cutover | **NOT PERFORMED** |
-| Render changes | **NONE** |
+| Render Auto-Deploy | Manually disabled by the operator: `autoDeploy=no` / `autoDeployTrigger=off` |
+| Render actions by Codex | No application deployment, environment-variable change, restart, suspension or DNS cutover |
+
+The Render Auto-Deploy state above is operator-reported; no remote Render change
+was made by Codex. Disabling Auto-Deploy only prevents future automatic deployments;
+it does not stop the existing service or Worker. Same-production-DB Worker overlap
+therefore still blocks VPS application startup.
 
 Deployment public key (not a secret):
 
@@ -222,6 +229,10 @@ This documentation contains no application env contents, credential values or
 private keys. Only GitHub environment/protection configuration and non-secret
 variables were changed, and dedicated SSH credentials installed securely in the
 production environment. Reviewed deployment files and an empty env were provisioned
-on the VPS. No application startup, production migration, DNS record or Render
-service was changed. Existing exact-main Backend
-CI success is recorded above, not claimed as VPS health evidence.
+on the VPS. Codex performed no VPS application startup or production migration,
+and no Render application deployment, environment-variable change, restart,
+suspension or DNS cutover. The operator manually disabled Render Auto-Deploy
+(`autoDeploy=no` / `autoDeployTrigger=off`); the existing Render service and Worker
+remain running, so same-production-DB Worker overlap still blocks VPS startup.
+Existing exact-main Backend CI success is recorded above, not claimed as VPS
+health evidence.
