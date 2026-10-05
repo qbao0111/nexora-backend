@@ -9,6 +9,8 @@ TestResults
 .env.*
 **/.env
 **/.env.*
+**/appsettings.Local.json
+**/secrets.json
 *.user
 *.suo
 .vs
