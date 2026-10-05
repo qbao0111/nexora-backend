@@ -3,8 +3,10 @@
 ## Status and evidence
 
 - Updated: 2026-10-05 13:26:14 UTC (20:26:14 Asia/Saigon).
-- Phase: **BLOCKED_GHCR_ACCESS**; image visibility/existence cannot be established.
-  Reviewer policy and privileged Caddy/firewall preparation also remain pending.
+- Phase: **BLOCKED_ROOT_BOOTSTRAP_ACCESS** after explicit root-task authorization.
+  Pinned, noninteractive root SSH failed authentication; no authorized bootstrap
+  root key is available in local tooling. GHCR image visibility/existence, reviewer
+  policy and privileged Caddy/firewall preparation also remain pending.
   Same-database Render Worker still prohibits VPS application startup.
 - Repository: `qbao0111/nexora-backend`.
 - Current reviewed main: `6d20de4392ca237457c27d310c3746b2ad07ee2d`.
@@ -244,6 +246,18 @@ Existing exact-main Backend CI success is recorded above, not claimed as VPS
 health evidence.
 
 ## Post-PR #127 preparation evidence
+
+- Operator subsequently authorized root-only host preparation while forbidding
+  deploy sudo and Docker host-mount/privileged workarounds. A pinned BatchMode root
+  SSH probe returned `Permission denied (publickey,password)`. Local SSH tooling
+  has the dedicated deploy key only, no supplied root bootstrap key. The operator's
+  MobaXterm root session exists, but native terminal control is unavailable to this
+  execution session. Authorization is not authentication: root host tasks remain
+  blocked. No root key was installed, root password requested, deploy sudo granted,
+  SSH protection weakened or Docker permission workaround attempted. Current main
+  remains `6d20de4392ca237457c27d310c3746b2ad07ee2d`. Resume host inspection only after
+  operator supplies a secure authenticated root access method; do not claim Caddy,
+  firewall or recovery backup completion.
 
 - GitHub production environment rechecked: main-only policy, SSH secret names
   present, host/port/user unchanged, repository enable gate remains `false`.
