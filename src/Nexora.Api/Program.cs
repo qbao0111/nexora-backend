@@ -38,19 +38,14 @@ builder.Services.AddHostedService<RealtimeNotificationBroadcaster>();
 builder.Services.AddBusiness();
 builder.Services.AddSingleton<IApiSentryReporter, ApiSentryReporter>();
 builder.Services.AddData(builder.Configuration);
-ProductionSafety.ValidateDevelopmentAdapters(
+ProductionSafety.ValidateAdapters(
     builder.Environment.IsProduction(),
-    builder.Configuration.GetValue("Features:Ai", true),
-    builder.Configuration.GetValue("Features:Payment", true),
-    builder.Configuration.GetValue("Features:Upload", true),
-    builder.Configuration.GetValue<string?>("Storage:Provider"),
-    builder.Configuration.GetValue<string?>("Billing:Payment:Provider"),
     builder.Environment.IsStaging(),
-    builder.Configuration.GetValue("Storage:Local:PersistentVolumeConfigured", false));
+    ProductionAdapterSelection.FromConfiguration(builder.Configuration));
 ProductionSafety.ValidateEmailConfiguration(
     builder.Environment.IsProduction() || builder.Environment.IsStaging(),
     builder.Configuration);
-builder.Services.AddIntegrations(builder.Configuration);
+builder.Services.AddIntegrations(builder.Configuration, isProduction: builder.Environment.IsProduction());
 builder.Services.AddControllers(options => options.Conventions.Add(new DevelopmentOnlyControllerConvention(builder.Environment)));
 builder.Services.AddOpenApi(OpenApiConfiguration.Configure);
 builder.Services.AddOptions<OperationsHealthOptions>()

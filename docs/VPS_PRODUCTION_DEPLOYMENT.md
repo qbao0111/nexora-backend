@@ -14,13 +14,14 @@ No local database is created. One Docker volume preserves ASP.NET Core Identity
 Data Protection keys across recreations (do not delete it during rollback).
 Back up and protect that volume: keys are stored on disk, not encrypted by this PR.
 
-**Product go-live is blocked separately:** current `ProductionSafety` rejects
-`Features__Ai=true` and `Features__Payment=true` in Production (DEC-01/02), even
-with DeepSeek/payOS configured. This PR deliberately does not bypass that guard
-or impersonate Staging. The example disables both. A healthy container with those
-flags off is infrastructure evidence, not a working AI/payment product launch.
-Resolve the approved production enablement/legal/budget gates separately before
-real traffic; see [production runbook](04-production-runbook.md).
+**Approved adapters, separate go-live obligations:** ProductionSafety permits only
+R2 storage, enabled DeepSeek AI and enabled payOS payment. The example enables AI,
+payment and uploads, with Speech conservatively off. Required provider options still
+validate on startup. A healthy container proves configuration/startup, not successful
+provider traffic or legal/cost readiness. Monetary budgets/automatic spend alerts and
+refund/invoice/tax policies are not implemented by this corrective; operators must
+review the [ADR control audit](07-architecture-decisions.md#pr-126-production-approval-and-control-audit)
+and [production runbook](04-production-runbook.md) before real traffic.
 
 Audit findings: the old image forced Staging, entrypoint silently skipped missing
 migration/DB configuration, used root and world-writable local storage, and passed
@@ -109,19 +110,38 @@ The template uses current source keys, not old `DATABASE_URL`/`AUTH_SECRET` alia
 | Auth | `Authentication__Jwt__*` (strong random signing key); secure Strict refresh cookie; actual HTTPS verification frontend origin |
 | CORS | Indexed `Frontend__AllowedOrigins__0/1` www and apex; no wildcard with credentials |
 | Storage | `Storage__Provider=r2` and all `Storage__R2__*` private bucket credentials/HTTPS endpoint |
-| AI | `Ai__Provider=deepseek`, `Ai__DeepSeek__*`; existing model/reasoning/retry defaults unchanged; optional Gemini is not required |
+| AI | `Features__Ai=true`, `Ai__Provider=deepseek`, `Ai__DeepSeek__*`; model/reasoning/retry defaults unchanged; Gemini is not approved in Production |
 | Speech | `Features__Speech`, `Speech__Azure__*`; set false and recreate container to disable temporarily |
 | Email | `Email__Provider=resend`, `Email__FromAddress/FromName`, `Email__Resend__*`; existing verified sender, not the Gmail public contact |
-| Payment | `Billing__Payment__Provider=payos`, `Billing__Payos__*`; confirm actual frontend return/cancel routes privately |
+| Payment | `Features__Payment=true`, `Billing__Payment__Provider=payos`, `Billing__Payos__*`; public HTTPS return `/payment/success`, cancel `/payment/cancel` |
 | Monitoring | Optional `Sentry__Dsn`; Compose sets release to `nexora-backend@<SHA>` for API and Worker |
 | Background | `Realtime__*`, `Worker__Polling__*`; existing defaults, no job/retry policy changes |
 
-API startup validates email even if AI/payment are disabled. payOS options still
-need valid values when selected, even with payment disabled. Never treat placeholders
+API startup validates email even if AI/payment are disabled. Enabled DeepSeek/payOS
+require valid credentials/options; their credentials are not required for startup
+when the corresponding Production feature is disabled. Unknown selectors still fail
+configuration validation. Never treat placeholders
 as a usable production setup. Keep existing private privacy/retention feature settings;
 do not enable purge as part of infrastructure cutover. JWT credentials must be stable
 through cutover; changing them signs users out. Review Neon connection limits and
 network access, R2 CORS/signed upload policy, and provider callback domains.
+
+Callback paths were verified read-only in local `nexora-fe` source
+(`src/app/payment/success/page.tsx`, `src/app/payment/cancel/page.tsx`);
+`/billing` is only the legacy compatibility page. Operator must verify the deployed
+FE has both routes on the configured HTTPS origin before enabling real checkout.
+Redirect/query parameters are never proof of payment; backend reconciliation remains
+authoritative. No FE changes or live callback registration are performed here.
+
+Emergency switches: set `Features__Ai=false`, `Features__Payment=false` and/or
+`Features__Speech=false`, then **recreate/redeploy the container**, even at the same
+verified SHA. Editing env alone has no effect. AI pause blocks new API work and
+queued worker AI processing without failing/refunding jobs; privacy still runs.
+Payment pause blocks new checkout, but existing orders still need verified callbacks
+and query reconciliation: retain valid payOS credentials. Speech uses existing Azure
+validation; default is false, operator may enable it with approved Azure configuration.
+Monitor provider balance/usage separately; quotas/rate limits are not a global monetary
+budget or automatic spend breaker. Keep `RateLimits:Disabled=false` for production.
 
 ## 4. First manual release and automated releases
 
@@ -199,8 +219,8 @@ Cutover checklist (operator must record evidence, not just tick based on build):
 3. Private R2 upload/download and owner isolation.
 4. Verification/reset email with approved verified Resend sender.
 5. Azure Speech token flow if enabled; otherwise explicitly disabled.
-6. Resolve ProductionSafety AI gate, verify actual DeepSeek model/valid structured output.
-7. Resolve payment gate; verify payOS checkout/signature/idempotent webhook and URLs.
+6. Approve cost exposure/monitoring and kill-switch response; verify actual DeepSeek model/valid structured output.
+7. Approve applicable financial/legal policies; verify payOS checkout/signature/idempotent webhook and callback URLs.
 8. Worker handles real approved test jobs, queue/operations healthy.
 9. Authenticated SignalR reconnect/event → REST reconciliation.
 10. Stop old production compute/Worker using this DB before overlap; retain separate Render staging.
@@ -245,7 +265,10 @@ change; verify staging health after its next manually approved deployment.
 
 Backend CI includes standard .NET/PostgreSQL tests plus Bash lifecycle regressions,
 Compose validation, real Docker build and a Production-mode container smoke against
-disposable PostgreSQL, using placeholder external provider configuration (no provider
-calls). That does not prove Neon/R2/Azure/AI/Resend/payOS or VPS/DNS deployment.
+disposable PostgreSQL, with AI=true/deepseek, payment=true/payos and upload=true/r2.
+It uses test-only placeholder credentials and an internal Docker network with no
+outbound route (no external provider calls). Production API startup regressions also
+verify invalid/missing DeepSeek/payOS options fail via ValidateOnStart. That does not
+prove Neon/R2/Azure/AI/Resend/payOS or VPS/DNS deployment.
 Deployment remains disabled until explicit operator setup/approval; no deployment
 or DNS action is executed when this PR is created.

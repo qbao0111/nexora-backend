@@ -39,7 +39,9 @@ jobs:
           persist-credentials: false
       - name: Check shell lifecycle regression
         run: |
-          bash -n scripts/container-entrypoint.sh deploy/deploy.sh scripts/tests/container-entrypoint-test.sh
+          for script in scripts/container-entrypoint.sh deploy/deploy.sh scripts/tests/container-entrypoint-test.sh; do
+            bash -n "$script"
+          done
           bash scripts/tests/container-entrypoint-test.sh
       - name: Validate Compose and build image
         run: |
@@ -48,12 +50,29 @@ jobs:
           NEXORA_IMAGE_TAG="$GITHUB_SHA" docker compose -f deploy/docker-compose.production.yml config --quiet
           docker build --platform linux/amd64 --tag nexora-container-test .
       - name: Smoke real image and migration bundle against disposable PostgreSQL
+        env:
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
         run: |
           set -euo pipefail
-          trap 'docker rm -f nexora-container-test >/dev/null 2>&1 || true' EXIT
-          docker run -d --name nexora-container-test --network host \
+          cleanup() {
+            docker rm -f nexora-container-test >/dev/null 2>&1 || true
+            docker network disconnect nexora-smoke "$POSTGRES_SERVICE_ID" >/dev/null 2>&1 || true
+            docker network rm nexora-smoke >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          # No external provider traffic: internal bridge has no outbound route.
+          docker network create --internal nexora-smoke
+          docker network connect --alias postgres-test nexora-smoke "$POSTGRES_SERVICE_ID"
+          docker run -d --name nexora-container-test --network nexora-smoke -p 127.0.0.1:10000:10000 \
             --env-file deploy/.env.production \
-            -e 'ConnectionStrings__Postgres=Host=localhost;Database=nexora_container_tests;Username=nexora_tests;Password=nexora-tests-password' \
+            -e 'ConnectionStrings__Postgres=Host=postgres-test;Database=nexora_container_tests;Username=nexora_tests;Password=nexora-tests-password' \
+            -e Features__Ai=true -e Ai__Provider=deepseek \
+            -e Ai__DeepSeek__ApiKey=test-only-not-used \
+            -e Features__Payment=true -e Billing__Payment__Provider=payos \
+            -e Billing__Payos__ClientId=test-only-client-id \
+            -e Billing__Payos__ApiKey=test-only-api-key \
+            -e Billing__Payos__ChecksumKey=test-only-checksum-key \
+            -e Features__Upload=true -e Storage__Provider=r2 \
             nexora-container-test
           for (( i=0; i<90; i++ )); do
             if curl --fail --silent --output /dev/null http://localhost:10000/api/v1/health; then break; fi

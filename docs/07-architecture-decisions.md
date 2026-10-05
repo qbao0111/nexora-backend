@@ -1,7 +1,7 @@
 # Architecture Decision Records (ADR) — Nexora
 
-**Status:** Approved implementation baseline; DEC-01–04 deferred for production enablement  
-**Last updated:** 2026-08-21
+**Status:** Approved implementation baseline; production adapter selections approved in PR #126, remaining operational/legal gates distinguished below
+**Last updated:** 2026-10-05
 
 ## ADR-001 — Modular monolith Three-Layer
 
@@ -65,9 +65,61 @@ Các DEC này **không block backend/local development, Phases 0–3 hoặc inte
 
 | Decision | Status | Còn cần chốt | Chỉ block |
 | --- | --- | --- | --- |
-| DEC-01 | Deferred — required before production enablement | Production AI provider/model; per-user/global budgets, alert/circuit-break limits | Real production AI traffic |
-| DEC-02 | Deferred — required before production enablement | Vietnamese payment provider; refund, invoice and tax handling | Real production payment/refund flow |
+| DEC-01 | Adapter resolved: official DeepSeek; not a claim that all cost controls are resolved | Operator-approved environment-controlled model; global monetary budget, automatic spend alerts/circuit-break thresholds and provider balance monitoring still require operational approval | Production traffic requires the cost/abuse operational checklist below |
+| DEC-02 | Adapter resolved: payOS; checkout/query/verified webhook implemented | Refund/invoice/tax policy remains a separate business/legal concern; no automated refund or invoice/tax workflow is claimed | Affected financial/legal rollout, not adapter selection/startup |
 | DEC-03 | Deferred — required before production enablement | Final CV/JD/transcript/recording/log retention periods; approved Terms/Privacy/AI/recording text | Affected production data processing/go-live |
-| DEC-04 | Deferred — required before production enablement | Production API/worker/database/object-storage hosting, domains, mail provider and infrastructure accounts | Affected production deployment |
+| DEC-04 | Deployment path prepared: VPS + Neon + R2 + Resend; not deployed by this PR | Operator accounts/secrets, DNS/TLS, backups, mail verification and rollout approval remain required | Actual deployment/cutover |
 
 Temporary implementations are approved for engineering: configuration-driven `GeminiAiProvider` (default) and optional official `DeepSeekAiProvider` for local text-AI evaluation, `FakePaymentProvider`, and `LocalStorageProvider` for development/testing. `R2StorageProvider` plus the durable `R2UploadProvider` are the available private production-storage/upload adapters; the final R2 account/hosting enablement remains under DEC-04. Document extraction is local only; DeepSeek selection requires no Gemini credentials. A deterministic AI test double may exist only inside the test project. These implementations do not create the remaining production vendor/account decisions.
+
+### PR #126 production approval and control audit
+
+The product owner's corrective explicitly approves **official DeepSeek + payOS +
+private R2**. This supersedes the historical blanket AI/payment startup prohibition,
+not the remaining go-live obligations. Production startup permits only R2 storage,
+DeepSeek when AI is enabled, and payOS when payment is enabled. Gemini and SePay
+sandbox remain local/staging choices; fake payment remains development/testing.
+Speech uses its existing Azure validators/feature flag; Resend validation remains.
+Disabled AI/payment do not require their approved adapter's credentials at startup;
+unknown selectors still fail ordinary configuration validation. No provider secrets
+are included in guard errors. Production payOS callbacks must be public HTTPS;
+local HTTP loopback remains available only outside Production.
+
+DEC-01 implementation evidence:
+
+- Owner-authenticated controllers; interview entitlement reservation/consume/void
+  transactions and scenario/STAR feature quotas remain authoritative.
+- `RateLimits:AiJob` defaults to 10 requests/user/hour; answers have their own
+  bounded policy. Limits are per API process, **not** distributed spend accounting.
+  Production operators must keep `RateLimits:Disabled=false`.
+- `StructuredAiExecutor` caps provider calls at 2 per purpose execution; the
+  DeepSeek adapter has `MaxAttempts=1`. Existing job/recovery budgets are separate
+  bounded executions, so this is not a two-call cap over a whole interview.
+- Official HTTPS endpoint, required key/model (max 80 characters), timeout 1..120s,
+  retry-delay bounds and per-purpose reasoning validation are unchanged. Models
+  and reasoning remain environment-controlled; no model/retry/token changes here.
+- Safe token/latency/purpose/model/correlation telemetry exists. It is **not** a
+  persisted monetary ledger, global budget, automatic spend alert or balance guard.
+  No global/provider monetary usage guard was found in the current implementation.
+- `Features__Ai=false` plus container recreation blocks API AI mutations and pauses
+  queued AI processing (including scenario/STAR) while privacy processing continues.
+  Paused jobs/reservations are not failed/refunded; re-enable to resume them. This is
+  an immediate operational breaker after restart, not an automatic threshold breaker.
+
+Before real traffic, the operator must approve model/cost exposure, monitor provider
+usage/balance and alerts, designate a responder and rehearse the kill switch. This
+PR does not invent a monetary limit or claim a missing global spend control exists.
+
+DEC-02 evidence: payOS creates hosted checkout, validates responses/order references,
+queries provider state and verifies webhook signatures before idempotent fulfillment.
+Server-owned amount/currency and order ownership checks are retained. The SDK has
+`MaxRetries=0`; no retry/security/fulfillment changes. The immutable usage ledger's
+refund/revocation rules (BR-07) are not an implemented refund API. No automated refund,
+invoice or tax issuance is claimed; those policies require separate owner/legal
+approval where applicable. `Features__Payment=false` blocks new checkout after
+recreation, **not** callback/query reconciliation for existing orders. Keep valid
+payOS credentials for outstanding orders even during an emergency checkout pause.
+
+DEC-04 is a prepared Linux amd64 VPS/GHCR/SSH/Caddy deployment path using Neon/R2/
+Resend and the approved domain, not evidence of accounts, DNS or deployment actions.
+See [VPS production runbook](VPS_PRODUCTION_DEPLOYMENT.md) for the operator gates.

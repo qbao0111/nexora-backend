@@ -16,7 +16,7 @@ public static class PayosConfigurationValidation
 {
     public const int MaximumCallbackUrlLength = 2048;
 
-    public static bool IsValidCallbackUrl(string? value)
+    public static bool IsValidCallbackUrl(string? value, bool allowLoopback = true)
     {
         if (string.IsNullOrWhiteSpace(value) ||
             value.Length > MaximumCallbackUrlLength ||
@@ -28,7 +28,7 @@ public static class PayosConfigurationValidation
             !string.IsNullOrEmpty(uri.Fragment))
             return false;
 
-        return uri.Scheme == Uri.UriSchemeHttps ||
-            (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback);
+        return (uri.Scheme == Uri.UriSchemeHttps && (allowLoopback || !uri.IsLoopback)) ||
+            (allowLoopback && uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback);
     }
 }

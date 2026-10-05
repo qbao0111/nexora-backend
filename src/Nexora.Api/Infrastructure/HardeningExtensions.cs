@@ -158,7 +158,8 @@ public sealed class FeatureGateMiddleware(RequestDelegate next, IOptions<Feature
     {
         if (!options.Upload && path == "/api/v1/uploads/presign") return "upload";
         if (!options.Payment && path == "/api/v1/checkout-sessions") return "payment";
-        if (!options.Ai && (path == "/api/v1/resume-analyses" || path.StartsWithSegments("/api/v1/interviews"))) return "AI";
+        if (!options.Ai && (path == "/api/v1/resume-analyses" || path.StartsWithSegments("/api/v1/interviews") ||
+            path.StartsWithSegments("/api/v1/star-attempts") || path.StartsWithSegments("/api/v1/scenario-attempts"))) return "AI";
         if (!options.Speech && path.StartsWithSegments("/api/v1/speech")) return "speech";
         return null;
     }
