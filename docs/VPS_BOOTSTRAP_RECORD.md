@@ -3,9 +3,11 @@
 ## Status and evidence
 
 - Updated: 2026-10-05 13:44:31 UTC (20:44:31 Asia/Saigon).
-- Phase: **BLOCKED_GHCR_ACCESS**. Authorized root preparation completed; image
-  visibility/existence/authentication and safe publish-only preparation remain
-  pending. Render same-production-DB Worker still prohibits VPS application startup.
+- Phase: **GHCR_IMAGE_PUBLISH_PREP_REQUIRED**. Operator completed deploy GHCR
+  login; credential ownership/read scope verified. The owner package listing does
+  not include nexora-backend and exact-main manifest is unavailable. A separately
+  authorized safe publish-only path is needed. Render same-production-DB Worker
+  still prohibits VPS application startup.
   Same-database Render Worker still prohibits VPS application startup.
 - Repository: `qbao0111/nexora-backend`.
 - Current reviewed main: `6d20de4392ca237457c27d310c3746b2ad07ee2d`.
@@ -76,8 +78,8 @@ Expected settings are **not** verification results.
 | Caddy | v2.11.7 official apt package; enabled/active; package-default HTTP site only |
 | Nexora Caddy config | `/etc/caddy/Caddyfile.nexora.staged`, root:root 644; validate PASS, NOT activated |
 | Firewall | UFW active, deny incoming/routed, allow outgoing; IPv4/IPv6 TCP 22/80/443 allowed |
-| GHCR package visibility / exact SHA image existence | Not verified |
-| GHCR VPS pull authentication | Not configured/tested |
+| GHCR package visibility / exact SHA image existence | Not listed in authenticated owner's container packages; exact-main registry manifest check HTTP 404; visibility not inferred |
+| GHCR VPS pull authentication | Operator login complete; qbao0111 identity and read:packages verified; config directory 700/file 600 |
 | Exact deployed main SHA | None |
 | Container health / restart count / runtime non-root user | Not tested |
 | API process / Worker process | Not started or verified |
@@ -374,9 +376,15 @@ No root/password SSH policy was changed and deploy remains denied sudo.
    `ep-muddy-poetry-b3wyjpga` endpoint (pooler suffix normalized). This verifies the
    supplied endpoint mapping, not an independent Neon management-plane branch audit.
    No connection string, password, raw errors or env contents were returned.
-9. GHCR remains blocked: authenticated package lookup 404 is inconclusive with
-   current scopes; anonymous registry probe 403; exact SHA/digest unverified. No
-   registry login/pull/publish, workflow change or deployment-gate enablement.
+9. Initial GHCR checks lacked access. After operator completed deploy Docker login,
+   server-side credential handling verified GitHub identity qbao0111 and read:packages
+   scope without downloading/printing credentials. Complete authenticated owner
+   container-package listing did not include nexora-backend; authenticated exact-main
+   manifest check returned 404. No public/private visibility inferred from 404 alone.
+   Credential config is deploy:deploy, directory 700/file 600. No image pull/publish,
+   new workflow or deployment-gate enablement. **GHCR_IMAGE_PUBLISH_PREP_REQUIRED**:
+   operator must approve a safe publish-only path before image creation; read-only
+   VPS credential cannot publish and will not be broadened for that purpose.
 10. Render untouched: operator reports Auto-Deploy off, API/Worker still running
     against the same DB. No VPS Nexora containers (running or stopped), application
     startup, EF bundle execution or DNS change. Docker daemon permissions for deploy
