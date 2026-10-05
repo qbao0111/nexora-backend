@@ -3,8 +3,9 @@
 ## Status and evidence
 
 - Updated: 2026-10-05 13:02:27 UTC (GitHub environment created at 12:39:29 UTC).
-- Phase: **ENV_FILE_READY_FOR_OPERATOR_INPUT**; deployment blocked on operator
-  configuration. SSH preparation and empty-env provisioning are complete.
+- Phase: **BLOCKED_INFRA_FAILURE** (deployment safety conflict, not an observed
+  VPS runtime failure). Operator completed env input; same-database Render Worker
+  remains running, so VPS startup is prohibited pending explicit coordination.
 - Repository: `qbao0111/nexora-backend`.
 - Reviewed main: `d7b24a6852fea3aeed91eb8691bbe3faeab2b755`.
 - [PR #126](https://github.com/qbao0111/nexora-backend/pull/126): merged at
@@ -62,7 +63,7 @@ Expected settings are **not** verification results.
 | VPS host public key SHA256 fingerprint | Recorded below, matched trusted operator root-session screenshots |
 | Deploy SSH using pinned host key | PASS: BatchMode, IdentitiesOnly, StrictHostKeyChecking=yes |
 | `/opt/nexora` and reviewed Compose/script | deploy:deploy mode 700 directory; executable deploy.sh 700, Compose 600 |
-| `/opt/nexora/.env.production` | Created with empty credentials; deploy:deploy mode 600 verified |
+| `/opt/nexora/.env.production` | Operator populated; deploy:deploy mode 600 verified; required keys SET |
 | `/root/nexora-secret-backup` and README | Not created; mode not verified |
 | Private recovery files | Local dedicated SSH key outside git with restricted ACL; root-only VPS backup pending |
 | GHCR package visibility / exact SHA image existence | Not verified |
@@ -74,7 +75,7 @@ Expected settings are **not** verification results.
 | Migrations / intended Neon production-v2 identity | Not run/verified |
 | Production Swagger 404 | Not tested on VPS |
 | Provider startup validation | Not tested on VPS |
-| Render Worker database overlap | Unresolved; must check before VPS Worker startup |
+| Render Worker database overlap | Operator confirms Render Worker is running on the same production-v2 DB; BLOCKS VPS startup |
 | DNS cutover | **NOT PERFORMED** |
 | Render changes | **NONE** |
 
@@ -98,6 +99,17 @@ Compose/script copied from the reviewed main; remote SHA256 checksums:
 No container was running at the initial automated inspection. The operator's
 Docker installation reported a pending kernel reboot; no reboot was performed.
 
+After the operator confirmed env input was complete, a metadata-only validation
+script checked required keys without printing any values. DB, JWT, R2, Resend,
+DeepSeek, payOS and Azure Speech required keys were all `SET`. Speech was enabled
+by the operator. Production hosting modes, provider selectors and www/apex CORS
+matched the requested configuration. This proves presence only, not credential
+validity, JWT/Data Protection continuity, intended database identity or provider
+connectivity. Env contents were never printed or downloaded. No app was started.
+The private metadata-only helper is `/opt/nexora/validate-vps-env.sh`, mode `700`.
+Main remained `d7b24a6852fea3aeed91eb8691bbe3faeab2b755`; its successful Backend CI
+run above was rechecked before stopping on the Worker conflict.
+
 Intended image reference for the main inspected in this record:
 `ghcr.io/qbao0111/nexora-backend:d7b24a6852fea3aeed91eb8691bbe3faeab2b755`.
 This does not assert that the image exists or has been pulled. The current CLI
@@ -114,9 +126,10 @@ VPS binding, user, migrations and readiness remain unverified.
 
 ## Bootstrap procedure and current stop boundary
 
-Steps 1 through 5 below have completed except the root-only recovery backup.
-The current stop is step 6: **ENV_FILE_READY_FOR_OPERATOR_INPUT**. No application
-startup, production migration or deployment command has been executed. A privileged
+Steps 1 through 6 below have completed except the root-only recovery backup.
+The current stop is step 8: the operator confirms an active Render Worker on the
+same database. No application startup, production migration or deployment command
+has been executed. A privileged
 operator still needs to arrange the root-only recovery copy; deploy has no sudo and
 no additional root access or privilege changes were introduced to work around that.
 
