@@ -1,14 +1,18 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Nexora.Business.Ai;
 using Nexora.Business.Billing;
 using Nexora.Business.Practice;
 using Nexora.Data.Billing;
 using Nexora.Data.Persistence;
+using Npgsql;
 
 namespace Nexora.IntegrationTests;
 
@@ -16,12 +20,28 @@ namespace Nexora.IntegrationTests;
 public sealed class AsyncInterviewApiTests
 {
     [PostgresFact]
-    public async Task CompletingDuringFinalEvaluationQueuesOneReportOnPostgres()
+    public Task CompletingDuringFinalEvaluationQueuesOneReportOnPostgres() => RunFinalEvaluationAsync(true, false);
+
+    [PostgresFact]
+    public Task QueueSaturationAfterPaidEvaluationPreservesResultAndRecoversReportOnPostgres() => RunFinalEvaluationAsync(true, true);
+
+    [Fact]
+    public Task QueueSaturationAfterPaidEvaluationPreservesResultAndRecoversReport() => RunFinalEvaluationAsync(false, true);
+
+    [PostgresFact]
+    public Task WorkerRestartAfterCheckpointRecoversAnswerWithoutAnotherPaidCallOnPostgres() => RunFinalEvaluationAsync(true, false, true);
+
+    [Fact]
+    public Task WorkerRestartAfterCheckpointRecoversAnswerWithoutAnotherPaidCall() => RunFinalEvaluationAsync(false, false, true);
+
+    private static async Task RunFinalEvaluationAsync(bool postgres, bool saturate, bool failPersistence = false)
     {
         const string finalContent = "Tôi phân tích nguyên nhân và theo dõi kết quả.";
         var aiProvider = new TestAiProvider();
-        using var factory = NexoraApiFactory.CreatePostgres(
-            Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!, aiProvider);
+        var failure = new FailReadyAnswerOnce();
+        using var factory = postgres ? NexoraApiFactory.CreatePostgres(
+            Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!, aiProvider, failure)
+            : new NexoraApiFactory(aiProvider, null, dbInterceptors: [failure]);
         factory.InitializeDatabase();
         using var client = factory.CreateHttpsClient();
         var account = await RegisterAsync(client, "async-report-race-postgres@example.test");
@@ -42,6 +62,16 @@ public sealed class AsyncInterviewApiTests
         {
             entered.SetResult();
             await release.Task.WaitAsync(token);
+            failure.Armed = failPersistence;
+            if (saturate)
+            {
+                factory.Services.GetRequiredService<IOptions<ProviderBudgetOptions>>().Value.MaximumQueuedJobs = 1;
+                using var scope = factory.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+                db.OutboxEvents.Add(new OutboxEvent { Type = "InterviewStartRequested", AggregateId = Guid.NewGuid(),
+                    Status = BillingValues.Pending, Payload = "{}", CreatedAt = DateTimeOffset.UtcNow });
+                await db.SaveChangesAsync(token);
+            }
             return new AnswerEvaluation(
                 [
                     new RubricScore("correctness", 75, finalContent),
@@ -72,17 +102,76 @@ public sealed class AsyncInterviewApiTests
         {
             release.TrySetResult();
         }
-        await evaluation;
+        if (failPersistence)
+        {
+            await Assert.ThrowsAsync<DbUpdateException>(() => evaluation);
+            using var recoveryScope = factory.Services.CreateScope();
+            var recoveryDb = recoveryScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(1, failure.Failures);
+            var processing = await recoveryDb.InterviewAnswers.SingleAsync(item => item.InterviewSessionId == interviewId &&
+                item.EvaluationStatus == InterviewAnswerEvaluationStates.Processing);
+            var jobId = await recoveryDb.OutboxEvents.Where(job => job.AggregateId == processing.Id && job.Type == "InterviewAnswerEvaluationRequested")
+                .Select(job => job.Id).SingleAsync();
+            var checkpoint = await recoveryDb.ProviderCallReservations.SingleAsync(item => item.Purpose == AiPurposes.InterviewEvaluate && item.JobId == jobId);
+            Assert.NotNull(checkpoint.ResultJson);
+            await recoveryDb.OutboxEvents.Where(item => item.Status == BillingValues.Processing)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.ProcessedAt, DateTimeOffset.UtcNow.AddMinutes(-11)));
+            var calls = aiProvider.GetCallCount(AiPurposes.InterviewEvaluate);
+            await ProcessJobsAsync(factory);
+            Assert.Equal(calls, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+        }
+        else await evaluation;
+        var paidEvaluationCalls = aiProvider.GetCallCount(AiPurposes.InterviewEvaluate);
 
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-            Assert.Equal(1, await db.OutboxEvents.CountAsync(item =>
+            Assert.Equal(saturate ? 0 : 1, await db.OutboxEvents.CountAsync(item =>
                 item.Type == "InterviewReportRequested" && item.AggregateId == interviewId));
+            Assert.All(await db.InterviewAnswers.Where(item => item.InterviewSessionId == interviewId).ToArrayAsync(), answer =>
+            {
+                Assert.Equal(InterviewAnswerEvaluationStates.Ready, answer.EvaluationStatus);
+                Assert.NotNull(answer.Evaluation);
+            });
+            var answerIds = await db.InterviewAnswers.Where(item => item.InterviewSessionId == interviewId).Select(item => item.Id).ToArrayAsync();
+            Assert.All(await db.OutboxEvents.Where(item => item.Type == "InterviewAnswerEvaluationRequested" && answerIds.Contains(item.AggregateId))
+                .ToArrayAsync(), job => Assert.Equal(BillingValues.Processed, job.Status));
+            if (saturate)
+            {
+                // Remove the synthetic load; use a NEW worker scope to recover the
+                // durable scheduling intent without user retry or another AI evaluation.
+                await db.OutboxEvents.Where(item => item.Type == "InterviewStartRequested" && item.Status == BillingValues.Pending)
+                    .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.Status, BillingValues.Processed));
+                factory.Services.GetRequiredService<IOptions<ProviderBudgetOptions>>().Value.MaximumQueuedJobs = 500;
+            }
         }
         await ProcessJobsAsync(factory);
         Assert.Equal(PracticeValues.Completed,
             (await GetInterviewAsync(client, interviewId)).GetProperty("status").GetString());
+        await ProcessJobsAsync(factory);
+        Assert.Equal(paidEvaluationCalls, aiProvider.GetCallCount(AiPurposes.InterviewEvaluate));
+        using var verifyScope = factory.Services.CreateScope();
+        Assert.Equal(1, await verifyScope.ServiceProvider.GetRequiredService<NexoraDbContext>().OutboxEvents.CountAsync(item =>
+            item.Type == "InterviewReportRequested" && item.AggregateId == interviewId));
+    }
+
+    private sealed class FailReadyAnswerOnce : DbCommandInterceptor
+    {
+        public bool Armed { get; set; }
+        public int Failures { get; private set; }
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (Armed && command.CommandText.Contains("UPDATE", StringComparison.OrdinalIgnoreCase) &&
+                command.CommandText.Contains("interview_answers", StringComparison.Ordinal) &&
+                command.Parameters.Cast<DbParameter>().Any(parameter => Equals(parameter.Value, InterviewAnswerEvaluationStates.Ready)))
+            {
+                Armed = false;
+                Failures++;
+                throw new NpgsqlException("Controlled answer persistence outage", new IOException("Controlled reset"));
+            }
+            return ValueTask.FromResult(result);
+        }
     }
 
     [PostgresFact]

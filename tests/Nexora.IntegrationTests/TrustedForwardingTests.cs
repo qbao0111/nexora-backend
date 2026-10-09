@@ -1,10 +1,15 @@
+using System.Data.Common;
 using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Nexora.Api.Infrastructure;
@@ -13,6 +18,60 @@ namespace Nexora.IntegrationTests;
 
 public sealed class TrustedForwardingTests
 {
+    [Fact]
+    public async Task JwtFloodIsThrottledBeforeSecurityStampDatabaseLookup()
+    {
+        var counter = new AuthenticationQueryCounter();
+        using var factory = new NexoraApiFactory(null, new Dictionary<string, string?>
+        {
+            ["RateLimits:Burst:PermitLimit"] = "20"
+        }, services => services.AddSingleton<IStartupFilter, UntrustedPeerFilter>(), [counter]);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        const string email = "jwt-flood@example.test";
+        using var register = await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password = "Strong!Pass123", displayName = "Flood test" });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+        await TestEmailInbox.VerifyAsync(client, email);
+        using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Strong!Pass123" });
+        using var body = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", body.RootElement.GetProperty("data").GetProperty("accessToken").GetString());
+        counter.Armed = true;
+        var reachedLimit = false;
+        var atLimit = 0;
+        for (var index = 0; index < 40; index++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/me");
+            request.Headers.Add("X-Forwarded-For", $"198.51.100.{index + 1}");
+            request.Headers.Add("CF-Connecting-IP", $"192.0.2.{index + 1}");
+            using var response = await client.SendAsync(request);
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                Assert.NotNull(response.Headers.RetryAfter);
+                if (!reachedLimit) { reachedLimit = true; atLimit = counter.Queries; }
+                Assert.Equal(atLimit, counter.Queries);
+            }
+            else
+            {
+                Assert.False(reachedLimit);
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            }
+        }
+        Assert.True(reachedLimit);
+        Assert.True(atLimit > 0);
+    }
+
+    private sealed class AuthenticationQueryCounter : DbCommandInterceptor
+    {
+        public bool Armed { get; set; }
+        public int Queries { get; private set; }
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (Armed && command.CommandText.Contains("asp_net_users", StringComparison.Ordinal)) Queries++;
+            return ValueTask.FromResult(result);
+        }
+    }
+
     [Fact]
     public async Task AuthenticatedUsersBehindSameNatHaveIndependentExpensiveOperationLimits()
     {

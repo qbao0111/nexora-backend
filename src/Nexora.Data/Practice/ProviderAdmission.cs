@@ -41,7 +41,11 @@ public sealed partial class ProviderAdmission(
 
             // Only operational IDs and bounded counters are read, never candidate text.
             // SQLite cannot translate DateTimeOffset comparison; PostgreSQL stays indexed.
-            var query = db.ProviderCallReservations.AsNoTracking();
+            var query = db.ProviderCallReservations.AsNoTracking().Select(item => new
+            {
+                item.UserId, item.Purpose, item.OperationKey, item.StartedAt, item.CompletedAt,
+                item.LeaseExpiresAt, item.CooldownUntil, item.ReservedTokens
+            });
             var records = postgres
                 ? await query.Where(item => item.StartedAt >= day || item.StartedAt >= hour ||
                     (item.CompletedAt == null && item.LeaseExpiresAt > now)).ToArrayAsync(cancellationToken)
@@ -88,14 +92,85 @@ public sealed partial class ProviderAdmission(
         finally { if (!postgres) TestGate.Release(); }
     }
 
-    public async Task CompleteAsync(Guid reservationId, AiTokenUsage? usage, CancellationToken cancellationToken, AiProviderFailureKind? failureKind = null)
+    public async Task<string?> ReadResultAsync(ProviderAdmissionRequest request, string fingerprint, CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
-        var reservation = await db.ProviderCallReservations.SingleAsync(item => item.Id == reservationId, cancellationToken);
+        var record = await db.ProviderCallReservations.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.UserId == request.UserId && item.JobId == request.JobId && item.Purpose == request.Purpose &&
+            item.OperationKey == request.OperationKey && item.Attempt == request.Attempt, cancellationToken);
+        if (record?.ResultFingerprint is not null && record.ResultFingerprint != fingerprint) throw Denied("checkpoint_context_changed");
+        if (record?.CompletedAt is not null && Enum.TryParse<AiProviderFailureKind>(record.FailureKind, out var failure))
+            throw new AiProviderException(failure, "Previously recorded provider failure.",
+                retryHint: Enum.TryParse<AiProviderRetryHint>(record.FailureRetryHint, out var hint) ? hint : AiProviderRetryHint.None);
+        if (record?.ResultJson is null) return null;
+        if (record.ResultFingerprint != fingerprint) throw Denied("checkpoint_context_changed");
+        return record.ResultJson;
+    }
+
+    public Task CompleteAsync(Guid reservationId, AiTokenUsage? usage, CancellationToken cancellationToken, AiProviderFailureKind? failureKind = null) =>
+        ReconcileCompletionAsync(reservationId, usage, failureKind, null, null, null, cancellationToken);
+
+    public Task CompleteResultAsync(Guid reservationId, string fingerprint, string resultJson, AiTokenUsage? usage, CancellationToken cancellationToken) =>
+        ReconcileCompletionAsync(reservationId, usage, null, fingerprint, resultJson, null, cancellationToken);
+
+    public Task CompleteFailureAsync(Guid reservationId, string fingerprint, AiTokenUsage? usage, AiProviderFailureKind failureKind, AiProviderRetryHint retryHint, CancellationToken cancellationToken) =>
+        ReconcileCompletionAsync(reservationId, usage, failureKind, fingerprint, null, retryHint, cancellationToken);
+
+    private async Task ReconcileCompletionAsync(Guid reservationId, AiTokenUsage? usage, AiProviderFailureKind? failureKind,
+        string? fingerprint, string? resultJson, AiProviderRetryHint? retryHint, CancellationToken cancellationToken)
+    {
+        var backoff = new DatabaseOutageBackoff(timeProvider);
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            try
+            {
+                await CompleteOnceAsync(reservationId, usage, failureKind, fingerprint, resultJson, retryHint, timeout.Token);
+                return;
+            }
+            catch (Exception exception) when (!cancellationToken.IsCancellationRequested &&
+                (DatabaseConnectivityFailure.IsTransient(exception) || exception is OperationCanceledException && timeout.IsCancellationRequested))
+            {
+                var (delay, report) = backoff.Next(Random.Shared.NextDouble());
+                if (report) CompletionDeferred(logger, reservationId);
+                // DB reconciliation only. Keep the successful response in memory;
+                // never re-enter GenerateStructuredAsync while storage is unavailable.
+                await Task.Delay(delay, timeProvider, cancellationToken);
+            }
+        }
+    }
+
+    private async Task CompleteOnceAsync(Guid reservationId, AiTokenUsage? usage, AiProviderFailureKind? failureKind,
+        string? fingerprint, string? resultJson, AiProviderRetryHint? retryHint, CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var ownerId = await db.ProviderCallReservations.Where(item => item.Id == reservationId).Select(item => item.UserId).SingleAsync(cancellationToken);
+        var suppressResult = false;
+        if (resultJson is not null || fingerprint is not null)
+        {
+            // Lock owner BEFORE ledger, matching privacy purge lock order.
+            var user = db.Database.IsNpgsql()
+                ? await db.Users.FromSqlInterpolated($"SELECT * FROM asp_net_users WHERE \"Id\" = {ownerId} FOR UPDATE")
+                    .SingleOrDefaultAsync(cancellationToken)
+                : await db.Users.SingleOrDefaultAsync(item => item.Id == ownerId, cancellationToken);
+            suppressResult = user?.DeletionRequestedAt is not null || user?.DeletedAt is not null;
+        }
+        var reservation = db.Database.IsNpgsql()
+            ? await db.ProviderCallReservations.FromSqlInterpolated(
+                $"SELECT * FROM provider_call_reservations WHERE \"Id\" = {reservationId} FOR UPDATE").SingleAsync(cancellationToken)
+            : await db.ProviderCallReservations.SingleAsync(item => item.Id == reservationId, cancellationToken);
         if (reservation.CompletedAt is not null) return;
+        // A late response cannot recreate private content after account deletion.
+        reservation.ResultJson = suppressResult ? null : resultJson;
+        reservation.ResultFingerprint = suppressResult ? null : fingerprint;
         reservation.CompletedAt = timeProvider.GetUtcNow();
         reservation.FailureKind = failureKind?.ToString();
+        reservation.FailureRetryHint = retryHint?.ToString();
         if (failureKind is AiProviderFailureKind.RateLimited or AiProviderFailureKind.Unavailable or AiProviderFailureKind.Timeout)
         {
             // Do not suppress the established initial + repair contract after
@@ -114,6 +189,7 @@ public sealed partial class ProviderAdmission(
             reservation.ActualCompletionTokens = usage.CompletionTokens;
         }
         await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private BusinessException Denied(string reason)
@@ -126,4 +202,6 @@ public sealed partial class ProviderAdmission(
     private static partial void Admitted(ILogger logger, string purpose, Guid jobId, int attempt, long tokens);
     [LoggerMessage(LogLevel.Warning, "Provider admission rejected reason={Reason}")]
     private static partial void Rejected(ILogger logger, string reason);
+    [LoggerMessage(LogLevel.Warning, "Provider result checkpoint deferred by database outage. reservation={ReservationId}; no additional provider call")]
+    private static partial void CompletionDeferred(ILogger logger, Guid reservationId);
 }

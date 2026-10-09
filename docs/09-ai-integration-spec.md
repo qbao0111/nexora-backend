@@ -236,6 +236,15 @@ actual DeepSeek usage is recorded where available without refunding conservative
 reservations. Admission-authority failure blocks new paid calls. These operational
 ceilings are separate from subscription quota and monetary provider pricing.
 
+PR129 corrective: successful typed responses are checkpointed with ledger completion;
+transient storage failure reconciles only DB writes (fresh scopes, 5s attempt timeout,
+5–60s backoff), never regenerates a successful paid call. Reclaimed jobs revalidate
+matching checkpoints; changed request fingerprints and uncheckpointed ambiguous
+attempts fail closed. A crash before the first durable checkpoint remains a disclosed
+recovery limitation. Final-answer queue saturation preserves ready evaluations;
+completing/all-ready sessions without an existing report job are reconciled on Worker
+polls. Failed reports retain explicit, free/idempotent product retry behavior.
+
 The percentage alerts and 10-failures/5-minutes values in the original planning text
 below are deferred financial-policy proposals, **not the current runtime defaults**.
 Current configurable cooldown defaults are three transport/429 failures in one minute,

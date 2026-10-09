@@ -16,4 +16,8 @@ public sealed class ProviderCallReservation
     public DateTimeOffset? CompletedAt { get; set; }
     public string? FailureKind { get; set; }
     public DateTimeOffset? CooldownUntil { get; set; }
+    // Private typed response checkpoint, never provider HTTP payload or API output.
+    public string? ResultJson { get; set; }
+    public string? ResultFingerprint { get; set; }
+    public string? FailureRetryHint { get; set; }
 }

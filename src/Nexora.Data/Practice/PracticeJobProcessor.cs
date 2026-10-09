@@ -21,12 +21,14 @@ public sealed partial class PracticeJobProcessor(
     InterviewQuestionPlanJobHandler interviewQuestionPlanJobHandler,
     InterviewAnswerEvaluationJobHandler interviewAnswerEvaluationJobHandler,
     InterviewReportJobHandler interviewReportJobHandler,
+    InterviewReportCoordinator reportCoordinator,
     TimeProvider timeProvider,
     ILogger<PracticeService> logger) : IPracticeJobProcessor
 {
     public async Task<int> ProcessPendingAsync(CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
+        await reportCoordinator.ReconcileAsync(now, cancellationToken);
         var staleBefore = now.AddMinutes(-10);
         var relevant = dbContext.OutboxEvents.AsNoTracking().Where(item =>
             item.Type == "ResumeExtractionRequested" || item.Type == "ResumeAnalysisRequested" ||
@@ -71,6 +73,9 @@ public sealed partial class PracticeJobProcessor(
             }
             catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
             {
+                // Leave the durable claim recoverable; do not turn a DB outage
+                // after provider success into a permanent processing failure.
+                if (DatabaseConnectivityFailure.IsTransient(exception)) throw;
                 if (job.Type == "ResumeExtractionRequested")
                     await resumeExtractionJobHandler.FailAsync(job, cancellationToken);
                 else if (job.Type == "ResumeAnalysisRequested")

@@ -884,6 +884,15 @@ POST /api/v1/scenarios/{scenarioId}/retry
 
 ## State machines
 
+Report scheduling under operational queue saturation: a successfully evaluated answer
+stays `ready`; its evaluation job is processed, not failed because auto-report enqueue
+is full. A `completing` session with all-ready answers and no prior report job is a
+durable scheduling intent, reconciled by Worker when capacity returns. REST resultState
+remains `processing` while waiting (reportState can remain `none` until enqueue).
+No user retry or extra interview quota is required. Explicit retry endpoints retain
+their existing idempotency/capacity rejection semantics; failed reports are not
+silently retried. Mobile response shapes and Azure Speech issuance contracts are unchanged.
+
 ```text
 Order: processing -> pending -> paid -> fulfilled
        pending -> expired | failed

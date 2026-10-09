@@ -40,8 +40,11 @@ public sealed class ProviderAdmissionTests
         var executor = factory.Services.GetRequiredService<IStructuredAiExecutor>();
         var context = new AiOperationContext("first-correlation", Guid.NewGuid(), JobId: Guid.NewGuid());
         await executor.ExecuteAsync(AiOperations.InterviewFirstQuestion, "question-topic: technical", context, CancellationToken.None);
+        var replay = await executor.ExecuteAsync(AiOperations.InterviewFirstQuestion,
+            "question-topic: technical", context with { CorrelationId = "another-correlation" }, CancellationToken.None);
+        Assert.NotNull(replay.Value);
         await Assert.ThrowsAsync<BusinessException>(() => executor.ExecuteAsync(AiOperations.InterviewFirstQuestion,
-            "question-topic: technical", context with { CorrelationId = "another-correlation" }, CancellationToken.None));
+            "question-topic: scenario", context, CancellationToken.None));
         Assert.Equal(1, provider.TotalCalls);
     }
     [PostgresFact]
@@ -54,15 +57,41 @@ public sealed class ProviderAdmissionTests
         var baselineCount = await db.FeatureDefinitions.CountAsync();
         Assert.True(baselineCount > 0);
         var migrations = db.Database.GetMigrations().ToArray();
-        Assert.EndsWith("_AddProviderCallReservations", migrations[^1]);
+        Assert.EndsWith("_AddProviderResultCheckpoints", migrations[^1]);
         var migrator = db.GetService<IMigrator>();
-        await migrator.MigrateAsync(migrations[^2]);
+        await migrator.MigrateAsync(migrations[^3]);
         Assert.Equal(baselineCount, await db.FeatureDefinitions.CountAsync());
         await migrator.MigrateAsync();
         Assert.Equal(baselineCount, await db.FeatureDefinitions.CountAsync());
         Assert.Equal(0, await db.ProviderCallReservations.CountAsync());
         Assert.False(db.Database.HasPendingModelChanges());
     }
+    [PostgresFact]
+    public async Task CheckpointMigrationPreservesExistingChargedReservationOnPostgres()
+    {
+        using var factory = NexoraApiFactory.CreatePostgres(Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!);
+        factory.InitializeDatabase();
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+        var migrations = db.Database.GetMigrations().ToArray();
+        var migrator = db.GetService<IMigrator>();
+        await migrator.MigrateAsync(migrations[^2]);
+        var id = Guid.NewGuid();
+        var user = Guid.NewGuid();
+        var job = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO provider_call_reservations ("Id", "UserId", "JobId", "Purpose", "OperationKey", "Attempt", "ReservedTokens", "StartedAt", "LeaseExpiresAt")
+            VALUES ({id}, {user}, {job}, 'interview.evaluate', 'legacy', 1, 123, {now}, {now})
+            """);
+        await migrator.MigrateAsync();
+        var reservation = await db.ProviderCallReservations.SingleAsync(item => item.Id == id);
+        Assert.Equal(123, reservation.ReservedTokens);
+        Assert.Null(reservation.ResultJson);
+        Assert.Null(reservation.ResultFingerprint);
+        Assert.False(db.Database.HasPendingModelChanges());
+    }
+
     [PostgresFact]
     public async Task PostgresConcurrentAdmissionAndRestartCannotExceedDurableLimits()
     {

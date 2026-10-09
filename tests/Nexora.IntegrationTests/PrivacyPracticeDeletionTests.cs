@@ -212,6 +212,12 @@ public sealed class PrivacyPracticeDeletionTests
     {
         var db = services.GetRequiredService<NexoraDbContext>();
         var entitlement = await db.Entitlements.SingleAsync(item => item.UserId == userId);
+        db.ProviderCallReservations.Add(new ProviderCallReservation
+        {
+            UserId = userId, JobId = Guid.NewGuid(), Purpose = "privacy-test", OperationKey = "checkpoint", Attempt = 1,
+            ReservedTokens = 123, StartedAt = DateTimeOffset.UtcNow, LeaseExpiresAt = DateTimeOffset.UtcNow,
+            CompletedAt = DateTimeOffset.UtcNow, ResultFingerprint = "private-fingerprint", ResultJson = "{\"private\":\"candidate\"}"
+        });
         var features = await db.EntitlementFeatures.Where(item => item.EntitlementId == entitlement.Id).ToArrayAsync();
         var definitions = await db.FeatureDefinitions.Where(item => item.Code == FeatureValues.StarBuilder || item.Code == FeatureValues.Scenario).ToArrayAsync();
         foreach (var definition in definitions.Where(item => features.All(feature => feature.FeatureCode != item.Code)))
@@ -315,6 +321,12 @@ public sealed class PrivacyPracticeDeletionTests
         Assert.Empty(await db.RealtimeNotifications.Where(item => item.UserId == owner).ToArrayAsync());
         Assert.Empty(await db.IdempotencyRecords.Where(item => item.ActorId == owner).ToArrayAsync());
         Assert.Empty(await db.ContentReports.Where(item => item.ReporterUserId == owner).ToArrayAsync());
+        Assert.All(await db.ProviderCallReservations.Where(item => item.UserId == owner).ToArrayAsync(), reservation =>
+        {
+            Assert.Null(reservation.ResultJson);
+            Assert.Null(reservation.ResultFingerprint);
+            Assert.True(reservation.ReservedTokens > 0);
+        });
         Assert.DoesNotContain(await db.OutboxEvents.Select(item => item.Payload).ToArrayAsync(), value => value.Contains(owner.ToString("N"), StringComparison.Ordinal));
     }
 

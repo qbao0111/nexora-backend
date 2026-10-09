@@ -7,6 +7,11 @@ public interface IProviderAdmission
 {
     Task<Guid> ReserveAsync(ProviderAdmissionRequest request, CancellationToken cancellationToken);
     Task CompleteAsync(Guid reservationId, AiTokenUsage? usage, CancellationToken cancellationToken, AiProviderFailureKind? failureKind = null);
+    Task<string?> ReadResultAsync(ProviderAdmissionRequest request, string fingerprint, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+    Task CompleteResultAsync(Guid reservationId, string fingerprint, string resultJson, AiTokenUsage? usage, CancellationToken cancellationToken) =>
+        CompleteAsync(reservationId, usage, cancellationToken);
+    Task CompleteFailureAsync(Guid reservationId, string fingerprint, AiTokenUsage? usage, AiProviderFailureKind failureKind, AiProviderRetryHint retryHint, CancellationToken cancellationToken) =>
+        CompleteAsync(reservationId, usage, cancellationToken, failureKind);
 }
 
 public sealed record AiTokenUsage(long PromptTokens, long CompletionTokens);

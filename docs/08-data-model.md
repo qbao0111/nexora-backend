@@ -9,12 +9,22 @@ usage/entitlements. It stores internal user/job IDs, purpose, hashed logical-ope
 key, attempt, reserved token units, nullable actual usage, start/lease/completion times,
 failure class and cooldown expiry. Unique `(JobId, Purpose, OperationKey, Attempt)`
 prevents reauthorizing an ambiguous paid attempt; indexes cover StartedAt and
-`(UserId, StartedAt)`. No user/job FK cascade or candidate text is stored.
+`(UserId, StartedAt)`. No user/job FK cascade is added.
 
 Migration `20261009084857_AddProviderCallReservations` adds only this table/indexes.
 Lease expiry frees concurrency, never spending/replay rights. Account deletion does
-not reset this ledger; automatic retention is not added in this hotfix. Retain rows
+not reset charged counters; automatic retention is not added in this hotfix. Retain rows
 on application rollback. See [admission and operational limits](security/ai-speech-abuse-audit.md).
+
+Corrective migration `20261009093710_AddProviderResultCheckpoints` adds nullable
+`ResultJson` (private typed AI response), `ResultFingerprint` (SHA256 binding), and
+`FailureRetryHint` (bounded failure enum, not provider text).
+Checkpoint completion is atomic with usage/completion accounting and supports
+same-attempt replay/revalidation without another provider call. Recorded failure hints
+also reconstruct the existing second-attempt request on restart. This is candidate-
+derived personal data, not an HTTP provider envelope; no API DTO/log exposes it.
+Privacy deletion clears both checkpoint columns but retains the no-refund ledger.
+Owner-before-ledger locks prevent late responses from restoring purged content.
 
 `retention_checkpoints` contains one fixed ID=1 row with durable next-run time, latest bounded counters and consecutive failure count. `retention_holds` contains opaque nullable UserId (null=global), constrained reason code, creation/release timestamps and a restrictive user FK. The new `PrivacyRetentionLifecycle` migration adds only these tables plus stable cleanup indexes on external verification expiry/ID and privacy-request status/completion/ID. No existing personal or financial row is purged by the migration. See [retention inventory/runbook](privacy-retention.md) for eligibility, holds and disabled-by-default controls; no automatic 90-day financial/usage purge exists.
 

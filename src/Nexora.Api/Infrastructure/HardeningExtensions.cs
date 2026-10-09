@@ -71,32 +71,9 @@ public static class HardeningExtensions
             throw new InvalidOperationException("Speech:MaximumSessionMinutes must be between 15 and 480.");
         services.AddOptions<FeatureOptions>().Bind(configuration.GetSection(FeatureOptions.SectionName));
         services.AddSingleton<LoginEmailRateLimiter>();
+        services.AddSingleton<PreAuthenticationRateLimiter>();
         services.AddRateLimiter(options =>
         {
-            if (!configuration.GetValue<bool>("RateLimits:Disabled"))
-            {
-                options.GlobalLimiter = PartitionedRateLimiter.CreateChained(
-                    PartitionedRateLimiter.Create<HttpContext, string>(context =>
-                        context.Request.Path.StartsWithSegments("/api/v1/auth/refresh") ||
-                        context.Request.Path.StartsWithSegments("/api/v1/auth/mobile/refresh")
-                            ? RateLimitPartition.GetFixedWindowLimiter(ByIp(context), _ => new FixedWindowRateLimiterOptions
-                            {
-                                PermitLimit = configuration.GetValue("RateLimits:RefreshIp:PermitLimit", 120),
-                                Window = TimeSpan.FromHours(1), QueueLimit = 0, AutoReplenishment = true
-                            })
-                            : RateLimitPartition.GetNoLimiter("not-refresh")),
-                    PartitionedRateLimiter.Create<HttpContext, string>(context =>
-                        RateLimitPartition.GetFixedWindowLimiter(ByIp(context), _ => new FixedWindowRateLimiterOptions
-                        {
-                            PermitLimit = configuration.GetValue("RateLimits:Burst:PermitLimit", 300),
-                            Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true
-                        })),
-                    PartitionedRateLimiter.Create<HttpContext, string>(_ =>
-                        RateLimitPartition.GetConcurrencyLimiter("global", _ => new ConcurrencyLimiterOptions
-                        {
-                            PermitLimit = configuration.GetValue("RateLimits:ConcurrentRequests", 100), QueueLimit = 0
-                        })));
-            }
             AddFixedWindow(options, configuration, RateLimitPolicies.Authentication, "Authentication", 5, 15, ByIp);
             AddFixedWindow(options, configuration, RateLimitPolicies.PasswordRecovery, "PasswordRecovery", 5, 15, ByIp);
             AddFixedWindow(options, configuration, RateLimitPolicies.Refresh, "Refresh", 30, 60, ByRefreshSession);

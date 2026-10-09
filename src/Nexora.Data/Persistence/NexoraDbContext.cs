@@ -72,6 +72,8 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
             entity.Property(item => item.Purpose).HasMaxLength(64);
             entity.Property(item => item.OperationKey).HasMaxLength(64);
             entity.Property(item => item.FailureKind).HasMaxLength(32);
+            entity.Property(item => item.ResultFingerprint).HasMaxLength(64);
+            entity.Property(item => item.FailureRetryHint).HasMaxLength(32);
             entity.HasIndex(item => new { item.JobId, item.Purpose, item.OperationKey, item.Attempt }).IsUnique();
             entity.HasIndex(item => item.StartedAt);
             entity.HasIndex(item => new { item.UserId, item.StartedAt });

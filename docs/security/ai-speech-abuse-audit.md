@@ -58,10 +58,10 @@ The concurrency limit is process-wide HTTP occupancy, **not a durable per-user
 WebSocket connection/session counter**; long-lived connections consume permits.
 
 Middleware: bounded forwarding → framework trusted forwarding → correlation/telemetry
-→ exception/JSON bounds → CORS → authentication → rate limiter → authorization →
-feature gate. Consequently JWT security-stamp DB checks occur before HTTP rate
-limiting; origin/edge pre-auth flooding remains an operator control, not fully solved
-by the process limiter. Shared NATs share anonymous/burst limits, but authenticated
+→ exception/JSON bounds → CORS → pre-auth IP burst/refresh/concurrency gate →
+authentication → user/endpoint rate limiter → authorization → feature gate.
+Rejected pre-auth requests do not reach JWT security-stamp DB lookups. This is a
+process-local bound, not distributed edge protection. Shared NATs share anonymous/burst limits, but authenticated
 paid operations retain independent user partitions. Monitor false positives.
 
 ## Endpoint → paid execution matrix
@@ -118,7 +118,7 @@ Missing usage remains unknown. Gemini does not currently reconcile actual usage.
 
 Timeout, invalid output, cancellation, ambiguous transport and downstream save failure
 never refund provider budget. A three-minute lease releases **concurrency only** after
-crash, not charge or replay rights. Old attempt reexecution fails closed rather than
+crash, not charge or replay rights. An attempt without a successful checkpoint fails closed rather than
 guessing whether a provider charged. This can require an operator recovery decision;
 it must not silently refund or replay an ambiguous call. Completion is idempotent.
 Global cooldown rejects new AI admissions; the configured default does not suppress
@@ -128,15 +128,52 @@ may already have admitted up to GlobalInFlight calls before cooldown is observed
 Queue lock `782346110` serializes paid enqueue transactions. Depth check and outbox
 insert commit/rollback together; saturated enqueue returns `429 AI_QUEUE_FULL` with
 Retry-After. Existing backlog is preserved, not dropped; queue cap is not a per-user
-fairness scheduler. Report auto-enqueue saturation follows existing observable job
-failure/retry recovery. Execution budget denial is observable job failure under the
+fairness scheduler. Final-answer auto-enqueue saturation detaches only the uncommitted
+report job, preserving the committed ready evaluation and processed answer job.
+The completing session plus all-ready answers is a durable scheduling intent. Each
+Worker poll reconciles up to 20 such sessions in deterministic ID order, locks each
+session, and enqueues once capacity returns. Existing report jobs (including failed)
+and completed reports exclude initial reconciliation. Explicit report retries retain
+their capacity-error/idempotency contract; failed reports are not automatically retried.
+Execution budget denial is observable job failure under the
 existing retry contract, not an unlimited new automatic retry loop.
 
 Admission DB unavailability fails closed before new provider calls. Durable rows
-contain operational IDs/counters/failure class only, no prompts, answers or CV text.
-They do not cascade on account deletion (prevents budget reset); the new ledger has no
+contain operational IDs/counters/failure class plus an optional **private typed AI
+response checkpoint**, not the provider HTTP envelope, credentials or input prompt.
+The checkpoint can contain candidate-derived personal data: no public/list/export DTO
+or log exposes it. Account deletion clears checkpoint/fingerprint in its transaction
+while retaining charged counters (prevents budget reset); the new ledger has no
 automatic retention sweep in this hotfix. A separately approved operational retention
 policy must preserve budget/replay audit needs; do not manually clear current windows.
+
+### Successful-provider-result reconciliation (PR129 corrective)
+
+Migration `20261009093710_AddProviderResultCheckpoints` adds three nullable columns only:
+`ResultJson`, `ResultFingerprint`, and `FailureRetryHint`.
+Successful typed responses and actual usage are atomically checkpointed with completion
+before domain persistence. Identity remains job/purpose/operation/attempt; a SHA256
+fingerprint binds input, instructions, schema/model/version, budget and reasoning (not
+correlation). Reclaim uses the checkpoint, re-runs semantic validation, and never makes
+a duplicate provider call. Recorded failure kind/hint reconstructs the same second-
+attempt request after restart without repeating the failed first paid call. Changed
+context fails closed; max two paid attempts remains.
+
+Completion uses fresh scopes/transactions, five-second storage-attempt timeouts and
+cancellation-aware equal-jitter 5–60s backoff for transient PostgreSQL outages. It holds
+the successful response in memory until DB recovery or worker shutdown; this is explicit
+**storage-only reconciliation**, not an adapter/provider retry. Repeated completion after
+an ambiguous DB commit is idempotent. Owner-before-ledger lock ordering matches privacy
+purge; late completion cannot recreate content for a deletion-requested account.
+Practice job connectivity failures remain reclaimable instead of marking the answer
+failed; normal ten-minute stale-claim recovery uses a new Worker scope.
+
+Residual crash window: death after a paid provider response but **before its first durable
+checkpoint** can still lose that in-memory response. With PostgreSQL unavailable no
+durable success can be promised; the pre-call reservation prevents regeneration/double
+charge, remains charged, and requires explicit recovery. No exactly-once external
+provider guarantee or unapproved file-based PII journal is claimed. Checkpoint-bearing
+rows require normal DB access/backup protections and future retention review.
 
 Telemetry: existing adapter/executor logs record purpose/model/request correlation,
 attempt/duration/token usage/failure; admission records job/user internal reference,
@@ -196,6 +233,35 @@ trust, raw header parsing or ForwardedHost trust is added. Production refuses
 `RateLimits:Disabled=true` and automatic unrestricted forwarded-header mode.
 References: [ASP.NET proxy guidance](https://learn.microsoft.com/aspnet/core/host-and-deploy/proxy-load-balancer?view=aspnetcore-10.0),
 [Caddy reverse proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
+
+Exact operator prerequisites (documentation only; no configuration changed):
+
+1. Observe the socket peer **inside the deployed container**, not merely the Compose
+   gateway address. Set `ReverseProxy__KnownProxies__0=<observed peer IP>` and
+   `ReverseProxy__ForwardLimit=1`; re-check after Docker network recreation. Do not
+   add all private networks, Cloudflare CIDRs or end-user IPs to the application's
+   KnownProxies: the application trusts its direct Caddy/Docker peer only.
+2. In the existing Caddy server-options block, `trusted_proxies static` must contain
+   the current [official Cloudflare IPv4/IPv6 ranges](https://www.cloudflare.com/ips/)
+   only; enable `trusted_proxies_strict` and use `client_ip_headers CF-Connecting-IP`.
+   These options require verifying the installed Caddy version and merging with
+   existing options/sites, never replacing the active configuration wholesale.
+3. In the Nexora site's existing `reverse_proxy 127.0.0.1:10000`, explicitly overwrite
+   `header_up X-Forwarded-For {client_ip}` and `header_up X-Forwarded-Proto {scheme}`.
+   Do not copy the incoming XFF/CF header verbatim. `{client_ip}` must resolve through
+   the above trusted-peer policy; direct non-Cloudflare traffic uses the socket peer.
+   See [Caddy server proxy options](https://caddyserver.com/docs/caddyfile/options#trusted-proxies).
+4. Validate the merged configuration before any separately approved activation;
+   verify two real clients produce distinct app RemoteIpAddress values, forged XFF/CF
+   headers cannot change those values, HTTPS/CORS/SignalR still work, and port10000
+   remains loopback-only. Keep unrestricted automatic forwarded-header mode OFF.
+
+Fail-safe when missing/mismatched: the application ignores untrusted forwarding and
+limits the actual peer (all clients may share the Caddy/Docker IP); it does **not**
+disable limiting or trust raw headers. Missing KnownProxies is not a startup error,
+so rollout must STOP until the above two-client/spoof checks pass. Malformed explicit
+IP/invalid ForwardLimit fails options validation. Trusting the local peer before
+Caddy sanitization is verified is unsafe and is not an approved rollout sequence.
 
 **REQUIRES CLOUDFLARE APPROVAL:** actual plan must be checked first. Conditional
 lowest-plan proposal: one path-only rate rule for `/api/v1/auth/login`,

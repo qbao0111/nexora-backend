@@ -151,6 +151,7 @@ app.UseMiddleware<RequestTelemetryMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<JsonBodyBoundsMiddleware>();
 app.UseCors("Frontend");
+app.UseMiddleware<PreAuthenticationRateLimitMiddleware>();
 app.UseAuthentication();
 app.UseRateLimiter();
 app.UseAuthorization();
