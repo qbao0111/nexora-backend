@@ -104,7 +104,10 @@ public sealed class AsyncInterviewApiTests
         }
         if (failPersistence)
         {
-            await Assert.ThrowsAsync<DbUpdateException>(() => evaluation);
+            var persistenceError = await Record.ExceptionAsync(() => evaluation);
+            Assert.NotNull(persistenceError);
+            // Npgsql wraps the same DbUpdateException in its execution strategy.
+            Assert.True(DatabaseConnectivityFailure.IsTransient(persistenceError));
             using var recoveryScope = factory.Services.CreateScope();
             var recoveryDb = recoveryScope.ServiceProvider.GetRequiredService<NexoraDbContext>();
             Assert.Equal(1, failure.Failures);
