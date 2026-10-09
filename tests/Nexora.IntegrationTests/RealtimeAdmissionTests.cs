@@ -11,6 +11,7 @@ using Nexora.Api.Infrastructure;
 
 namespace Nexora.IntegrationTests;
 
+[Collection("PostgreSQL primary resume")]
 public sealed class RealtimeAdmissionTests
 {
     [Fact]
