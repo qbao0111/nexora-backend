@@ -39,6 +39,12 @@ Optional realtime invalidation is available through the authenticated SignalR hu
 only event/resource IDs, resource type, status and UTC time. REST response contracts
 remain unchanged; see [realtime notifications](realtime-notifications.md) for supported
 states, token transport, duplicate handling and reconnect/fallback behavior.
+Pre-auth transport admission is separately bounded from regular HTTP and reserved
+health capacity; overload still uses `429 RATE_LIMITED`/`Retry-After` before upgrade.
+Long polling/SSE GETs share transport capacity; negotiate/send/DELETE remain short
+HTTP requests. Authenticated user limits and event/mobile contracts are unchanged.
+See [operational admission limits](security/ai-speech-abuse-audit.md) for defaults,
+NAT behavior and trusted-proxy rollout prerequisites.
 
 | Method | Endpoint | Mục đích |
 | --- | --- | --- |

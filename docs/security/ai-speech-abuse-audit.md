@@ -54,8 +54,35 @@ of endpoint limits. History page validation and multipart upload limits are unch
 JSON is capped at 1 MiB before model binding (Kestrel cap also covers unknown-length
 JSON). Existing narrower field/multipart limits still apply. SignalR receive size is
 32 KiB, parallel invocations per client is one and expired auth closes connections.
-The concurrency limit is process-wide HTTP occupancy, **not a durable per-user
-WebSocket connection/session counter**; long-lived connections consume permits.
+Pre-auth concurrency has three independent process-local pools (no queued waiters):
+
+| Configuration | Default | Scope / lifetime |
+| --- | --- | --- |
+| `RateLimits:ConcurrentRequests` | 100 | Regular short HTTP, including SignalR POST negotiate/send and DELETE |
+| `RateLimits:Realtime:ConcurrentRequests` | 100 | All WebSocket upgrades and GET `/hubs/realtime` transports (WebSocket, SSE, long polling) |
+| `RateLimits:Realtime:ConcurrentPerIp` | 20 | Same realtime transports per validated connection IP; NAT shares this cap |
+| `RateLimits:Health:ConcurrentRequests` | 10 | GET liveness/readiness/operations health only |
+| `RateLimits:Health:ConcurrentPerIp` | 2 | Health requests per validated IP |
+| `RateLimits:Health:BurstPermitLimit` | 60/minute/IP | Independent bounded health burst bucket, not an exemption |
+
+Ordinary and realtime traffic still share the existing 300/minute/IP pre-auth burst
+bucket; refresh keeps its outer IP window. Long-lived transport permits are held until
+the request ends, including cancellation/disconnect/failure; they never consume regular
+HTTP or health permits. Short SignalR control requests use HTTP permits so a full
+transport pool cannot prevent send/disconnect. Authenticated SignalR user-partitioned
+30/minute policy, owner delivery, JWT/security-stamp checks and auth-expiry closure are
+unchanged. Global realtime and per-IP caps bound active WebSockets across users/IPs;
+long polling shares transport occupancy, not a new durable count of idle logical sessions.
+NAT fairness is a tradeoff: 20 active realtime transports per public IP. No unchecked
+forwarded header or client-selected transport parameter bypasses admission.
+
+At default limits total admitted occupancy is bounded at 100 HTTP + 100 realtime +
+10 health, rather than one shared 100-slot pool. Regular HTTP remains 100, not increased.
+Health cannot be starved by either pool or their IP burst bucket, but its own bounded
+pool/burst can reject health floods and dependent DB/network failures can still make
+readiness fail. This does not guarantee availability under host/DB/edge exhaustion.
+All new limits must be positive (startup validation); disabled limits remain forbidden
+in Production. Defaults require no production configuration mutation in this corrective.
 
 Middleware: bounded forwarding → framework trusted forwarding → correlation/telemetry
 → exception/JSON bounds → CORS → pre-auth IP burst/refresh/concurrency gate →

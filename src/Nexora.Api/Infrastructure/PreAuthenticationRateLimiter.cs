@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Threading.RateLimiting;
+using Nexora.Api.Realtime;
 
 namespace Nexora.Api.Infrastructure;
 
@@ -19,18 +20,38 @@ public sealed class PreAuthenticationRateLimiter(IConfiguration configuration) :
                         Window = TimeSpan.FromHours(1), QueueLimit = 0, AutoReplenishment = true
                     }) : RateLimitPartition.GetNoLimiter("not-refresh")),
             PartitionedRateLimiter.Create<HttpContext, string>(context =>
-                RateLimitPartition.GetFixedWindowLimiter(TrustedForwarding.ClientIp(context), _ => new FixedWindowRateLimiterOptions
+                RateLimitPartition.GetFixedWindowLimiter((IsHealth(context) ? "health:" : "traffic:") + TrustedForwarding.ClientIp(context), _ => new FixedWindowRateLimiterOptions
                 {
-                    PermitLimit = configuration.GetValue("RateLimits:Burst:PermitLimit", 300),
+                    PermitLimit = configuration.GetValue(IsHealth(context) ? "RateLimits:Health:BurstPermitLimit" : "RateLimits:Burst:PermitLimit", IsHealth(context) ? 60 : 300),
                     Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true
                 })),
-            PartitionedRateLimiter.Create<HttpContext, string>(_ =>
-                RateLimitPartition.GetConcurrencyLimiter("global", _ => new ConcurrencyLimiterOptions
+            PartitionedRateLimiter.Create<HttpContext, string>(context =>
+                IsRealtime(context) || IsHealth(context)
+                    ? RateLimitPartition.GetConcurrencyLimiter(Category(context) + ":" + TrustedForwarding.ClientIp(context), _ => new ConcurrencyLimiterOptions
+                    {
+                        PermitLimit = configuration.GetValue(IsHealth(context) ? "RateLimits:Health:ConcurrentPerIp" : "RateLimits:Realtime:ConcurrentPerIp", IsHealth(context) ? 2 : 20),
+                        QueueLimit = 0
+                    }) : RateLimitPartition.GetNoLimiter("regular-http")),
+            PartitionedRateLimiter.Create<HttpContext, string>(context =>
+                RateLimitPartition.GetConcurrencyLimiter(Category(context), _ => new ConcurrencyLimiterOptions
                 {
-                    PermitLimit = configuration.GetValue("RateLimits:ConcurrentRequests", 100), QueueLimit = 0
+                    PermitLimit = configuration.GetValue(IsHealth(context) ? "RateLimits:Health:ConcurrentRequests" :
+                        IsRealtime(context) ? "RateLimits:Realtime:ConcurrentRequests" : "RateLimits:ConcurrentRequests", IsHealth(context) ? 10 : 100),
+                    QueueLimit = 0
                 })));
 
+    // GET transports include long polls/SSE. Negotiate/send/DELETE are short
+    // HTTP requests and must remain usable while all transport slots are held.
+    // Treat every WebSocket upgrade as long-lived, including future endpoints.
+    // No client-supplied transport query is trusted.
+    private static bool IsRealtime(HttpContext context) => context.WebSockets.IsWebSocketRequest ||
+        HttpMethods.IsGet(context.Request.Method) && context.Request.Path.StartsWithSegments(RealtimeHub.Path);
+    private static bool IsHealth(HttpContext context) => HttpMethods.IsGet(context.Request.Method) &&
+        (context.Request.Path == "/health/live" || context.Request.Path == "/api/v1/health" || context.Request.Path == "/api/v1/health/operations");
+    private static string Category(HttpContext context) => IsHealth(context) ? "health" : IsRealtime(context) ? "realtime" : "http";
+
     public ValueTask<RateLimitLease> AcquireAsync(HttpContext context) => _limiter.AcquireAsync(context, cancellationToken: context.RequestAborted);
+    public RateLimiterStatistics? GetStatistics(HttpContext context) => _limiter.GetStatistics(context);
     public void Dispose() => _limiter.Dispose();
 }
 

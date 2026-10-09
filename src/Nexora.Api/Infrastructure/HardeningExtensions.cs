@@ -65,6 +65,11 @@ public static class HardeningExtensions
     {
         if (configuration.GetValue("RateLimits:Burst:PermitLimit", 300) <= 0 ||
             configuration.GetValue("RateLimits:ConcurrentRequests", 100) <= 0 ||
+            configuration.GetValue("RateLimits:Realtime:ConcurrentRequests", 100) <= 0 ||
+            configuration.GetValue("RateLimits:Realtime:ConcurrentPerIp", 20) <= 0 ||
+            configuration.GetValue("RateLimits:Health:ConcurrentRequests", 10) <= 0 ||
+            configuration.GetValue("RateLimits:Health:ConcurrentPerIp", 2) <= 0 ||
+            configuration.GetValue("RateLimits:Health:BurstPermitLimit", 60) <= 0 ||
             configuration.GetValue("RateLimits:RefreshIp:PermitLimit", 120) <= 0)
             throw new InvalidOperationException("Global rate limits must be positive.");
         if (configuration.GetValue("Speech:MaximumSessionMinutes", 120) is < 15 or > 480)
