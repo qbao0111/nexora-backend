@@ -234,6 +234,7 @@ public sealed partial class ScenarioService
             ResourceId = attempt.Id,
             CreatedAt = now
         });
+        await queueAdmission.CheckAsync(cancellationToken);
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);

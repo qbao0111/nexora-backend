@@ -57,6 +57,7 @@ public sealed class InterviewQuestionPlanJobHandler(NexoraDbContext dbContext, I
             .ToArrayAsync(cancellationToken);
         var prepared = await questionGenerator.GeneratePreparedQuestionsAsync(
             snapshot,
+            job.Id,
             profile,
             existingMax + 1,
             endSequence,

@@ -19,6 +19,7 @@ public sealed class InterviewAnswerService(
     NexoraDbContext dbContext,
     InterviewPersistence persistence,
     InterviewReadState readState,
+    PaidJobQueueAdmission queueAdmission,
     TimeProvider timeProvider) : IInterviewAnswerService
 {
     public async Task<AnswerResult> SubmitAnswerAsync(
@@ -90,6 +91,7 @@ public sealed class InterviewAnswerService(
         dbContext.AddRange(
             Outbox("InterviewAnswerEvaluationRequested", "interviewAnswer", answer.Id, now),
             Idempotency(userId, "interview.answer", key, fingerprint, answer.Id, now));
+        await queueAdmission.CheckAsync(cancellationToken);
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);

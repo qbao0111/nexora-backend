@@ -17,6 +17,7 @@ public sealed class InterviewQuestionGenerator(IResumeContextBuilder resumeConte
 {
     internal async Task<IReadOnlyCollection<PreparedInterviewQuestion>> GeneratePreparedQuestionsAsync(
         InterviewSession session,
+        Guid jobId,
         ResumeProfile? profile,
         int startSequence,
         int endSequence,
@@ -57,7 +58,7 @@ public sealed class InterviewQuestionGenerator(IResumeContextBuilder resumeConte
                         ["questionKind"] = InterviewQuestionValues.Primary,
                         ["questionTopic"] = topic
                     },
-                    PreviousQuestions: previousQuestions.Select(item => item.Content).ToArray()),
+                    PreviousQuestions: previousQuestions.Select(item => item.Content).ToArray(), JobId: jobId),
                 cancellationToken);
             var content = result.Value.Content?.Trim() ?? string.Empty;
             if (content.Length == 0) throw InvalidAiOutput();

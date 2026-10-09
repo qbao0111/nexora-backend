@@ -16,6 +16,7 @@ public sealed partial class ScenarioService(
     NexoraDbContext dbContext,
     IFeatureEntitlementService featureEntitlementService,
     IAiProvider aiProvider,
+    PaidJobQueueAdmission queueAdmission,
     TimeProvider timeProvider) : IScenarioService
 {
     private const string ScenarioSchemaVersion = "scenario-v1";

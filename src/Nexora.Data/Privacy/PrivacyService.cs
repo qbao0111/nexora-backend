@@ -315,6 +315,11 @@ public sealed partial class PrivacyService(
         }
 
         dbContext.InterviewReports.RemoveRange(dbContext.InterviewReports.Where(item => item.UserId == request.UserId));
+        // Keep no-refund accounting, but purge private provider checkpoints with
+        // the account's other candidate data.
+        await dbContext.ProviderCallReservations.Where(item => item.UserId == request.UserId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.ResultJson, (string?)null)
+                .SetProperty(item => item.ResultFingerprint, (string?)null), cancellationToken);
         dbContext.ScenarioAttempts.RemoveRange(scenarioAttempts);
         dbContext.StarAttempts.RemoveRange(starAttempts);
         dbContext.InterviewAnswers.RemoveRange(dbContext.InterviewAnswers.Where(item => item.UserId == request.UserId));

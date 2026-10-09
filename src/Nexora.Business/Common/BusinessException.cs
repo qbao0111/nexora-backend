@@ -1,6 +1,6 @@
 namespace Nexora.Business.Common;
 
-public enum BusinessErrorKind { Validation, Unauthorized, Forbidden, NotFound, Conflict, ExternalFailure }
+public enum BusinessErrorKind { Validation, Unauthorized, Forbidden, NotFound, Conflict, ExternalFailure, RateLimited }
 
 public sealed class BusinessException(string code, string message, BusinessErrorKind kind) : Exception(message)
 {

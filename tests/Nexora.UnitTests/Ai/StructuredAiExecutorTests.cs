@@ -7,6 +7,24 @@ namespace Nexora.UnitTests.Ai;
 
 public sealed class StructuredAiExecutorTests
 {
+    [Fact]
+    public async Task AdmissionOutageFailsClosedBeforeProviderCall()
+    {
+        var provider = new MockAiProvider();
+        var executor = new StructuredAiExecutor(provider, NullLogger<StructuredAiExecutor>.Instance, new UnavailableAdmission());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => executor.ExecuteAsync(
+            AiOperations.InterviewFirstQuestion, "question-topic: technical",
+            new AiOperationContext("budget-outage", Guid.NewGuid(), JobId: Guid.NewGuid()), CancellationToken.None));
+        Assert.Equal(0, provider.CallCount);
+    }
+
+    private sealed class UnavailableAdmission : IProviderAdmission
+    {
+        public Task<Guid> ReserveAsync(ProviderAdmissionRequest request, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Controlled unavailable durable authority.");
+        public Task CompleteAsync(Guid reservationId, AiTokenUsage? usage, CancellationToken cancellationToken,
+            AiProviderFailureKind? failureKind = null) => throw new InvalidOperationException("No call was admitted.");
+    }
     [Theory]
     [InlineData(AiProviderFailureKind.Authentication)]
     [InlineData(AiProviderFailureKind.Configuration)]

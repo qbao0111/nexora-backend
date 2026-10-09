@@ -90,7 +90,7 @@ public sealed class NexoraApiFactory : WebApplicationFactory<Program>
         return dict;
     }
 
-    private NexoraApiFactory(
+    internal NexoraApiFactory(
         IAiProvider? aiProvider,
         IReadOnlyDictionary<string, string?>? configurationOverrides,
         Action<IServiceCollection>? configureServices = null,

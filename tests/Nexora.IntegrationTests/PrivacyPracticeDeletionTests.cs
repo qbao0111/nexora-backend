@@ -1,7 +1,9 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Nexora.Business.Ai;
 using Nexora.Business.Billing;
@@ -13,6 +15,7 @@ using Nexora.Data.ContentReports;
 using Nexora.Data.Persistence;
 using Nexora.Data.Practice;
 using Nexora.Data.Realtime;
+using Npgsql;
 
 namespace Nexora.IntegrationTests;
 
@@ -32,6 +35,57 @@ public sealed class PrivacyPracticeDeletionTests
     {
         await using var factory = NexoraApiFactory.CreatePostgres(Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!);
         await VerifyPurgeAsync(factory);
+    }
+
+    [PostgresFact]
+    public async Task PostgresPrivacyPollingRecoversAfterConnectionFailureAndPurgesExactlyOnce()
+    {
+        var outage = new OneConnectionOutage();
+        await using var factory = NexoraApiFactory.CreatePostgres(
+            Environment.GetEnvironmentVariable(PostgresFactAttribute.ConnectionVariable)!, dbInterceptor: outage);
+        factory.InitializeDatabase();
+        var owner = await RegisterAsync(factory);
+        await using (var seed = factory.Services.CreateAsyncScope())
+        {
+            await SeedAsync(seed.ServiceProvider, owner);
+            await seed.ServiceProvider.GetRequiredService<IPrivacyService>()
+                .RequestDeletionAsync(owner, "outage-delete", CancellationToken.None);
+        }
+        outage.Arm();
+        await using (var failing = factory.Services.CreateAsyncScope())
+        {
+            var failure = await Assert.ThrowsAnyAsync<Exception>(() => failing.ServiceProvider
+                .GetRequiredService<IPrivacyJobProcessor>().ProcessPendingAsync(CancellationToken.None));
+            Assert.True(Nexora.Data.Persistence.DatabaseConnectivityFailure.IsTransient(failure));
+        }
+        await using (var recovered = factory.Services.CreateAsyncScope())
+            Assert.Equal(1, await recovered.ServiceProvider.GetRequiredService<IPrivacyJobProcessor>().ProcessPendingAsync(CancellationToken.None));
+        await AssertPurgedAsync(factory, owner);
+        await using (var repeated = factory.Services.CreateAsyncScope())
+        {
+            Assert.Equal(0, await repeated.ServiceProvider.GetRequiredService<IPrivacyJobProcessor>().ProcessPendingAsync(CancellationToken.None));
+            var db = repeated.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            Assert.Equal(1, await db.DataPrivacyRequests.CountAsync());
+            Assert.Equal(4, await db.FeatureUsageEvents.CountAsync(item => item.UserId == owner && item.Action == FeatureValues.Void));
+        }
+        Assert.Equal(1, outage.Failures);
+    }
+
+    private sealed class OneConnectionOutage : DbConnectionInterceptor
+    {
+        private int _armed;
+        public int Failures { get; private set; }
+        public void Arm() => Interlocked.Exchange(ref _armed, 1);
+        public override ValueTask<InterceptionResult> ConnectionOpeningAsync(DbConnection connection,
+            ConnectionEventData eventData, InterceptionResult result, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Exchange(ref _armed, 0) == 1)
+            {
+                Failures++;
+                throw new NpgsqlException("Controlled connection outage before privacy claim.", new TimeoutException());
+            }
+            return ValueTask.FromResult(result);
+        }
     }
 
     [PostgresFact]
@@ -158,6 +212,12 @@ public sealed class PrivacyPracticeDeletionTests
     {
         var db = services.GetRequiredService<NexoraDbContext>();
         var entitlement = await db.Entitlements.SingleAsync(item => item.UserId == userId);
+        db.ProviderCallReservations.Add(new ProviderCallReservation
+        {
+            UserId = userId, JobId = Guid.NewGuid(), Purpose = "privacy-test", OperationKey = "checkpoint", Attempt = 1,
+            ReservedTokens = 123, StartedAt = DateTimeOffset.UtcNow, LeaseExpiresAt = DateTimeOffset.UtcNow,
+            CompletedAt = DateTimeOffset.UtcNow, ResultFingerprint = "private-fingerprint", ResultJson = "{\"private\":\"candidate\"}"
+        });
         var features = await db.EntitlementFeatures.Where(item => item.EntitlementId == entitlement.Id).ToArrayAsync();
         var definitions = await db.FeatureDefinitions.Where(item => item.Code == FeatureValues.StarBuilder || item.Code == FeatureValues.Scenario).ToArrayAsync();
         foreach (var definition in definitions.Where(item => features.All(feature => feature.FeatureCode != item.Code)))
@@ -261,6 +321,12 @@ public sealed class PrivacyPracticeDeletionTests
         Assert.Empty(await db.RealtimeNotifications.Where(item => item.UserId == owner).ToArrayAsync());
         Assert.Empty(await db.IdempotencyRecords.Where(item => item.ActorId == owner).ToArrayAsync());
         Assert.Empty(await db.ContentReports.Where(item => item.ReporterUserId == owner).ToArrayAsync());
+        Assert.All(await db.ProviderCallReservations.Where(item => item.UserId == owner).ToArrayAsync(), reservation =>
+        {
+            Assert.Null(reservation.ResultJson);
+            Assert.Null(reservation.ResultFingerprint);
+            Assert.True(reservation.ReservedTokens > 0);
+        });
         Assert.DoesNotContain(await db.OutboxEvents.Select(item => item.Payload).ToArrayAsync(), value => value.Contains(owner.ToString("N"), StringComparison.Ordinal));
     }
 

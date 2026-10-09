@@ -281,6 +281,8 @@ public sealed partial class DeepSeekAiProvider(
             throw CreateInvalidStructuredResponse(request, policy, null, null, "envelope_not_object");
 
         var usage = ReadUsage(root);
+        if (usage?.PromptTokens is >= 0 && usage.CompletionTokens is >= 0)
+            request.UsageObserver?.Invoke(new AiTokenUsage(usage.PromptTokens.Value, usage.CompletionTokens.Value));
         var finishReason = ReadFinishReason(root);
         LogUsage(request, configuration, policy, stopwatch.ElapsedMilliseconds, usage, finishReason);
 

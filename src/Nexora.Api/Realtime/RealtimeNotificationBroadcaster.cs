@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Nexora.Business.Common;
 using Nexora.Data.Persistence;
 
 namespace Nexora.Api.Realtime;
@@ -17,6 +18,7 @@ public sealed partial class RealtimeNotificationBroadcaster(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!options.Value.Enabled) return;
+        var databaseBackoff = new DatabaseOutageBackoff(timeProvider);
         while (!stoppingToken.IsCancellationRequested)
         {
             var delay = options.Value.IdleDelayMilliseconds;
@@ -24,8 +26,15 @@ public sealed partial class RealtimeNotificationBroadcaster(
             {
                 if (await BroadcastPendingAsync(stoppingToken) > 0)
                     delay = options.Value.BusyDelayMilliseconds;
+                databaseBackoff.Reset();
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+            catch (Exception exception) when (DatabaseConnectivityFailure.IsTransient(exception))
+            {
+                var recovery = databaseBackoff.Next(Random.Shared.NextDouble());
+                if (recovery.Report) PollFailed(logger);
+                delay = (int)recovery.Delay.TotalMilliseconds;
+            }
             catch (Exception)
             {
                 // Never log exceptions: database/transport errors may contain sensitive data.

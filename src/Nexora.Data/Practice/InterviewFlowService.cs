@@ -14,7 +14,7 @@ using static Nexora.Data.Practice.InterviewQuestionContracts;
 
 namespace Nexora.Data.Practice;
 
-public sealed class InterviewFlowService(NexoraDbContext dbContext, InterviewPersistence persistence, InterviewReadState readState, InterviewReportCoordinator reportCoordinator, IInterviewSessionService sessionService, TimeProvider timeProvider) : IInterviewFlowService
+public sealed class InterviewFlowService(NexoraDbContext dbContext, InterviewPersistence persistence, InterviewReadState readState, InterviewReportCoordinator reportCoordinator, IInterviewSessionService sessionService, TimeProvider timeProvider, PaidJobQueueAdmission queueAdmission) : IInterviewFlowService
 {
     public async Task<InterviewView> ContinueInterviewAsync(
         Guid userId,
@@ -85,6 +85,7 @@ public sealed class InterviewFlowService(NexoraDbContext dbContext, InterviewPer
         dbContext.AddRange(
             Idempotency(userId, "interview.continue", key, fingerprint, session.Id, now),
             Outbox("InterviewQuestionPlanRequested", "interview", session.Id, now));
+        await queueAdmission.CheckAsync(cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await CommitAsync(transaction, cancellationToken);
         return await sessionService.GetInterviewAsync(userId, interviewId, cancellationToken);
@@ -158,6 +159,7 @@ public sealed class InterviewFlowService(NexoraDbContext dbContext, InterviewPer
         dbContext.AddRange(
             Idempotency(userId, "interview.questions.retry", key, fingerprint, session.Id, now),
             Outbox("InterviewQuestionPlanRequested", "interview", session.Id, now));
+        await queueAdmission.CheckAsync(cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await CommitAsync(transaction, cancellationToken);
         return await sessionService.GetInterviewAsync(userId, interviewId, cancellationToken);
@@ -283,6 +285,7 @@ public sealed class InterviewFlowService(NexoraDbContext dbContext, InterviewPer
             await reportCoordinator.TryQueueReportIfReadyAsync(session.Id, now, cancellationToken);
         }
         dbContext.Add(Idempotency(userId, "interview.results.retry", key, fingerprint, session.Id, now));
+        await queueAdmission.CheckAsync(cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await CommitAsync(transaction, cancellationToken);
         return await sessionService.GetInterviewAsync(userId, session.Id, cancellationToken);

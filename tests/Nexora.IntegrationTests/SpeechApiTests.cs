@@ -2,14 +2,66 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Nexora.Business.Speech;
+using Nexora.Data.Persistence;
 
 namespace Nexora.IntegrationTests;
 
 public sealed class SpeechApiTests
 {
+    [Theory]
+    [InlineData("completed", 0)]
+    [InlineData("abandoned", 0)]
+    [InlineData("active", 121)]
+    public async Task InactiveOrExpiredSessionCannotIssueToken(string status, int ageMinutes)
+    {
+        var speech = new RecordingSpeechTokenProvider();
+        using var factory = CreateFactory(speech, new Dictionary<string, string?>
+        {
+            ["Features:Speech"] = "true", ["Speech:Azure:Key"] = "test-only", ["Speech:Azure:Region"] = "southeastasia"
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "inactive-speech");
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var interview = await db.InterviewSessions.SingleAsync(item => item.Id == interviewId);
+            interview.Status = status;
+            interview.CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-ageMinutes);
+            await db.SaveChangesAsync();
+        }
+        using var response = await client.PostAsync($"/api/v1/speech/interviews/{interviewId}/token", null);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(0, speech.CallCount);
+    }
+
+    [Fact]
+    public async Task DurableBudgetDenialIs429AndDoesNotCallAzure()
+    {
+        var speech = new RecordingSpeechTokenProvider();
+        using var factory = CreateFactory(speech, new Dictionary<string, string?>
+        {
+            ["Features:Speech"] = "true", ["Speech:Azure:Key"] = "test-only", ["Speech:Azure:Region"] = "southeastasia",
+            ["Ai:Budget:PurposeHourlyCalls:speech.token"] = "1"
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "budget-speech");
+        using var first = await client.PostAsync($"/api/v1/speech/interviews/{interviewId}/token", null);
+        using var second = await client.PostAsync($"/api/v1/speech/interviews/{interviewId}/token", null);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, second.StatusCode);
+        Assert.NotNull(second.Headers.RetryAfter);
+        Assert.Equal(1, speech.CallCount);
+    }
     [Fact]
     public async Task AnonymousRequestIsUnauthorized()
     {

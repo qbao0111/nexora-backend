@@ -100,7 +100,7 @@ public sealed partial class InterviewAnswerEvaluationJobHandler(
                     snapshot.UserId,
                     ExpectedStar: question.Topic is InterviewQuestionValues.Behavioral or InterviewQuestionValues.BehavioralStar,
                     Metadata: metadata,
-                    CandidateAnswer: snapshot.Content),
+                    CandidateAnswer: snapshot.Content, JobId: job.Id),
                 cancellationToken);
 
             await using var transaction = await persistence.BeginTransactionAsync(cancellationToken);
@@ -118,12 +118,12 @@ public sealed partial class InterviewAnswerEvaluationJobHandler(
             answer.EvaluationErrorCode = null;
             persistence.EnqueueResourceChanged(snapshot.UserId, "interview", snapshot.InterviewSessionId, answer.EvaluationStatus, answer.EvaluationCompletedAt.Value);
             await dbContext.SaveChangesAsync(cancellationToken);
-            await reportCoordinator.TryQueueReportIfReadyAsync(snapshot.InterviewSessionId, answer.EvaluationCompletedAt.Value, cancellationToken);
+            await reportCoordinator.TryQueueReportIfReadyAsync(snapshot.InterviewSessionId, answer.EvaluationCompletedAt.Value, cancellationToken, deferWhenFull: true);
             MarkProcessed(job);
             await dbContext.SaveChangesAsync(cancellationToken);
             await CommitAsync(transaction, cancellationToken);
         }
-        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested && !DatabaseConnectivityFailure.IsTransient(exception))
         {
             await FailAnswerEvaluationAsync(job, snapshot, EvaluationErrorCode(exception), cancellationToken);
         }
@@ -135,7 +135,10 @@ public sealed partial class InterviewAnswerEvaluationJobHandler(
         string errorCode,
         CancellationToken cancellationToken)
     {
+        // Rollback does not rewind EF tracked values/accepted changes.
+        dbContext.ChangeTracker.Clear();
         await using var transaction = await persistence.BeginTransactionAsync(cancellationToken);
+        job = await dbContext.OutboxEvents.SingleAsync(item => item.Id == job.Id, cancellationToken);
         var answer = await dbContext.InterviewAnswers.SingleOrDefaultAsync(item => item.Id == snapshot.Id, cancellationToken);
         if (answer is not null && answer.EvaluationStatus != InterviewAnswerEvaluationStates.Ready)
         {

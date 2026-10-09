@@ -18,6 +18,7 @@ public static class RateLimitPolicies
     public const string AiJob = "ai-job";
     public const string Answer = "answer";
     public const string SpeechToken = "speech-token";
+    public const string Realtime = "realtime";
     public const string ContentReport = "content-report";
     public const string ExternalDeletionRequest = "external-deletion-request";
     public const string ExternalDeletionConfirm = "external-deletion-confirm";
@@ -62,8 +63,20 @@ public static class HardeningExtensions
 {
     public static IServiceCollection AddHardening(this IServiceCollection services, IConfiguration configuration)
     {
+        if (configuration.GetValue("RateLimits:Burst:PermitLimit", 300) <= 0 ||
+            configuration.GetValue("RateLimits:ConcurrentRequests", 100) <= 0 ||
+            configuration.GetValue("RateLimits:Realtime:ConcurrentRequests", 100) <= 0 ||
+            configuration.GetValue("RateLimits:Realtime:ConcurrentPerIp", 20) <= 0 ||
+            configuration.GetValue("RateLimits:Health:ConcurrentRequests", 10) <= 0 ||
+            configuration.GetValue("RateLimits:Health:ConcurrentPerIp", 2) <= 0 ||
+            configuration.GetValue("RateLimits:Health:BurstPermitLimit", 60) <= 0 ||
+            configuration.GetValue("RateLimits:RefreshIp:PermitLimit", 120) <= 0)
+            throw new InvalidOperationException("Global rate limits must be positive.");
+        if (configuration.GetValue("Speech:MaximumSessionMinutes", 120) is < 15 or > 480)
+            throw new InvalidOperationException("Speech:MaximumSessionMinutes must be between 15 and 480.");
         services.AddOptions<FeatureOptions>().Bind(configuration.GetSection(FeatureOptions.SectionName));
         services.AddSingleton<LoginEmailRateLimiter>();
+        services.AddSingleton<PreAuthenticationRateLimiter>();
         services.AddRateLimiter(options =>
         {
             AddFixedWindow(options, configuration, RateLimitPolicies.Authentication, "Authentication", 5, 15, ByIp);
@@ -73,6 +86,7 @@ public static class HardeningExtensions
             AddFixedWindow(options, configuration, RateLimitPolicies.Checkout, "Checkout", 5, 60, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.AiJob, "AiJob", 10, 60, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.SpeechToken, "SpeechToken", 10, 15, ByUser);
+            AddFixedWindow(options, configuration, RateLimitPolicies.Realtime, "Realtime", 30, 1, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.ContentReport, "ContentReport", 5, 60, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.ExternalDeletionRequest, "ExternalDeletionRequest", 5, 60, ByClientIp);
             AddFixedWindow(options, configuration, RateLimitPolicies.ExternalDeletionConfirm, "ExternalDeletionConfirm", 10, 15, ByClientIp);
@@ -117,17 +131,8 @@ public static class HardeningExtensions
         }));
     }
 
-    private static string ByIp(HttpContext context)
-    {
-        var forwarded = context.Request.Headers["X-Forwarded-For"].FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(forwarded))
-        {
-            var first = forwarded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
-            if (!string.IsNullOrWhiteSpace(first)) return first;
-        }
-        return context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-    }
-    private static string ByClientIp(HttpContext context) => context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    private static string ByIp(HttpContext context) => TrustedForwarding.ClientIp(context);
+    private static string ByClientIp(HttpContext context) => TrustedForwarding.ClientIp(context);
     private static string ByUser(HttpContext context) => context.User.FindFirstValue("sub") ?? ByIp(context);
     private static string ByRefreshSession(HttpContext context)
     {

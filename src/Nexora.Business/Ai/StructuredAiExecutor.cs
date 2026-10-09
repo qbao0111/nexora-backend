@@ -1,10 +1,15 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Nexora.Business.Common;
 
 namespace Nexora.Business.Ai;
 
-public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger<StructuredAiExecutor> logger) : IStructuredAiExecutor
+public sealed partial class StructuredAiExecutor(
+    IAiProvider aiProvider, ILogger<StructuredAiExecutor> logger,
+    IProviderAdmission? admission = null) : IStructuredAiExecutor
 {
     private const int GlobalMaxAttemptsPerPurpose = 2;
 
@@ -87,7 +92,50 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
             try
             {
-                var raw = await aiProvider.GenerateStructuredAsync<T>(request, cancellationToken);
+                AiTokenUsage? usage = null;
+                Guid? reservation = null;
+                string? checkpoint = null;
+                string? fingerprint = null;
+                if (admission is not null)
+                {
+                    if (context.UserId is not { } userId || context.JobId is not { } jobId)
+                        throw new BusinessException("AI_ADMISSION_CONTEXT_MISSING", "Không thể xác minh tác vụ AI.", BusinessErrorKind.ExternalFailure);
+                    // Correlation IDs may change on recovery; they are telemetry,
+                    // not permission to charge the same logical operation again.
+                    var identity = GetMetadata(context, "answerId") + ":" + GetMetadata(context, "questionSequence");
+                    var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
+                    var inputBytes = Encoding.UTF8.GetByteCount(request.UntrustedInput) +
+                        Encoding.UTF8.GetByteCount(request.Instructions ?? string.Empty) +
+                        Encoding.UTF8.GetByteCount(request.OutputSchema.RootElement.GetRawText());
+                    var admissionRequest = new ProviderAdmissionRequest(
+                        userId, jobId, request.Purpose, key, attempt,
+                        checked((long)inputBytes + request.MaxOutputTokens + 1024));
+                    fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(
+                        request with { CorrelationId = string.Empty }))));
+                    checkpoint = await admission.ReadResultAsync(admissionRequest, fingerprint, cancellationToken);
+                    if (checkpoint is null)
+                        reservation = await admission.ReserveAsync(admissionRequest, cancellationToken);
+                    request = request with { UsageObserver = value => usage = value };
+                }
+                T raw;
+                try
+                {
+                    raw = checkpoint is null
+                        ? await aiProvider.GenerateStructuredAsync<T>(request, cancellationToken)
+                        : JsonSerializer.Deserialize<T>(checkpoint)!;
+                }
+                catch (AiProviderException exception)
+                {
+                    if (reservation is { } failedId)
+                        await admission!.CompleteFailureAsync(failedId, fingerprint!, usage, exception.Kind, exception.RetryHint, cancellationToken);
+                    throw;
+                }
+                if (reservation is { } reservationId)
+                {
+                    // Checkpoint before any domain persistence. Storage reconciliation
+                    // retains this response and never spends another provider attempt.
+                    await admission!.CompleteResultAsync(reservationId, fingerprint!, JsonSerializer.Serialize(raw), usage, cancellationToken);
+                }
                 var validation = operation.NormalizeAndValidate(raw, context);
                 previousSemanticRaw = currentSemanticRaw;
                 previousValidation = currentValidation;

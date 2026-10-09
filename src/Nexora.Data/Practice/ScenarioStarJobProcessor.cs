@@ -110,7 +110,7 @@ public sealed partial class ScenarioStarJobProcessor(
         var execResult = await structuredAiExecutor.ExecuteAsync(
             AiOperations.ScenarioEvaluate,
             Bound(input),
-            new AiOperationContext(attempt.Id.ToString("N"), attempt.UserId),
+            new AiOperationContext(attempt.Id.ToString("N"), attempt.UserId, JobId: job.Id),
             cancellationToken);
         var result = execResult.Value;
 
@@ -149,7 +149,7 @@ public sealed partial class ScenarioStarJobProcessor(
         var execResult = await structuredAiExecutor.ExecuteAsync(
             AiOperations.StarEvaluate,
             Bound(input),
-            new AiOperationContext(attempt.Id.ToString("N"), attempt.UserId, ExpectedStar: true),
+            new AiOperationContext(attempt.Id.ToString("N"), attempt.UserId, ExpectedStar: true, JobId: job.Id),
             cancellationToken);
         var evaluation = execResult.Value;
 

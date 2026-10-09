@@ -21,8 +21,11 @@ public sealed partial class ExceptionHandlingMiddleware(
                 BusinessErrorKind.Forbidden => 403,
                 BusinessErrorKind.NotFound => 404,
                 BusinessErrorKind.Conflict => 409,
+                BusinessErrorKind.RateLimited => 429,
                 _ => 503
             };
+            if (exception.Kind == BusinessErrorKind.RateLimited)
+                context.Response.Headers.RetryAfter = "60";
             if (exception.Kind == BusinessErrorKind.ExternalFailure)
             {
                 sentryReporter.Capture(
