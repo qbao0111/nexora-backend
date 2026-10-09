@@ -14,7 +14,8 @@ public sealed record AiRequest(
     int MaxOutputTokens,
     string CorrelationId,
     string? Instructions = null,
-    AiReasoningEffortOverride? ReasoningEffortOverride = null);
+    AiReasoningEffortOverride? ReasoningEffortOverride = null,
+    Action<AiTokenUsage>? UsageObserver = null);
 
 public interface IAiProvider
 {
@@ -248,7 +249,8 @@ public sealed record AiOperationContext(
     IReadOnlyDictionary<string, string>? Metadata = null,
     string? CandidateAnswer = null,
     string? GroundingTranscript = null,
-    IReadOnlyCollection<string>? PreviousQuestions = null);
+    IReadOnlyCollection<string>? PreviousQuestions = null,
+    Guid? JobId = null);
 
 public sealed record AiExecutionResult<T>(
     T Value,

@@ -16,6 +16,7 @@ public sealed class StarAttemptService(
     NexoraDbContext dbContext,
     IFeatureEntitlementService featureEntitlementService,
     IAiProvider aiProvider,
+    PaidJobQueueAdmission queueAdmission,
     TimeProvider timeProvider) : IStarAttemptService
 {
     private const string PromptVersion = "phase3-star-v2";
@@ -143,6 +144,7 @@ public sealed class StarAttemptService(
             ResourceId = attemptId,
             CreatedAt = now
         });
+        await queueAdmission.CheckAsync(cancellationToken);
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);

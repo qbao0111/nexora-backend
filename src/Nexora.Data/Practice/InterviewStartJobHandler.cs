@@ -60,11 +60,12 @@ public sealed class InterviewStartJobHandler(NexoraDbContext dbContext, Intervie
         }
         var hasUsableResumeContext = HasUsableResumeContext(snapshot.Resume);
         var profile = hasUsableResumeContext
-            ? await resumeProfileProcessor.EnsureResumeProfileAsync(snapshot.Resume!, snapshot.Id, cancellationToken)
+            ? await resumeProfileProcessor.EnsureResumeProfileAsync(snapshot.Resume!, snapshot.Id, job.Id, cancellationToken)
             : null;
         var questionLimit = await readState.GetQuestionLimitAsync(snapshot.UserId, cancellationToken);
         var preparedQuestions = await questionGenerator.GeneratePreparedQuestionsAsync(
             snapshot,
+            job.Id,
             profile,
             startSequence: 1,
             endSequence: InterviewReadState.PreparationLimit(questionLimit),

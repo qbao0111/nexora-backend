@@ -12,7 +12,7 @@ using static Nexora.Data.Practice.InterviewPersistence;
 
 namespace Nexora.Data.Practice;
 
-public sealed class InterviewReportCoordinator(NexoraDbContext dbContext, InterviewReadState readState)
+public sealed class InterviewReportCoordinator(NexoraDbContext dbContext, InterviewReadState readState, PaidJobQueueAdmission queueAdmission)
 {
     internal async Task TryQueueReportIfReadyAsync(
         Guid interviewId,
@@ -38,6 +38,7 @@ public sealed class InterviewReportCoordinator(NexoraDbContext dbContext, Interv
             return;
 
         dbContext.Add(Outbox("InterviewReportRequested", "interview", interviewId, now));
+        await queueAdmission.CheckAsync(cancellationToken);
     }
 
 

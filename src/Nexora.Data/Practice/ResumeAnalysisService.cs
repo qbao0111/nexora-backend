@@ -18,6 +18,7 @@ public sealed class ResumeAnalysisService(
     NexoraDbContext dbContext,
     IAiProvider aiProvider,
     IFeatureEntitlementService featureEntitlementService,
+    PaidJobQueueAdmission queueAdmission,
     TimeProvider timeProvider) : IResumeAnalysisService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -179,6 +180,7 @@ public sealed class ResumeAnalysisService(
         }
         dbContext.AddRange(analysis, Idempotency(userId, "resume-analysis.create", key, fingerprint, analysis.Id, now),
             Outbox("ResumeAnalysisRequested", "resume_analysis", analysis.Id, now));
+        await queueAdmission.CheckAsync(cancellationToken);
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);

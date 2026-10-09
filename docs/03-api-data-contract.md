@@ -5,6 +5,28 @@
 
 ## Quy ước API
 
+### Abuse guardrails (2026-10-09 hotfix)
+
+HTTP throttling returns the existing error envelope with status `429` and
+`Retry-After` when a retry window is available. Paid enqueue saturation uses
+`AI_QUEUE_FULL`; provider/Speech issuance admission uses `AI_ADMISSION_DENIED`.
+These operational limits are separate from subscription quota. A queued job can
+fail admission without calling a provider; consult its existing status/retry contract.
+No extra interview quota is charged for report retry. A provider attempt that may
+already have been billed is never refunded just because persistence or transport failed.
+
+JSON requests have an outer 1 MiB bound (`413` for known oversized bodies); existing
+field and multipart limits still apply. Trusted forwarding, burst/concurrency and
+per-purpose durable budgets are described in [the security audit](security/ai-speech-abuse-audit.md).
+
+Speech token issuance requires an owned `starting` or `active` interview within the
+configured maximum age (default 120 minutes since creation). Other owned states or
+expired sessions return `409 SPEECH_SESSION_INACTIVE`; foreign sessions remain `404`.
+Speech feature-disabled behavior remains `503 FEATURE_DISABLED`. Successful token
+response and no-store semantics are unchanged. Issuance budgets can return `429`
+even for a cached upstream token. Already-issued Azure tokens are not revoked by
+this check and direct Azure usage is not metered by this endpoint.
+
 - Base URL: `/api/v1`.
 - Xác thực: ASP.NET Core Identity; access token ngắn hạn gửi bằng `Authorization: Bearer` và refresh token rotation qua cookie `HttpOnly`, `Secure`, `SameSite` phù hợp theo ADR-003.
 - Response lỗi: `{ "error": { "code": "...", "message": "...", "requestId": "..." } }`.

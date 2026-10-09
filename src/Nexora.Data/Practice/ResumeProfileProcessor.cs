@@ -21,7 +21,7 @@ public sealed class ResumeProfileProcessor(
         : aiProvider.ModelVersion.Trim();
 
     internal async Task<ResumeProfile> EnsureResumeProfileAsync(
-        ResumeRecord resume, Guid correlationId, CancellationToken cancellationToken)
+        ResumeRecord resume, Guid correlationId, Guid jobId, CancellationToken cancellationToken)
     {
         if (resume.ProfilePromptVersion == ProfilePromptVersion &&
             resume.ProfileSchemaVersion == ProfileSchemaVersion &&
@@ -39,7 +39,7 @@ public sealed class ResumeProfileProcessor(
             var execResult = await structuredAiExecutor.ExecuteAsync(
                 AiOperations.ResumeProfile,
                 context,
-                new AiOperationContext(correlationId.ToString("N")),
+                new AiOperationContext(correlationId.ToString("N"), resume.UserId, JobId: jobId),
                 cancellationToken);
             profile = execResult.Value;
         }

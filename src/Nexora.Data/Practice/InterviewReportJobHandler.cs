@@ -56,7 +56,7 @@ public sealed partial class InterviewReportJobHandler(
         var reportOperationContext = new AiOperationContext(
             snapshot.Id.ToString("N"),
             snapshot.UserId,
-            GroundingTranscript: groundingTranscript);
+            GroundingTranscript: groundingTranscript, JobId: job.Id);
         AiExecutionResult<InterviewReportOutput> execResult;
         var fallbackUsed = false;
         try

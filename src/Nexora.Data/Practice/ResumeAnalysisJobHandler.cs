@@ -94,7 +94,7 @@ public sealed class ResumeAnalysisJobHandler(
             }
             await CommitAsync(startTransaction, cancellationToken);
         }
-        var profile = await resumeProfileProcessor.EnsureResumeProfileAsync(analysis.Resume, analysis.Id, cancellationToken);
+        var profile = await resumeProfileProcessor.EnsureResumeProfileAsync(analysis.Resume, analysis.Id, job.Id, cancellationToken);
         analysis.ProfileSnapshot = JsonSerializer.Serialize(profile, JsonOptions);
         analysis.ProfileModelVersion = analysis.Resume.ProfileModelVersion;
         analysis.ProfilePromptVersion = analysis.Resume.ProfilePromptVersion;
@@ -120,7 +120,7 @@ public sealed class ResumeAnalysisJobHandler(
                 Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     [ResumeAnalysisMetadata.Mode] = analysisMode.ToWireValue()
-                }),
+                }, JobId: job.Id),
             cancellationToken);
         var result = execResult.Value;
 

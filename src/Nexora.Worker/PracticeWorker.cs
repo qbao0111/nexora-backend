@@ -1,5 +1,7 @@
+using Nexora.Business.Common;
 using Nexora.Business.Practice;
 using Nexora.Business.Privacy;
+using Nexora.Data.Persistence;
 using Nexora.Worker.Observability;
 
 namespace Nexora.Worker;
@@ -13,6 +15,7 @@ public sealed partial class PracticeWorker(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var databaseBackoff = new DatabaseOutageBackoff(TimeProvider.System);
         while (!stoppingToken.IsCancellationRequested)
         {
             var workerCycleId = Guid.NewGuid().ToString("N");
@@ -27,6 +30,7 @@ public sealed partial class PracticeWorker(
                     count += await scope.ServiceProvider.GetRequiredService<IPracticeJobProcessor>().ProcessPendingAsync(stoppingToken);
                     count += await scope.ServiceProvider.GetRequiredService<IScenarioStarJobProcessor>().ProcessPendingAsync(stoppingToken);
                 }
+                databaseBackoff.Reset();
                 if (count > 0)
                 {
                     pollingBackoff.Reset();
@@ -38,9 +42,21 @@ public sealed partial class PracticeWorker(
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+            catch (Exception exception) when (DatabaseConnectivityFailure.IsTransient(exception))
+            {
+                var (delay, report) = databaseBackoff.Next(Random.Shared.NextDouble());
+                if (report)
+                {
+                    DatabaseUnavailable(logger);
+                    sentryReporter.Capture(exception, workerCycleId);
+                }
+                // New scope next cycle; no transaction/provider side-effect replay.
+                try { await AdaptivePollingBackoff.DelayAsync(delay, stoppingToken); }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+            }
             catch (Exception exception)
             {
-                PollingFailed(logger, exception);
+                PollingFailed(logger, exception.GetType().Name);
                 sentryReporter.Capture(exception, workerCycleId);
                 pollingBackoff.Reset();
                 await AdaptivePollingBackoff.DelayAsync(pollingBackoff.FailureDelay, stoppingToken);
@@ -48,6 +64,9 @@ public sealed partial class PracticeWorker(
         }
     }
 
-    [LoggerMessage(LogLevel.Error, "Practice job polling failed")]
-    private static partial void PollingFailed(ILogger logger, Exception exception);
+    [LoggerMessage(LogLevel.Error, "Practice job polling failed with {ExceptionType}")]
+    private static partial void PollingFailed(ILogger logger, string exceptionType);
+
+    [LoggerMessage(LogLevel.Warning, "Worker database temporarily unavailable; bounded recovery polling scheduled")]
+    private static partial void DatabaseUnavailable(ILogger logger);
 }

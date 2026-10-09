@@ -100,7 +100,7 @@ public sealed partial class InterviewAnswerEvaluationJobHandler(
                     snapshot.UserId,
                     ExpectedStar: question.Topic is InterviewQuestionValues.Behavioral or InterviewQuestionValues.BehavioralStar,
                     Metadata: metadata,
-                    CandidateAnswer: snapshot.Content),
+                    CandidateAnswer: snapshot.Content, JobId: job.Id),
                 cancellationToken);
 
             await using var transaction = await persistence.BeginTransactionAsync(cancellationToken);

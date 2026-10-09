@@ -27,7 +27,11 @@ builder.WebHost.UseSentry((context, options) =>
 // Hosting request-start logs include query strings; browser SignalR transports use access_token.
 builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting", LogLevel.Warning);
 builder.Logging.AddFilter("Microsoft.AspNetCore.Http.Connections", LogLevel.Warning);
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(options =>
+{
+    options.MaximumReceiveMessageSize = 32 * 1024;
+    options.MaximumParallelInvocationsPerClient = 1;
+});
 builder.Services.AddSingleton<IUserIdProvider, SubClaimUserIdProvider>();
 builder.Services.AddOptions<RealtimeOptions>().Bind(builder.Configuration.GetSection(RealtimeOptions.SectionName))
     .Validate(options => options.BatchSize is >= 1 and <= 500 &&
@@ -132,18 +136,20 @@ builder.Services.AddCors(options => options.AddPolicy("Frontend", policy => poli
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
-    options.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor |
-                               Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto |
-                               Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedHost;
-    options.KnownIPNetworks.Clear();
-    options.KnownProxies.Clear();
+    TrustedForwarding.Configure(options, builder.Configuration);
 });
 
 var app = builder.Build();
+if (app.Environment.IsProduction() && builder.Configuration.GetValue<bool>("RateLimits:Disabled"))
+    throw new InvalidOperationException("RateLimits:Disabled is forbidden in Production.");
+if (app.Environment.IsProduction() && builder.Configuration.GetValue<bool>("ForwardedHeaders_Enabled"))
+    throw new InvalidOperationException("Automatic unrestricted forwarded headers are forbidden in Production.");
+app.UseMiddleware<ForwardedHeaderBoundsMiddleware>();
 app.UseForwardedHeaders();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<RequestTelemetryMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+app.UseMiddleware<JsonBodyBoundsMiddleware>();
 app.UseCors("Frontend");
 app.UseAuthentication();
 app.UseRateLimiter();
@@ -167,7 +173,8 @@ app.MapHealthChecks("/api/v1/health", new HealthCheckOptions { Predicate = regis
 app.MapHealthChecks("/api/v1/health/operations", new HealthCheckOptions { Predicate = registration => registration.Tags.Contains("operations") });
 app.MapControllers();
 if (app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<RealtimeOptions>>().Value.Enabled)
-    app.MapHub<RealtimeHub>(RealtimeHub.Path, options => options.CloseOnAuthenticationExpiration = true);
+    app.MapHub<RealtimeHub>(RealtimeHub.Path, options => options.CloseOnAuthenticationExpiration = true)
+        .RequireRateLimiting(RateLimitPolicies.Realtime);
 app.Run();
 
 public partial class Program;

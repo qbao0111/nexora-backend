@@ -28,6 +28,7 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     public DbSet<UsageEvent> UsageEvents => Set<UsageEvent>();
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
     public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>();
+    public DbSet<ProviderCallReservation> ProviderCallReservations => Set<ProviderCallReservation>();
     public DbSet<StoredFile> StoredFiles => Set<StoredFile>();
     public DbSet<UploadIntentRecord> UploadIntents => Set<UploadIntentRecord>();
     public DbSet<ResumeRecord> Resumes => Set<ResumeRecord>();
@@ -64,6 +65,18 @@ public sealed class NexoraDbContext(DbContextOptions<NexoraDbContext> options)
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        builder.Entity<ProviderCallReservation>(entity =>
+        {
+            entity.ToTable("provider_call_reservations");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Purpose).HasMaxLength(64);
+            entity.Property(item => item.OperationKey).HasMaxLength(64);
+            entity.Property(item => item.FailureKind).HasMaxLength(32);
+            entity.HasIndex(item => new { item.JobId, item.Purpose, item.OperationKey, item.Attempt }).IsUnique();
+            entity.HasIndex(item => item.StartedAt);
+            entity.HasIndex(item => new { item.UserId, item.StartedAt });
+            // No FK/cascade: deletion cannot erase spending history or reopen budgets.
+        });
         builder.Entity<ApplicationUser>().ToTable("asp_net_users");
         builder.Entity<IdentityRole<Guid>>().ToTable("asp_net_roles");
         builder.Entity<IdentityUserRole<Guid>>().ToTable("asp_net_user_roles");

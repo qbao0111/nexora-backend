@@ -1,10 +1,14 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using Nexora.Business.Common;
 
 namespace Nexora.Business.Ai;
 
-public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger<StructuredAiExecutor> logger) : IStructuredAiExecutor
+public sealed partial class StructuredAiExecutor(
+    IAiProvider aiProvider, ILogger<StructuredAiExecutor> logger,
+    IProviderAdmission? admission = null) : IStructuredAiExecutor
 {
     private const int GlobalMaxAttemptsPerPurpose = 2;
 
@@ -87,7 +91,44 @@ public sealed partial class StructuredAiExecutor(IAiProvider aiProvider, ILogger
 
             try
             {
-                var raw = await aiProvider.GenerateStructuredAsync<T>(request, cancellationToken);
+                AiTokenUsage? usage = null;
+                Guid? reservation = null;
+                if (admission is not null)
+                {
+                    if (context.UserId is not { } userId || context.JobId is not { } jobId)
+                        throw new BusinessException("AI_ADMISSION_CONTEXT_MISSING", "Không thể xác minh tác vụ AI.", BusinessErrorKind.ExternalFailure);
+                    // Correlation IDs may change on recovery; they are telemetry,
+                    // not permission to charge the same logical operation again.
+                    var identity = GetMetadata(context, "answerId") + ":" + GetMetadata(context, "questionSequence");
+                    var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
+                    var inputBytes = Encoding.UTF8.GetByteCount(request.UntrustedInput) +
+                        Encoding.UTF8.GetByteCount(request.Instructions ?? string.Empty) +
+                        Encoding.UTF8.GetByteCount(request.OutputSchema.RootElement.GetRawText());
+                    reservation = await admission.ReserveAsync(new ProviderAdmissionRequest(
+                        userId, jobId, request.Purpose, key, attempt,
+                        checked((long)inputBytes + request.MaxOutputTokens + 1024)), cancellationToken);
+                    request = request with { UsageObserver = value => usage = value };
+                }
+                T raw;
+                AiProviderFailureKind? providerFailure = null;
+                try
+                {
+                    raw = await aiProvider.GenerateStructuredAsync<T>(request, cancellationToken);
+                }
+                catch (AiProviderException exception)
+                {
+                    providerFailure = exception.Kind;
+                    throw;
+                }
+                finally
+                {
+                    if (reservation is { } reservationId)
+                    {
+                        // Timeout/cancellation may already be chargeable. Never refund.
+                        using var completionTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        await admission!.CompleteAsync(reservationId, usage, completionTimeout.Token, providerFailure);
+                    }
+                }
                 var validation = operation.NormalizeAndValidate(raw, context);
                 previousSemanticRaw = currentSemanticRaw;
                 previousValidation = currentValidation;

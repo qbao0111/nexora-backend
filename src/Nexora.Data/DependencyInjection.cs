@@ -93,6 +93,17 @@ public static class DependencyInjection
 
         services.AddDbContext<NexoraDbContext>(options => options.UseNpgsql(connectionString));
         services.AddSingleton(TimeProvider.System);
+        services.AddOptions<Nexora.Business.Ai.ProviderBudgetOptions>()
+            .Bind(configuration.GetSection(Nexora.Business.Ai.ProviderBudgetOptions.SectionName))
+            .Validate(options => options.UserHourlyCalls > 0 && options.UserDailyCalls > 0 && options.GlobalDailyCalls > 0 &&
+                options.UserHourlyTokens > 0 && options.UserDailyTokens > 0 && options.GlobalDailyTokens > 0 &&
+                options.GlobalInFlight is >= 1 and <= 32 && options.MaximumInputBytes is >= 1024 and <= 1_000_000 &&
+                options.MaximumQueuedJobs is >= 1 and <= 10_000 && options.PurposeHourlyCalls.Values.All(value => value > 0) &&
+                options.CooldownSeconds is >= 1 and <= 600 && options.CooldownFailureThreshold is >= 1 and <= 100 &&
+                options.MaximumSpeechSessions is >= 1 and <= 10,
+                "AI budgets must be positive and bounded.")
+            .ValidateOnStart();
+        services.AddSingleton<Nexora.Business.Ai.IProviderAdmission, ProviderAdmission>();
         services.AddScoped<IBillingService, BillingService>();
         services.AddScoped<ISiteContentService, SiteContentService>();
         services.AddScoped<IFeatureEntitlementService, FeatureEntitlementService>();
@@ -116,6 +127,7 @@ public static class DependencyInjection
         services.AddScoped<ResumeAnalysisJobHandler>();
         services.AddScoped<ResumeStorageCleanupProcessor>();
         services.AddScoped<InterviewPersistence>();
+        services.AddScoped<PaidJobQueueAdmission>();
         services.AddScoped<InterviewReadState>();
         services.AddScoped<InterviewReportCoordinator>();
         services.AddScoped<InterviewQuestionGenerator>();

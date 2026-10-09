@@ -20,6 +20,7 @@ public sealed class InterviewSessionService(
     NexoraDbContext dbContext,
     InterviewPersistence persistence,
     InterviewReadState readState,
+    PaidJobQueueAdmission queueAdmission,
     TimeProvider timeProvider) : IInterviewSessionService
 {
     private const int MaximumHistoryPageSize = 100;
@@ -101,6 +102,7 @@ public sealed class InterviewSessionService(
         entitlement.ConcurrencyToken = Guid.NewGuid();
         dbContext.AddRange(reservation, session, Idempotency(userId, operation, key, fingerprint, session.Id, now),
             Outbox("InterviewStartRequested", "interview", session.Id, now));
+        await queueAdmission.CheckAsync(cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await CommitAsync(transaction, cancellationToken);
         return MapInterview(session, [], []);
