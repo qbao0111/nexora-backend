@@ -2,6 +2,20 @@
 
 ## Retention foundation additions
 
+### Provider admission ledger (2026-10-09)
+
+`provider_call_reservations` is an operational spending ledger, separate from product
+usage/entitlements. It stores internal user/job IDs, purpose, hashed logical-operation
+key, attempt, reserved token units, nullable actual usage, start/lease/completion times,
+failure class and cooldown expiry. Unique `(JobId, Purpose, OperationKey, Attempt)`
+prevents reauthorizing an ambiguous paid attempt; indexes cover StartedAt and
+`(UserId, StartedAt)`. No user/job FK cascade or candidate text is stored.
+
+Migration `20261009084857_AddProviderCallReservations` adds only this table/indexes.
+Lease expiry frees concurrency, never spending/replay rights. Account deletion does
+not reset this ledger; automatic retention is not added in this hotfix. Retain rows
+on application rollback. See [admission and operational limits](security/ai-speech-abuse-audit.md).
+
 `retention_checkpoints` contains one fixed ID=1 row with durable next-run time, latest bounded counters and consecutive failure count. `retention_holds` contains opaque nullable UserId (null=global), constrained reason code, creation/release timestamps and a restrictive user FK. The new `PrivacyRetentionLifecycle` migration adds only these tables plus stable cleanup indexes on external verification expiry/ID and privacy-request status/completion/ID. No existing personal or financial row is purged by the migration. See [retention inventory/runbook](privacy-retention.md) for eligibility, holds and disabled-by-default controls; no automatic 90-day financial/usage purge exists.
 
 **Status:** Approved implementation baseline; retention values deferred  

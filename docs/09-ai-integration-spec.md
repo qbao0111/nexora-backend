@@ -227,6 +227,22 @@ Server computes weighted overall score from validated sub-scores. Store rubric v
 
 ## 6. Cost and observability
 
+### Operational admission hotfix (2026-10-09)
+
+The durable call/token/concurrency/queue admission implemented by the incident hotfix
+is specified in [the AI/Speech abuse audit](security/ai-speech-abuse-audit.md). It
+reserves before every provider attempt and preserves the maximum-two-call contract;
+actual DeepSeek usage is recorded where available without refunding conservative
+reservations. Admission-authority failure blocks new paid calls. These operational
+ceilings are separate from subscription quota and monetary provider pricing.
+
+The percentage alerts and 10-failures/5-minutes values in the original planning text
+below are deferred financial-policy proposals, **not the current runtime defaults**.
+Current configurable cooldown defaults are three transport/429 failures in one minute,
+then 30 seconds; detailed user/global/token limits and remaining Azure direct-use risks
+are in the audit. This PR does not approve a monetary production budget or activate
+dashboard alerts; production rollout/configuration still requires operator approval.
+
 Record model, prompt/rubric/schema version, input/output token count, latency, estimated cost, job outcome and correlation ID. **DEC-01 does not block internal Gemini or optional DeepSeek development testing or Phases 0–3.** It blocks real production AI traffic until Product Owner approves (a) production provider/model, (b) per-user daily/monthly budget, (c) global daily budget, (d) alert thresholds and (e) circuit-break action. Initial engineering defaults for development/staging only: alert at 70% configured daily budget, reject new AI jobs at 90%, circuit-break after 10 provider failures in 5 minutes; production values must replace them. Never run three model evaluations per answer in MVP without an explicit product experiment and budget approval.
 
 DeepSeek structured-response failures log metadata only: purpose, finish reason,
