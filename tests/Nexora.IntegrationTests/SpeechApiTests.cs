@@ -148,6 +148,99 @@ public sealed class SpeechApiTests
         Assert.Equal(0, speech.CallCount);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DefaultSpeechWindowAllowsThirtyRequestsAcrossDevicesAndIsolatesUsers(bool useCodeFallback)
+    {
+        var speech = new RecordingSpeechTokenProvider();
+        var configuration = new Dictionary<string, string?>
+        {
+            ["Features:Speech"] = "true",
+            ["Speech:Azure:Key"] = "test-only-speech-key",
+            ["Speech:Azure:Region"] = "southeastasia"
+        };
+        if (useCodeFallback)
+        {
+            configuration["RateLimits:SpeechToken:PermitLimit"] = null;
+            configuration["RateLimits:SpeechToken:WindowMinutes"] = null;
+        }
+        using var factory = CreateFactory(speech, configuration);
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var owner = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.AccessToken);
+        using var secondDevice = factory.CreateHttpsClient();
+        secondDevice.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", owner.AccessToken);
+        var interviewId = await StartInterviewAsync(client, "speech-default-headroom");
+
+        for (var index = 0; index < 30; index++)
+        {
+            var device = index % 2 == 0 ? client : secondDevice;
+            using var response = await device.PostAsync($"/api/v1/speech/interviews/{interviewId}/token", null);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        using var limited = await secondDevice.PostAsync($"/api/v1/speech/interviews/{interviewId}/token", null);
+        Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+        Assert.Equal("RATE_LIMITED", await ErrorCodeAsync(limited));
+        Assert.True(limited.Headers.RetryAfter?.Delta > TimeSpan.Zero);
+        Assert.Equal(30, speech.CallCount);
+
+        using var otherClient = factory.CreateHttpsClient();
+        var other = await RegisterAsync(otherClient);
+        otherClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", other.AccessToken);
+        var otherInterviewId = await StartInterviewAsync(otherClient, "speech-other-user-headroom");
+        using var otherResponse = await otherClient.PostAsync($"/api/v1/speech/interviews/{otherInterviewId}/token", null);
+        Assert.Equal(HttpStatusCode.OK, otherResponse.StatusCode);
+        Assert.Equal(31, speech.CallCount);
+    }
+
+    [Fact]
+    public async Task TenExpiredSessionRequestsDoNotExhaustNewSpeechWindowForFreshSession()
+    {
+        var speech = new RecordingSpeechTokenProvider();
+        using var factory = CreateFactory(speech, new Dictionary<string, string?>
+        {
+            ["Features:Speech"] = "true",
+            ["Speech:Azure:Key"] = "test-only-speech-key",
+            ["Speech:Azure:Region"] = "southeastasia"
+        });
+        factory.InitializeDatabase();
+        using var client = factory.CreateHttpsClient();
+        var account = await RegisterAsync(client);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+        // Give this isolated fixture two interview starts so the second start
+        // tests Speech headroom rather than the one-interview Free trial quota.
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var entitlement = await db.Entitlements.SingleAsync(item => item.UserId == account.Id);
+            entitlement.InterviewLimit = 2;
+            await db.SaveChangesAsync();
+        }
+        var expiredId = await StartInterviewAsync(client, "speech-expired-headroom");
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexoraDbContext>();
+            var interview = await db.InterviewSessions.SingleAsync(item => item.Id == expiredId);
+            interview.CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-121);
+            await db.SaveChangesAsync();
+        }
+        for (var index = 0; index < 10; index++)
+        {
+            using var expired = await client.PostAsync($"/api/v1/speech/interviews/{expiredId}/token", null);
+            Assert.Equal(HttpStatusCode.Conflict, expired.StatusCode);
+            Assert.Equal("SPEECH_SESSION_INACTIVE", await ErrorCodeAsync(expired));
+        }
+        Assert.Equal(0, speech.CallCount);
+
+        var freshId = await StartInterviewAsync(client, "speech-fresh-headroom");
+        using var fresh = await client.PostAsync($"/api/v1/speech/interviews/{freshId}/token", null);
+        Assert.Equal(HttpStatusCode.OK, fresh.StatusCode);
+        Assert.Equal(1, speech.CallCount);
+    }
+
     [Fact]
     public async Task SpeechTokenHasIndependentUserRateLimitAndCanonicalRetryAfter()
     {

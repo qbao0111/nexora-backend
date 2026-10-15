@@ -85,7 +85,7 @@ public static class HardeningExtensions
             AddFixedWindow(options, configuration, RateLimitPolicies.Upload, "Upload", 10, 60, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.Checkout, "Checkout", 5, 60, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.AiJob, "AiJob", 10, 60, ByUser);
-            AddFixedWindow(options, configuration, RateLimitPolicies.SpeechToken, "SpeechToken", 10, 15, ByUser);
+            AddFixedWindow(options, configuration, RateLimitPolicies.SpeechToken, "SpeechToken", 30, 15, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.Realtime, "Realtime", 30, 1, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.ContentReport, "ContentReport", 5, 60, ByUser);
             AddFixedWindow(options, configuration, RateLimitPolicies.ExternalDeletionRequest, "ExternalDeletionRequest", 5, 60, ByClientIp);
