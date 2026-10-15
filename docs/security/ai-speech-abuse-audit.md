@@ -38,7 +38,7 @@ was performed. Counters reset with API restarts and multiply across replicas.
 | Checkout | 5 / hour / user | create/refresh checkout |
 | AiJob | 10 / hour / user | analyses, interview create/practice-again/continue/retries/complete, scenario submit, STAR create |
 | Answer | 20 / 5 min / user + interview | official answer |
-| SpeechToken | 10 / 15 min / user | interview Speech token |
+| SpeechToken | 30 / 15 min / user | interview Speech token |
 | Realtime (new) | 30 / minute / user | authenticated `/hubs/realtime` negotiate/connect requests |
 | ContentReport | 5 / hour / user | content reports |
 | External deletion | request 5 / hour; confirm 10 / 15 min / IP | anonymous external deletion |
@@ -209,6 +209,28 @@ not zero. No raw payload/token/credentials are logged. Queue depth can be obtain
 from operational pending/processing counts; no unauthenticated metrics endpoint added.
 
 ## Azure Speech: bounded issuance is NOT metered upstream use
+
+### Speech HTTP headroom correction (2026-10-15)
+
+The SpeechToken HTTP default is now 30 requests per 15 minutes per authenticated
+user (previously 10). This applies to every user, not a tester allow-list. Multiple
+devices and interviews using one account share that window; separate users have
+independent endpoint windows. Failed requests that reach this policy also consume
+permits. Request 31 is rejected with `429 RATE_LIMITED` and `Retry-After`.
+
+This changes only HTTP headroom, not upstream Azure spending limits. The pre-auth
+IP burst/concurrency gates, durable shared AI/Speech budgets, two distinct Speech
+sessions per rolling ten minutes, session ownership/state/120-minute age checks,
+Azure cache and feature switch are unchanged. Consequently a shared tester account
+may still receive `AI_ADMISSION_DENIED` from durable admission. This is not a promise
+of unrestricted concurrent testers or a fix for expired-session `409` responses.
+Clients should stop retrying inactive sessions and respect `Retry-After` on 429.
+
+No production setting is changed by this source correction. Before an approved
+rollout, check `RateLimits__SpeechToken__PermitLimit` and
+`RateLimits__SpeechToken__WindowMinutes` overrides: environment values take
+precedence over code/appsettings defaults. Do not disable rate limiting or raise
+shared paid-provider budgets to apply this HTTP-only change.
 
 POST `/api/v1/speech/interviews/{id}/token` retains auth/owner check, no-store/private
 response, SpeechToken rate limit, singleton cache and concurrent refresh semaphore.
